@@ -1,0 +1,199 @@
+{% extends 'layout.html' %}
+{% block module_name %}Code Compare{% endblock %}
+
+{% block extra_css %}
+<style>
+    .compare-container { display: flex; flex-direction: column; height: 100%; gap: 16px; }
+    
+    .compare-actions { display: flex; gap: 12px; align-items: center; background: white; padding: 12px; border-radius: 8px; border: 1px solid var(--border); }
+
+    .input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; min-height: 0; }
+    .input-box { display: flex; flex-direction: column; gap: 8px; }
+    .input-box label { font-size: 0.75rem; font-weight: 600; color: var(--teal-700); text-transform: uppercase; }
+    .compare-textarea { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-family: 'Consolas', monospace; font-size: 0.8125rem; resize: none; outline: none; }
+
+    /* Diff View */
+    .diff-view { display: none; grid-template-columns: 1fr 1fr; gap: 0; flex: 1; min-height: 0; border: 1px solid var(--border); border-radius: 8px; background: #f8fcfc; overflow: hidden; }
+
+    .diff-panel {
+        overflow: auto;
+        height: 100%;
+        background: white;
+        /* Hide scrollbars for a cleaner look, or keep them for usability */
+        scrollbar-width: thin;
+    }
+
+    /* Ensure both panels have the same internal width for horizontal sync */
+    .diff-content { display: table; min-width: 100%; font-family: 'Consolas', monospace; font-size: 0.8125rem; line-height: 1.6; border-collapse: collapse; table-layout: fixed; }
+
+    .diff-line { display: table-row; height: 1.6rem; }
+    .line-num { display: table-cell; width: 45px; padding: 0 8px; text-align: right; color: #99abb4; background: #f1f5f5; border-right: 1px solid var(--border); user-select: none; font-size: 0.7rem; vertical-align: top; }
+    .line-text { display: table-cell; padding: 0 12px; white-space: pre; word-wrap: break-word; vertical-align: top; }
+
+    /* Industry Standard Diff Colors */
+    .diff-added { background-color: #e6ffec; } /* Light Green */
+    .diff-removed { background-color: #ffebe9; } /* Light Red */
+
+    /* Word-level highlights */
+    .word-added { background-color: #acf2bd; text-decoration: none; border-radius: 2px; }
+    .word-removed { background-color: #fdb8c0; text-decoration: none; border-radius: 2px; }
+
+    .diff-empty { background-color: #f8f9fa; }
+
+    .nav-controls { display: flex; gap: 4px; margin-left: auto; align-items: center; }
+    .change-count { font-size: 0.8125rem; color: var(--teal-700); margin-right: 12px; font-weight: 600; }
+
+    .btn { padding: 0 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 0.8125rem; height: 32px; display: inline-flex; align-items: center; gap: 6px; }
+    .btn-primary { background: var(--teal-700); color: white; }
+    .btn-outline { background: white; border: 1px solid var(--border); color: var(--teal-700); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="compare-container">
+    <div class="compare-actions">
+        <button class="btn btn-primary" id="compareBtn" onclick="runCompare()">Compare Changes</button>
+        <button class="btn btn-outline" onclick="resetCompare()">New Comparison</button>
+
+        <div class="nav-controls" id="diffNav" style="display: none;">
+            <span class="change-count" id="changeStat">0 changes</span>
+            <button class="btn btn-outline" onclick="navChange(-1)">↑ Prev</button>
+            <button class="btn btn-outline" onclick="navChange(1)">↓ Next</button>
+        </div>
+    </div>
+
+    <div class="input-grid" id="inputArea">
+        <div class="input-box">
+            <label>Original Code</label>
+            <textarea id="leftText" class="compare-textarea" placeholder="Paste original code here..."></textarea>
+        </div>
+        <div class="input-box">
+            <label>Modified Code</label>
+            <textarea id="rightText" class="compare-textarea" placeholder="Paste modified code here..."></textarea>
+        </div>
+    </div>
+
+    <div class="diff-view" id="diffArea">
+        <div class="diff-panel" id="leftPanel">
+            <div class="diff-content" id="leftDiff"></div>
+        </div>
+        <div class="diff-panel" id="rightPanel">
+            <div class="diff-content" id="rightDiff"></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
+
+<script>
+    let currentChangeIndex = -1;
+    let changeElements = [];
+    const leftPanel = document.getElementById('leftPanel');
+    const rightPanel = document.getElementById('rightPanel');
+
+    // --- SYNC SCROLL LOGIC ---
+    let isSyncingLeft = false;
+    let isSyncingRight = false;
+
+    leftPanel.onscroll = function() {
+        if (!isSyncingLeft) {
+            isSyncingRight = true;
+            rightPanel.scrollTop = this.scrollTop;
+            rightPanel.scrollLeft = this.scrollLeft;
+        }
+        isSyncingLeft = false;
+    };
+
+    rightPanel.onscroll = function() {
+        if (!isSyncingRight) {
+            isSyncingLeft = true;
+            leftPanel.scrollTop = this.scrollTop;
+            leftPanel.scrollLeft = this.scrollLeft;
+        }
+        isSyncingRight = false;
+    };
+
+    function runCompare() {
+        const oldText = document.getElementById('leftText').value;
+        const newText = document.getElementById('rightText').value;
+
+        // 1. Get Line-by-line diff
+        const diff = Diff.diffLines(oldText, newText);
+
+        const leftTarget = document.getElementById('leftDiff');
+        const rightTarget = document.getElementById('rightDiff');
+        leftTarget.innerHTML = '';
+        rightTarget.innerHTML = '';
+
+        let leftLineNum = 1;
+        let rightLineNum = 1;
+        changeElements = [];
+
+        diff.forEach((part, i) => {
+            const lines = part.value.split('\n');
+            if (lines[lines.length - 1] === '') lines.pop();
+
+            lines.forEach((line) => {
+                const rowL = document.createElement('div');
+                const rowR = document.createElement('div');
+                rowL.className = 'diff-line';
+                rowR.className = 'diff-line';
+
+                if (part.added) {
+                    addEmptyLine(rowL);
+                    addTextLine(rowR, rightLineNum++, line, 'diff-added');
+                    changeElements.push({left: rowL, right: rowR});
+                } else if (part.removed) {
+                    addTextLine(rowL, leftLineNum++, line, 'diff-removed');
+                    addEmptyLine(rowR);
+                    changeElements.push({left: rowL, right: rowR});
+                } else {
+                    addTextLine(rowL, leftLineNum++, line, '');
+                    addTextLine(rowR, rightLineNum++, line, '');
+                }
+
+                leftTarget.appendChild(rowL);
+                rightTarget.appendChild(rowR);
+            });
+        });
+
+        // UI Updates
+        document.getElementById('inputArea').style.display = 'none';
+        document.getElementById('diffArea').style.display = 'grid';
+        document.getElementById('diffNav').style.display = 'flex';
+        document.getElementById('changeStat').innerText = `${changeElements.length} changes`;
+        currentChangeIndex = -1;
+    }
+
+    function addTextLine(row, num, text, className) {
+        // Simple escaping for HTML safety
+        const safeText = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        row.innerHTML = `<div class="line-num">${num}</div><div class="line-text ${className}">${safeText || ' '}</div>`;
+    }
+
+    function addEmptyLine(row) {
+        row.innerHTML = `<div class="line-num"> </div><div class="line-text diff-empty"> </div>`;
+    }
+
+    function navChange(dir) {
+        if (changeElements.length === 0) return;
+        currentChangeIndex += dir;
+        if (currentChangeIndex >= changeElements.length) currentChangeIndex = 0;
+        if (currentChangeIndex < 0) currentChangeIndex = changeElements.length - 1;
+
+        const target = changeElements[currentChangeIndex].right;
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Highlight active change
+        document.querySelectorAll('.diff-line').forEach(el => el.style.outline = 'none');
+        changeElements[currentChangeIndex].left.style.outline = '1px solid var(--amber)';
+        changeElements[currentChangeIndex].right.style.outline = '1px solid var(--amber)';
+    }
+
+    function resetCompare() {
+        document.getElementById('inputArea').style.display = 'grid';
+        document.getElementById('diffArea').style.display = 'none';
+        document.getElementById('diffNav').style.display = 'none';
+    }
+</script>
+{% endblock %}

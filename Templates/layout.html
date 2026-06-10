@@ -21,9 +21,29 @@
 
         .app-body { display: flex; flex: 1; overflow: hidden; }
         .sidebar { width: var(--sidebar-w); background: var(--surface-card); border-right: 1px solid var(--border); padding: 12px 0; display: flex; flex-direction: column; }
-        .nav-item { display: block; padding: 12px 20px; color: var(--teal-700); text-decoration: none; font-size: 0.875rem; font-weight: 500; border-left: 6px solid transparent; transition: all 0.1s; }
-        .nav-item:hover { background: var(--surface-page); }
-        .nav-item.active { background: var(--surface-page); color: var(--teal-900); font-weight: 600; border-left-color: var(--teal-700); }
+        .nav-item {
+            display: block;
+            padding: 12px 20px;
+            color: var(--teal-700);
+            text-decoration: none;
+            font-size: 0.875rem;
+            font-weight: 500;
+            /* Create the base for the vertical line */
+            border-left: 6px solid transparent;
+            transition: all 0.2s ease;
+        }
+
+        .nav-item:hover {
+            background: var(--surface-page);
+        }
+
+        /* The Selected State */
+        .nav-item.active {
+            background: var(--teal-100);       /* Light teal background */
+            color: var(--teal-900);            /* Darker text for contrast */
+            font-weight: 600;
+            border-left: 6px solid var(--teal-700); /* Strong vertical line */
+        }
 
         .main-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         .content-area { flex: 1; padding: 24px; overflow: hidden; display: flex; flex-direction: column; }
@@ -44,9 +64,10 @@
     </header>
     <div class="app-body">
         <aside class="sidebar">
-            <a href="/notes" class="nav-item active">Notes</a>
-            <a href="#" class="nav-item">Assumptions</a>
-            <a href="#" class="nav-item">Reporting</a>
+            <!-- The class will be 'active' only if the URL matches -->
+            <a href="/notes" class="nav-item {{ 'active' if request.path == '/notes' or request.path == '/' else '' }}">Notes</a>
+            <a href="/compare" class="nav-item {{ 'active' if request.path == '/compare' else '' }}">Compare</a>
+            <a href="/time" class="nav-item {{ 'active' if request.path == '/time' else '' }}">Time</a> 
         </aside>
         <main class="main-view"><div class="content-area">{% block content %}{% endblock %}</div></main>
     </div>

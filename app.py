@@ -3,12 +3,31 @@ import re
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 import markdown
 
+import tracker
+
 app = Flask(__name__)
+
+# Start the tracker immediately
+tracker.start_tracking()
 
 NOTES_FOLDER = os.path.join(os.getcwd(), 'Notes')
 if not os.path.exists(NOTES_FOLDER):
     os.makedirs(NOTES_FOLDER)
 
+@app.route('/time')
+def time_module():
+    return render_template('time.html')
+
+
+@app.route('/api/time_data')
+def get_time_data():
+    logs, projects = tracker.get_stats()
+    return jsonify({"logs": logs, "projects": projects})
+
+@app.route('/api/projects', methods=['POST'])
+def update_projects():
+    tracker.save_projects(request.json)
+    return jsonify({"status": "ok"})
 
 @app.route('/')
 def index():
@@ -102,6 +121,10 @@ def preview_note():
         'html': html
     })
 
+@app.route('/compare')
+def compare_module():
+    return render_template('compare.html')
+
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5000)
+    app.run(debug=True, port=5001, use_reloader=False)

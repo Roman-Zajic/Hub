@@ -85,7 +85,7 @@ def preview_note():
     # etc.
     content = re.sub(
         r'\n{3,}',
-        lambda m: '<br>' * (len(m.group(0)) - 2) + '\n\n',
+        lambda m: '\n\n' + ('<br>' * (len(m.group(0)) - 2)) + '\n\n',
         content
     )
 

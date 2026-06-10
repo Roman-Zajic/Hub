@@ -12,51 +12,18 @@
             --surface-page: #F0FAFA; --surface-card: #FFFFFF;
             --nav-h: 52px; --sidebar-w: 220px;
         }
-
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: var(--font); background: var(--surface-page); height: 100vh; display: flex; flex-direction: column; overflow: hidden; color: var(--teal-900); }
 
-        body {
-            font-family: var(--font); background: var(--surface-page);
-            height: 100vh; display: flex; flex-direction: column;
-            overflow: hidden; color: var(--teal-900);
-        }
+        .navbar { height: var(--nav-h); background: var(--teal-900); display: flex; align-items: center; padding: 0 16px; flex-shrink: 0; z-index: 10; }
+        .nav-brand-text, .nav-module-title { color: var(--teal-100); font-size: 1rem; font-weight: 600; white-space: nowrap; }
+        .nav-pipe { width: 2px; height: 18px; background: rgba(149,223,219,0.35); margin: 0 16px; flex-shrink: 0; }
 
-        /* --- TOP NAVBAR --- */
-        .navbar {
-            height: var(--nav-h); background: var(--teal-900);
-            display: flex; align-items: center;
-            padding: 0 16px; flex-shrink: 0; z-index: 10;
-        }
-
-        .nav-brand-text, .nav-module-title {
-            color: var(--teal-100); font-size: 1rem; font-weight: 600; white-space: nowrap;
-        }
-
-        .nav-pipe {
-            width: 2px; height: 18px; background: rgba(149,223,219,0.35);
-            margin: 0 16px; flex-shrink: 0;
-        }
-
-        /* --- APP BODY --- */
         .app-body { display: flex; flex: 1; overflow: hidden; }
-
-        /* --- SIDEBAR --- */
-        .sidebar {
-            width: var(--sidebar-w); background: var(--surface-card);
-            border-right: 1px solid var(--border); padding: 12px 0;
-            display: flex; flex-direction: column;
-        }
-
-        .nav-item {
-            display: block; padding: 12px 20px; color: var(--teal-700);
-            text-decoration: none; font-size: 0.875rem; font-weight: 500;
-            border-left: 6px solid transparent; transition: all 0.1s;
-        }
+        .sidebar { width: var(--sidebar-w); background: var(--surface-card); border-right: 1px solid var(--border); padding: 12px 0; display: flex; flex-direction: column; }
+        .nav-item { display: block; padding: 12px 20px; color: var(--teal-700); text-decoration: none; font-size: 0.875rem; font-weight: 500; border-left: 6px solid transparent; transition: all 0.1s; }
         .nav-item:hover { background: var(--surface-page); }
-        .nav-item.active {
-            background: var(--surface-page); color: var(--teal-900);
-            font-weight: 600; border-left-color: var(--teal-700);
-        }
+        .nav-item.active { background: var(--surface-page); color: var(--teal-900); font-weight: 600; border-left-color: var(--teal-700); }
 
         .main-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
         .content-area { flex: 1; padding: 24px; overflow: hidden; display: flex; flex-direction: column; }
@@ -66,33 +33,22 @@
 <body>
     <header class="navbar">
         <svg width="42" height="30" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block; flex-shrink:0;">
-            <rect x="0"  y="6"  width="11" height="8" rx="1.5" fill="#95DFDB"/>
-            <rect x="15" y="6"  width="11" height="8" rx="1.5" fill="#50C1C1"/>
-            <rect x="29" y="6"  width="11" height="8" rx="1.5" fill="#008282"/>
-            <rect x="0"  y="16" width="11" height="8" rx="1.5" fill="#95DFDB"/>
-            <rect x="15" y="16" width="11" height="8" rx="1.5" fill="#50C1C1"/>
-            <rect x="29" y="16" width="11" height="8" rx="1.5" fill="#008282"/>
-            <rect x="0"  y="26" width="11" height="8" rx="1.5" fill="#95DFDB"/>
-            <rect x="15" y="26" width="11" height="8" rx="1.5" fill="#50C1C1"/>
-            <rect x="29" y="26" width="11" height="8" rx="1.5" fill="#E1A01E"/>
+            <rect x="0" y="6" width="11" height="8" rx="1.5" fill="#95DFDB"/><rect x="15" y="6" width="11" height="8" rx="1.5" fill="#50C1C1"/><rect x="29" y="6" width="11" height="8" rx="1.5" fill="#008282"/>
+            <rect x="0" y="16" width="11" height="8" rx="1.5" fill="#95DFDB"/><rect x="15" y="16" width="11" height="8" rx="1.5" fill="#50C1C1"/><rect x="29" y="16" width="11" height="8" rx="1.5" fill="#008282"/>
+            <rect x="0" y="26" width="11" height="8" rx="1.5" fill="#95DFDB"/><rect x="15" y="26" width="11" height="8" rx="1.5" fill="#50C1C1"/><rect x="29" y="26" width="11" height="8" rx="1.5" fill="#E1A01E"/>
         </svg>
         <div class="nav-pipe"></div>
         <span class="nav-brand-text">financial models</span>
         <div class="nav-pipe"></div>
         <div class="nav-module-title">{% block module_name %}{% endblock %}</div>
     </header>
-
     <div class="app-body">
         <aside class="sidebar">
             <a href="/notes" class="nav-item active">Notes</a>
             <a href="#" class="nav-item">Assumptions</a>
             <a href="#" class="nav-item">Reporting</a>
         </aside>
-        <main class="main-view">
-            <div class="content-area">
-                {% block content %}{% endblock %}
-            </div>
-        </main>
+        <main class="main-view"><div class="content-area">{% block content %}{% endblock %}</div></main>
     </div>
 </body>
 </html>

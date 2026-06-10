@@ -1,0 +1,245 @@
+{% extends 'layout.html' %}
+{% block module_name %}Notes{% endblock %}
+
+{% block extra_css %}
+<style>
+    .notes-layout { display: grid; grid-template-columns: 240px 1fr; gap: 24px; height: 100%; min-height: 0; }
+    .file-panel { background: white; border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; }
+    .file-list { flex: 1; overflow-y: auto; padding: 12px; }
+    
+    /* Tree Styling */
+    .folder-group { margin-bottom: 2px; }
+    .folder-header { padding: 6px 0; font-size: 0.8125rem; font-weight: 600; color: var(--teal-900); cursor: pointer; border-radius: 4px; background: var(--surface-in); display: flex; align-items: center; }
+    .folder-header::before { content: '>'; font-family: monospace; width: 24px; display: flex; justify-content: center; transition: transform 0.1s; flex-shrink: 0; }
+    .folder-header.expanded::before { transform: rotate(90deg); }
+    #rootHeader::before { display: none; }
+    #rootHeader { padding-left: 10px; }
+    .folder-content { margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--border); display: none; }
+    .folder-content.expanded { display: block; }
+    .file-item { padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8125rem; color: var(--teal-700); }
+    .file-item:hover { background: var(--surface-page); }
+    .file-item.active { background: var(--teal-100); color: var(--teal-900); font-weight: 600; }
+
+    /* Editor & Preview */
+    .editor-panel { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+    .editor-textarea, .preview-area { flex: 1; border: 1px solid var(--border); padding: 20px; border-radius: 10px; font-size: 0.9375rem; outline: none; background: white; overflow-y: auto; }
+    .editor-textarea { font-family: monospace; resize: none; line-height: 1.6; }
+
+    /* --- MARKDOWN PREVIEW STYLES (FIXED FOR BACKFENCE) --- */
+    .preview-area { display: none; line-height: 1.6; color: var(--teal-900); }
+    .preview-area p { margin-bottom: 16px; }
+    .preview-area h1 { font-size: 1.5rem; border-bottom: 1px solid var(--border); margin: 24px 0 12px; padding-bottom: 8px; }
+    .preview-area h2 { font-size: 1.25rem; color: var(--teal-700); margin: 20px 0 10px; }
+    .preview-area ul, .preview-area ol { padding-left: 25px; margin-bottom: 16px; }
+    .preview-area li { margin-bottom: 4px; }
+
+    /* Table Fix */
+    .preview-area table { width: 100%; border-collapse: collapse; margin-bottom: 16px; border: 1px solid var(--border); }
+    .preview-area th, .preview-area td { padding: 10px; border: 1px solid var(--border); text-align: left; }
+    .preview-area th { background: var(--surface-in); font-weight: 600; }
+
+    /* BACKFENCE / CODE BLOCK FIX */
+    .preview-area pre {
+        display: block; /* Force block display */
+        background: var(--surface-in);
+        padding: 16px;
+        border-radius: 8px;
+        border: 1px solid var(--border);
+        margin: 16px 0;
+        overflow-x: auto; /* Horizontal scroll for long code */
+        white-space: pre; /* Critical for code formatting */
+    }
+    .preview-area code {
+        font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+        font-size: 0.875rem;
+        color: var(--teal-900);
+        background: var(--surface-in);
+        padding: 2px 5px;
+        border-radius: 4px;
+    }
+    .preview-area pre code {
+        background: none;
+        padding: 0;
+        display: block;
+    }
+
+    .preview-area blockquote { border-left: 3px solid var(--amber); padding-left: 15px; font-style: italic; color: var(--teal-700); margin: 16px 0; }
+    .preview-area a { color: var(--teal-700); font-weight: 600; text-decoration: underline; }
+
+    /* Footer */
+    .editor-footer { display: flex; gap: 8px; align-items: center; padding-top: 4px; }
+    .input { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; outline: none; font-size: 0.875rem; }
+    .btn { padding: 0 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 0.8125rem; height: 36px; display: inline-flex; align-items: center; }
+    .btn-outline { background: white; border: 1px solid var(--border); color: var(--teal-700); }
+    .btn-del { background: #FDEAED; color: #C41E3A; }
+    .save-status { font-size: 0.7rem; color: var(--teal-400); font-weight: 600; text-transform: uppercase; margin-left: auto; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="notes-layout">
+    <div class="file-panel">
+        <div class="file-list" id="treeRoot">
+            <div class="folder-header expanded" id="rootHeader" onclick="selectFolder('', this)">Notes</div>
+            <div class="folder-content expanded" id="rootFiles"></div>
+        </div>
+        <button onclick="newNote()" style="margin:10px; padding:8px; border:1px dashed var(--teal-700); background:none; color:var(--teal-700); cursor:pointer; border-radius:4px; font-size:0.75rem;">+ NEW NOTE</button>
+    </div>
+
+    <div class="editor-panel">
+        <textarea id="noteContent" class="editor-textarea" placeholder="# Start writing..." oninput="autoSave()"></textarea>
+        <div id="previewArea" class="preview-area"></div>
+
+        <div class="editor-footer">
+            <span style="font-size:0.75rem; color:var(--teal-700)" id="pathDisp">Notes /</span>
+            <input type="text" id="noteTitle" class="input" style="flex:1" placeholder="filename" oninput="autoSave()">
+            <span id="saveStatus" class="save-status"></span>
+            <button class="btn btn-outline" id="toggleModeBtn" onclick="toggleMode()">Preview Mode</button>
+            <button class="btn btn-del" id="delBtn" onclick="deleteNote()" style="display:none">Delete</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    let activeFolder = "";
+    let saveTimeout = null;
+    let isPreviewMode = false;
+    let isCreating = false; // Flag to track if we are making a new note
+    const files = {{ files|tojson }};
+
+    function buildTree() {
+        const rootContainer = document.getElementById('rootFiles');
+        rootContainer.innerHTML = ""; // Clear for rebuilds
+        const folders = {}; const rootFiles = [];
+        files.forEach(path => {
+            const parts = path.split('/');
+            const display = parts[parts.length-1].replace('.md', '');
+            if (parts.length > 1) {
+                if (!folders[parts[0]]) folders[parts[0]] = [];
+                folders[parts[0]].push({ path, name: display });
+            } else { rootFiles.push({ path, name: display }); }
+        });
+        Object.keys(folders).sort().forEach(name => {
+            const group = document.createElement('div');
+            group.className = 'folder-group';
+            group.innerHTML = `<div class="folder-header" onclick="toggleFolder(this, '${name}')">${name}</div><div class="folder-content" id="f-${name}"></div>`;
+            rootContainer.appendChild(group);
+            folders[name].forEach(f => createFileEl(document.getElementById(`f-${name}`), f.path, f.name));
+        });
+        rootFiles.forEach(f => createFileEl(rootContainer, f.path, f.name));
+    }
+
+    function createFileEl(parent, path, name) {
+        const el = document.createElement('div');
+        el.className = 'file-item'; el.innerText = name;
+        el.onclick = (e) => { e.stopPropagation(); loadNote(path, el); };
+        parent.appendChild(el);
+    }
+
+    function toggleFolder(el, name) {
+        const content = document.getElementById(`f-${name}`);
+        el.classList.toggle('expanded'); content.classList.toggle('expanded');
+        selectFolder(name, el);
+    }
+
+    function selectFolder(path, el) {
+        activeFolder = path;
+        document.querySelectorAll('.folder-header').forEach(h => h.classList.remove('active-folder'));
+        el.classList.add('active-folder');
+        document.getElementById('pathDisp').innerText = (path || 'Notes') + ' /';
+    }
+
+    function toggleMode() {
+        const txt = document.getElementById('noteContent');
+        const pre = document.getElementById('previewArea');
+        const btn = document.getElementById('toggleModeBtn');
+        if (!isPreviewMode) {
+            fetch('/notes/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: txt.value })
+            }).then(res => res.json()).then(data => {
+                pre.innerHTML = data.html;
+                txt.style.display = 'none'; pre.style.display = 'block';
+                btn.innerText = 'Edit Mode'; isPreviewMode = true;
+            });
+        } else {
+            txt.style.display = 'block'; pre.style.display = 'none';
+            btn.innerText = 'Preview Mode'; isPreviewMode = false;
+        }
+    }
+
+    function loadNote(fullPath, el) {
+        if (isPreviewMode) toggleMode();
+        isCreating = false; // We are loading an existing note
+        document.querySelectorAll('.file-item').forEach(i => i.classList.remove('active'));
+        el.classList.add('active');
+        const parts = fullPath.split('/');
+        const name = parts.pop().replace('.md', '');
+        activeFolder = parts.join('/');
+        fetch(`/notes/load/${fullPath}`).then(res => res.json()).then(data => {
+            document.getElementById('noteTitle').value = name;
+            document.getElementById('noteContent').value = data.content;
+            document.getElementById('pathDisp').innerText = (activeFolder || 'Notes') + ' /';
+            document.getElementById('delBtn').style.display = "flex";
+            document.getElementById('saveStatus').innerText = "";
+        });
+    }
+
+    function autoSave() {
+        const status = document.getElementById('saveStatus');
+        const name = document.getElementById('noteTitle').value;
+        if (!name) return;
+
+        status.innerText = "Saving...";
+        clearTimeout(saveTimeout);
+
+        saveTimeout = setTimeout(() => {
+            let filename = name.endsWith('.md') ? name : name + '.md';
+            const path = activeFolder ? `${activeFolder}/${filename}` : filename;
+
+            fetch('/notes/save', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    filename: path,
+                    content: document.getElementById('noteContent').value
+                })
+            }).then(() => {
+                status.innerText = "Saved";
+                // If this was the first save of a new note, reload to show it in the sidebar
+                if (isCreating) {
+                    isCreating = false;
+                    location.reload();
+                }
+            });
+        }, 800);
+    }
+
+    function newNote() {
+        if (isPreviewMode) toggleMode();
+        isCreating = true; // Set flag
+        document.getElementById('noteTitle').value = "";
+        document.getElementById('noteContent').value = "";
+        document.getElementById('delBtn').style.display = "none";
+        document.getElementById('saveStatus').innerText = "New Note Mode";
+        document.querySelectorAll('.file-item').forEach(i => i.classList.remove('active'));
+        document.getElementById('noteTitle').focus();
+    }
+
+    function deleteNote() {
+        let name = document.getElementById('noteTitle').value;
+        if (!name.endsWith('.md')) name += '.md';
+        const path = activeFolder ? `${activeFolder}/${name}` : name;
+        if (confirm("Delete?")) {
+            fetch('/notes/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: path })
+            }).then(() => location.reload());
+        }
+    }
+
+    buildTree();
+</script>
+{% endblock %}

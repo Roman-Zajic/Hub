@@ -1,75 +1,194 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>financial models</title>
     <style>
+        /* ── Design Tokens ─────────────────────────────────── */
         :root {
-            --font: "Segoe UI", system-ui, -apple-system, sans-serif;
-            --teal-900: #005A5A; --teal-700: #008282; --teal-400: #50C1C1;
-            --teal-100: #95DFDB; --amber: #E1A01E; --border: #D0ECEB;
-            --surface-page: #F0FAFA; --surface-card: #FFFFFF;
-            --nav-h: 52px; --sidebar-w: 220px;
+            --font:          "Segoe UI", system-ui, -apple-system, sans-serif;
+            /* Brand colour palette */
+            --teal-900:      #005A5A;
+            --teal-700:      #008282;
+            --teal-400:      #50C1C1;
+            --teal-100:      #95DFDB;
+            --amber:         #E1A01E;
+            --red:           #C41E3A;
+            --ink:           #012D2C;
+            /* Semantic tokens */
+            --text:          #005A5A;
+            --text-muted:    #008282;
+            --surface-page:  #F0FAFA;
+            --surface-card:  #FFFFFF;
+            --surface-in:    #F0FAFA;
+            --border:        #D0ECEB;
+            --shadow:        0 1px 4px rgba(1,45,44,.10);
+            --shadow-md:     0 4px 14px rgba(1,45,44,.12);
+            --r:             10px;
+            /* Layout */
+            --nav-h:         52px;
+            --sidebar-w:     220px;
         }
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: var(--font); background: var(--surface-page); height: 100vh; display: flex; flex-direction: column; overflow: hidden; color: var(--teal-900); }
 
-        .navbar { height: var(--nav-h); background: var(--teal-900); display: flex; align-items: center; padding: 0 16px; flex-shrink: 0; z-index: 10; }
-        .nav-brand-text, .nav-module-title { color: var(--teal-100); font-size: 1rem; font-weight: 600; white-space: nowrap; }
-        .nav-pipe { width: 2px; height: 18px; background: rgba(149,223,219,0.35); margin: 0 16px; flex-shrink: 0; }
+        /* ── Reset ─────────────────────────────────────────── */
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: var(--font);
+            font-size: 0.9375rem;
+            color: var(--text);
+            background: var(--surface-page);
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ── Shell ─────────────────────────────────────────── */
+        .navbar {
+            height: var(--nav-h);
+            background: var(--teal-900);
+            display: flex;
+            align-items: center;
+            padding: 0 16px;
+            flex-shrink: 0;
+            z-index: 10;
+        }
+        .nav-brand-text,
+        .nav-module-title { color: var(--teal-100); font-size: 0.9375rem; font-weight: 600; white-space: nowrap; }
+        .nav-pipe { width: 1px; height: 18px; background: rgba(149,223,219,.30); margin: 0 14px; flex-shrink: 0; }
 
         .app-body { display: flex; flex: 1; overflow: hidden; }
-        .sidebar { width: var(--sidebar-w); background: var(--surface-card); border-right: 1px solid var(--border); padding: 12px 0; display: flex; flex-direction: column; }
+
+        .sidebar {
+            width: var(--sidebar-w);
+            background: var(--surface-card);
+            border-right: 1px solid var(--border);
+            padding: 12px 0;
+            display: flex;
+            flex-direction: column;
+        }
         .nav-item {
             display: block;
             padding: 12px 20px;
-            color: var(--teal-700);
+            color: var(--text-muted);
             text-decoration: none;
             font-size: 0.875rem;
             font-weight: 500;
-            /* Create the base for the vertical line */
             border-left: 6px solid transparent;
-            transition: all 0.2s ease;
+            transition: background 130ms, color 130ms;
         }
+        .nav-item:hover  { background: var(--surface-in); color: var(--text); }
+        .nav-item.active { background: var(--teal-100); color: var(--text); font-weight: 600; border-left-color: var(--teal-700); }
 
-        .nav-item:hover {
-            background: var(--surface-page);
-        }
+        .main-view   { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        .content-area { flex: 1; padding: 24px; overflow-y: auto; display: flex; flex-direction: column; }
 
-        /* The Selected State */
-        .nav-item.active {
-            background: var(--teal-100);       /* Light teal background */
-            color: var(--teal-900);            /* Darker text for contrast */
+        /* ── Shared Component Tokens ───────────────────────── */
+        /* Used by every module — define once here, never repeat. */
+
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-family: var(--font);
+            font-size: 0.875rem;
             font-weight: 600;
-            border-left: 6px solid var(--teal-700); /* Strong vertical line */
+            padding: 9px 20px;
+            border-radius: 6px;
+            border: 1px solid transparent;
+            cursor: pointer;
+            text-decoration: none;
+            white-space: nowrap;
+            line-height: 1;
+            transition: background 130ms, color 130ms, border-color 130ms;
+            user-select: none;
+        }
+        .btn:active  { opacity: .85; }
+        .btn:disabled { opacity: .4; cursor: not-allowed; }
+
+        /* Primary: teal-900 resting, teal-700 hover — matches brand spec */
+        .btn-primary { background: var(--teal-900); color: #fff; border-color: var(--teal-900); }
+        .btn-primary:hover { background: var(--teal-700); border-color: var(--teal-700); }
+
+        /* Outline */
+        .btn-outline { background: transparent; color: var(--text); border-color: var(--border); }
+        .btn-outline:hover { border-color: var(--teal-700); color: var(--teal-700); }
+
+        /* Danger */
+        .btn-danger { background: var(--red); color: #fff; border-color: var(--red); }
+        .btn-danger:hover { background: #A01830; border-color: #A01830; }
+
+        /* Sizes */
+        .btn-sm { font-size: 0.75rem; padding: 6px 14px; }
+        .btn-lg { font-size: 1rem; padding: 12px 28px; }
+
+        .input {
+            font-family: var(--font);
+            font-size: 0.875rem;
+            color: var(--text);
+            background: var(--surface-card);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 9px 12px;
+            outline: none;
+            transition: border-color 130ms, box-shadow 130ms;
+        }
+        .input::placeholder { color: #7A9E9E; }
+        .input:hover  { border-color: var(--teal-700); }
+        .input:focus  { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+        .card {
+            background: var(--surface-card);
+            border: 1px solid var(--border);
+            border-radius: var(--r);
+            padding: 20px;
+            box-shadow: var(--shadow);
         }
 
-        .main-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-        .content-area { flex: 1; padding: 24px; overflow: hidden; display: flex; flex-direction: column; }
+        .section-label {
+            font-size: 0.6875rem;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            margin-bottom: 12px;
+        }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
     <header class="navbar">
-        <svg width="42" height="30" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block; flex-shrink:0;">
-            <rect x="0" y="6" width="11" height="8" rx="1.5" fill="#95DFDB"/><rect x="15" y="6" width="11" height="8" rx="1.5" fill="#50C1C1"/><rect x="29" y="6" width="11" height="8" rx="1.5" fill="#008282"/>
-            <rect x="0" y="16" width="11" height="8" rx="1.5" fill="#95DFDB"/><rect x="15" y="16" width="11" height="8" rx="1.5" fill="#50C1C1"/><rect x="29" y="16" width="11" height="8" rx="1.5" fill="#008282"/>
-            <rect x="0" y="26" width="11" height="8" rx="1.5" fill="#95DFDB"/><rect x="15" y="26" width="11" height="8" rx="1.5" fill="#50C1C1"/><rect x="29" y="26" width="11" height="8" rx="1.5" fill="#E1A01E"/>
+        <!-- Logo -->
+        <svg width="42" height="30" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;flex-shrink:0">
+            <rect x="0"  y="6"  width="11" height="8" rx="1.5" fill="#95DFDB"/>
+            <rect x="15" y="6"  width="11" height="8" rx="1.5" fill="#008282"/>
+            <rect x="29" y="6"  width="11" height="8" rx="1.5" fill="#005A5A"/>
+            <rect x="0"  y="16" width="11" height="8" rx="1.5" fill="#95DFDB"/>
+            <rect x="15" y="16" width="11" height="8" rx="1.5" fill="#008282"/>
+            <rect x="29" y="16" width="11" height="8" rx="1.5" fill="#005A5A"/>
+            <rect x="0"  y="26" width="11" height="8" rx="1.5" fill="#95DFDB"/>
+            <rect x="15" y="26" width="11" height="8" rx="1.5" fill="#008282"/>
+            <rect x="29" y="26" width="11" height="8" rx="1.5" fill="#E1A01E"/>
         </svg>
         <div class="nav-pipe"></div>
         <span class="nav-brand-text">financial models</span>
         <div class="nav-pipe"></div>
         <div class="nav-module-title">{% block module_name %}{% endblock %}</div>
     </header>
+
     <div class="app-body">
         <aside class="sidebar">
-            <!-- The class will be 'active' only if the URL matches -->
-            <a href="/notes" class="nav-item {{ 'active' if request.path == '/notes' or request.path == '/' else '' }}">Notes</a>
-            <a href="/compare" class="nav-item {{ 'active' if request.path == '/compare' else '' }}">Compare</a>
-            <a href="/time" class="nav-item {{ 'active' if request.path == '/time' else '' }}">Time</a> 
+            {% set path = request.path %}
+            <a href="/notes"   class="nav-item {% if path in ('/', '/notes')  %}active{% endif %}">Notes</a>
+            <a href="/compare" class="nav-item {% if path == '/compare'       %}active{% endif %}">Compare</a>
+            <a href="/time"    class="nav-item {% if path == '/time'          %}active{% endif %}">Time</a>
         </aside>
-        <main class="main-view"><div class="content-area">{% block content %}{% endblock %}</div></main>
+        <main class="main-view">
+            <div class="content-area">{% block content %}{% endblock %}</div>
+        </main>
     </div>
 </body>
 </html>

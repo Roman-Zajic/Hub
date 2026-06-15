@@ -3,384 +3,372 @@
 
 {% block extra_css %}
 <style>
-    .notes-layout { display: grid; grid-template-columns: 240px 1fr; gap: 24px; height: 100%; min-height: 0; }
-    .file-panel { background: white; border: 1px solid var(--border); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; }
-    .file-list { flex: 1; overflow-y: auto; padding: 12px; }
-    .folder-header { padding: 6px 0; font-size: 0.8125rem; font-weight: 600; color: var(--teal-900); cursor: pointer; border-radius: 4px; background: var(--surface-in); display: flex; align-items: center; }
-    .folder-header::before { content: '>'; font-family: monospace; width: 24px; display: flex; justify-content: center; transition: transform 0.1s; flex-shrink: 0; }
-    .folder-header.expanded::before { transform: rotate(90deg); }
-    #rootHeader::before { display: none; } #rootHeader { padding-left: 10px; }
-    .folder-content { margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--border); display: none; }
-    .folder-content.expanded { display: block; }
-    .file-item { padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8125rem; color: var(--teal-700); }
-    .file-item.active { background: var(--teal-100); color: var(--teal-900); font-weight: 600; }
-
-    .editor-panel { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-    .editor-textarea { display: none; flex: 1; border: 1px solid var(--border); padding: 16px; border-radius: 10px; font-size: 0.9375rem; outline: none; background: white; overflow-y: auto; font-family: monospace; resize: none; line-height: 1.6; }
-
-    .preview-area {
-    display: block;
-    flex: 1;
-    border: 1px solid var(--border);
-    padding: 20px;
-    border-radius: 10px;
-    font-size: 0.9375rem;
-    background: white;
-    overflow-y: auto;
-    line-height: 1.6;
-    color: var(--teal-900);
+    /* ── Notes Layout ──────────────────────────────────────── */
+    .notes-layout {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        gap: 24px;
+        height: 100%;
+        min-height: 0;
     }
 
-    /* Markdown defaults */
-    .preview-area p {
-        margin: 0 0 1em;
-    }
-
-    .preview-area h1,
-    .preview-area h2,
-    .preview-area h3 {
-        margin-top: 0;          /* Removes space above the header */
-        margin-left: 0;         /* Ensures no left indentation */
-        padding-left: 0;        /* Ensures no left padding */
-        color: var(--teal-900);
-        font-weight: 700;
-        text-decoration: none;  /* Removes any standard underlines */
-    }
-
-    .preview-area h1 {
-        font-size: 1.8rem;
-        margin-bottom: 0.5em;   /* Space only after the header */
-        border-bottom: none;    /* Specifically removes the underline you had before */
-        padding-bottom: 0;
-    }
-
-    .preview-area h2 {
-        font-size: 1.4rem;
-        margin-bottom: 0.4em;
-    }
-
-    .preview-area h3 {
-        font-size: 1.2rem;
-        margin-bottom: 0.3em;
-    }
-
-    /* Optional: If you want headers to have a little space ONLY if they
-       follow another paragraph (but not at the very top of the document) */
-    .preview-area * + h1,
-    .preview-area * + h2,
-    .preview-area * + h3 {
-        margin-top: 1.5em;
-    }
-
-    .preview-area ul,
-    .preview-area ol {
-        margin: 1em 0;
-        padding-left: 2em;
-    }
-
-    .preview-area li {
-        margin: 0.25em 0;
-    }
-
-    .preview-area hr {
-        border: none;
-        height: 2px;
-        background-color: var(--teal-100);
-        margin: 32px auto;
-        border-radius: 2px;
-    }
-
-    .preview-area table {
-        display: table;            /* Changed from block to table */
-        width: fit-content;        /* Hugs the content */
-        max-width: 100%;           /* Prevents overflow */
-        margin: 24px 0;
-        font-size: 0.875rem;
-        background: white;
-
-        /* Rounded corner logic for tables */
-        border-collapse: separate;
-        border-spacing: 0;
+    /* ── File Tree ─────────────────────────────────────────── */
+    .file-panel {
+        background: var(--surface-card);
         border: 1px solid var(--border);
-        border-radius: 10px;
+        border-radius: var(--r);
+        box-shadow: var(--shadow);
+        display: flex;
+        flex-direction: column;
         overflow: hidden;
     }
-
-    .preview-area th {
-        background-color: var(--teal-100);
-        color: var(--teal-900);
-        font-weight: 600;
-        text-align: left;
-        padding: 12px 16px;
-        /* Only add borders to the right and bottom */
-        border-right: 1px solid var(--border);
-        border-bottom: 1px solid var(--border);
-    }
-
-    .preview-area td {
-        padding: 10px 16px;
-        color: var(--teal-700);
-        border-right: 1px solid var(--border);
-        border-bottom: 1px solid var(--border);
-    }
-
-    /* Remove the far-right border so it doesn't double up with the table border */
-    .preview-area th:last-child,
-    .preview-area td:last-child {
-        border-right: none;
-    }
-
-    /* Remove the bottom border of the last row */
-    .preview-area tr:last-child td {
-        border-bottom: none;
-    }
-
-    .preview-area tr:nth-child(even) {
-        background-color: #F9FEFE;
-    }
-
-    .preview-area pre {
-        margin: 1em 0;
-        padding: 16px;
-        background: #f5f7f7;
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        overflow-x: auto;
-        white-space: pre-wrap;
-    }
-
-    .preview-area code {
-        font-family: monospace;
-    }
-
-    .preview-area pre code {
+    .file-list   { flex: 1; overflow-y: auto; padding: 12px; }
+    .new-note-btn {
+        margin: 10px;
+        padding: 8px;
+        border: 1px dashed var(--teal-700);
         background: none;
-        padding: 0;
+        color: var(--text-muted);
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        font-family: var(--font);
+        transition: background 130ms, color 130ms;
     }
+    .new-note-btn:hover { background: var(--surface-in); color: var(--text); }
 
-    .preview-area blockquote {
-        margin: 1em 0;
-        padding-left: 16px;
-        border-left: 4px solid var(--amber);
-        font-style: italic;
+    .folder-header {
+        padding: 6px 0 6px 10px;
+        font-size: 0.8125rem;
+        font-weight: 600;
+        color: var(--text);
+        cursor: pointer;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        transition: background 130ms;
     }
-
-    .preview-area pre {
-    position: relative;
-    margin: 1em 0;
-    padding: 16px;
-    background: #f5f7f7;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    overflow-x: auto;
-    white-space: pre-wrap;
+    .folder-header:hover { background: var(--surface-in); }
+    .folder-header::before {
+        content: '›';
+        font-size: 1rem;
+        width: 20px;
+        flex-shrink: 0;
+        transition: transform 0.15s;
+        display: inline-block;
     }
+    .folder-header.expanded::before { transform: rotate(90deg); }
+    #rootHeader::before { display: none; }
 
-    .copy-code-btn {
-        position: absolute;
-        top: 8px;
-        right: 8px;
-        border: 1px solid var(--border);
-        background: white;
-        color: var(--teal-700);
-        padding: 4px 10px;
+    .folder-content { margin-left: 12px; padding-left: 12px; border-left: 1px solid var(--border); display: none; }
+    .folder-content.expanded { display: block; }
+
+    .file-item {
+        padding: 5px 8px;
         border-radius: 4px;
         cursor: pointer;
-        font-size: 0.75rem;
-        font-weight: 600;
+        font-size: 0.8125rem;
+        color: var(--text-muted);
+        transition: background 130ms, color 130ms;
+    }
+    .file-item:hover  { background: var(--surface-in); color: var(--text); }
+    .file-item.active { background: var(--teal-100); color: var(--ink); font-weight: 600; }
+
+    /* ── Editor Panel ──────────────────────────────────────── */
+    .editor-panel { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+
+    .editor-textarea {
+        flex: 1;
+        border: 1px solid var(--border);
+        padding: 16px;
+        border-radius: var(--r);
+        font-size: 0.9375rem;
+        font-family: monospace;
+        color: var(--text);
+        outline: none;
+        background: var(--surface-card);
+        overflow-y: auto;
+        resize: none;
+        line-height: 1.6;
+        display: none;
+        box-shadow: var(--shadow);
+        transition: border-color 130ms, box-shadow 130ms;
+    }
+    .editor-textarea:hover { border-color: var(--teal-700); }
+    .editor-textarea:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+    .preview-area {
+        flex: 1;
+        border: 1px solid var(--border);
+        padding: 20px;
+        border-radius: var(--r);
+        font-size: 0.9375rem;
+        background: var(--surface-card);
+        box-shadow: var(--shadow);
+        overflow-y: auto;
+        line-height: 1.6;
+        color: var(--text);
     }
 
-    .copy-code-btn:hover {
-        background: var(--surface-page);
-    }
+    /* ── Markdown Preview Styles ───────────────────────────── */
+    .preview-area p           { margin: 0 0 1em; }
+    .preview-area h1,
+    .preview-area h2,
+    .preview-area h3          { color: var(--text); font-weight: 600; margin-bottom: 0.4em; }
+    .preview-area h1          { font-size: 1.75rem; margin-bottom: 0.5em; }
+    .preview-area h2          { font-size: 1.375rem; }
+    .preview-area h3          { font-size: 1.125rem; }
+    .preview-area * + h1,
+    .preview-area * + h2,
+    .preview-area * + h3      { margin-top: 1.5em; }
+    .preview-area ul,
+    .preview-area ol          { margin: 1em 0; padding-left: 2em; }
+    .preview-area li          { margin: 0.25em 0; }
+    .preview-area hr          { border: none; height: 2px; background: var(--border); margin: 32px auto; border-radius: 2px; }
+    .preview-area blockquote  { margin: 1em 0; padding-left: 16px; border-left: 4px solid var(--amber); font-style: italic; color: var(--text-muted); }
 
+    .preview-area table {
+        width: fit-content; max-width: 100%; margin: 24px 0;
+        font-size: 0.875rem; background: var(--surface-card);
+        border-collapse: separate; border-spacing: 0;
+        border: 1px solid var(--border); border-radius: var(--r); overflow: hidden;
+        box-shadow: var(--shadow);
+    }
+    .preview-area th { background: var(--surface-in); color: var(--text); font-weight: 600; text-align: left; padding: 10px 16px; border-right: 1px solid var(--border); border-bottom: 2px solid var(--border); font-size: 0.8125rem; }
+    .preview-area td { padding: 10px 16px; color: var(--text); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .preview-area th:last-child,
+    .preview-area td:last-child  { border-right: none; }
+    .preview-area tr:last-child td { border-bottom: none; }
+    .preview-area tbody tr:hover td { background: var(--surface-in); }
+
+    .preview-area pre {
+        position: relative; margin: 1em 0; padding: 16px;
+        background: var(--surface-in); border: 1px solid var(--border);
+        border-radius: 8px; overflow-x: auto; white-space: pre-wrap;
+    }
+    .preview-area code         { font-family: monospace; font-size: 0.875em; }
+    .preview-area pre code     { background: none; padding: 0; }
+
+    .copy-code-btn {
+        position: absolute; top: 8px; right: 8px;
+        border: 1px solid var(--border); background: var(--surface-card);
+        color: var(--text-muted); padding: 4px 10px;
+        border-radius: 4px; cursor: pointer;
+        font-size: 0.75rem; font-weight: 600; font-family: var(--font);
+        transition: background 130ms, color 130ms, border-color 130ms;
+    }
+    .copy-code-btn:hover { background: var(--surface-in); color: var(--text); border-color: var(--teal-700); }
+
+    /* ── Footer ────────────────────────────────────────────── */
     .editor-footer { display: flex; gap: 8px; align-items: center; padding-top: 4px; }
-    .input { border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; outline: none; font-size: 0.875rem; }
-    .btn { padding: 0 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: 600; font-size: 0.8125rem; height: 36px; display: inline-flex; align-items: center; }
-    .btn-outline { background: white; border: 1px solid var(--border); color: var(--teal-700); }
-    .btn-del { background: #FDEAED; color: #C41E3A; }
-    .save-status { font-size: 0.7rem; color: var(--teal-400); font-weight: 600; text-transform: uppercase; margin-left: auto; }
+    .path-display  { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
+    .save-status   { font-size: 0.6875rem; color: var(--teal-400); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-left: auto; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="notes-layout">
+
+    <!-- ── File Tree ── -->
     <div class="file-panel">
         <div class="file-list" id="treeRoot">
-            <div class="folder-header expanded" id="rootHeader" onclick="selectFolder('', this)">Notes</div>
+            <div class="folder-header expanded" id="rootHeader">Notes</div>
             <div class="folder-content expanded" id="rootFiles"></div>
         </div>
-        <button onclick="newNote()" style="margin:10px; padding:8px; border:1px dashed var(--teal-700); background:none; color:var(--teal-700); cursor:pointer; border-radius:4px; font-size:0.75rem;">+ NEW NOTE</button>
+        <button class="new-note-btn" onclick="newNote()">+ NEW NOTE</button>
     </div>
+
+    <!-- ── Editor / Preview ── -->
     <div class="editor-panel">
-        <textarea id="noteContent" class="editor-textarea" placeholder="# Start writing..." oninput="autoSave()"></textarea>
+        <textarea id="noteContent" class="editor-textarea"
+                  placeholder="# Start writing..."
+                  oninput="scheduleSave()"></textarea>
         <div id="previewArea" class="preview-area"></div>
+
         <div class="editor-footer">
-            <span style="font-size:0.75rem; color:var(--teal-700)" id="pathDisp">Notes /</span>
-            <input type="text" id="noteTitle" class="input" style="flex:1" placeholder="filename" oninput="autoSave()">
+            <span class="path-display" id="pathDisp">Notes /</span>
+            <input type="text" id="noteTitle" class="input" style="flex:1"
+                   placeholder="filename" oninput="scheduleSave()">
             <span id="saveStatus" class="save-status"></span>
-            <button class="btn btn-outline" id="toggleModeBtn" onclick="toggleMode()">Edit Mode</button>
-            <button class="btn btn-del" id="delBtn" onclick="deleteNote()" style="display:none">Delete</button>
+            <button class="btn btn-outline" id="toggleModeBtn" onclick="toggleMode()">Edit</button>
+            <button class="btn btn-danger" id="delBtn" onclick="deleteNote()" style="display:none">Delete</button>
         </div>
     </div>
 </div>
 
 <script>
-    let activeFolder = ""; let saveTimeout = null; let isPreviewMode = true; let isCreating = false;
-    const files = {{ files|tojson }};
+    // ── State ────────────────────────────────────────────────
+    const files       = {{ files|tojson }};
+    let activeFolder  = '';
+    let saveTimer     = null;
+    let isPreview     = true;   // true = showing rendered HTML
+    let isNew         = false;  // true = unsaved new note (reload on first save)
 
-    function addCopyButtons() {
-        document.querySelectorAll('#previewArea pre').forEach(pre => {
+    // ── DOM refs ─────────────────────────────────────────────
+    const elContent   = document.getElementById('noteContent');
+    const elPreview   = document.getElementById('previewArea');
+    const elTitle     = document.getElementById('noteTitle');
+    const elPath      = document.getElementById('pathDisp');
+    const elStatus    = document.getElementById('saveStatus');
+    const elToggleBtn = document.getElementById('toggleModeBtn');
+    const elDelBtn    = document.getElementById('delBtn');
 
-            if (pre.querySelector('.copy-code-btn')) return;
-
-            const btn = document.createElement('button');
-            btn.className = 'copy-code-btn';
-            btn.textContent = 'Copy';
-
-            btn.onclick = async () => {
-                const code = pre.querySelector('code');
-
-                try {
-                    await navigator.clipboard.writeText(
-                        code ? code.innerText : pre.innerText
-                    );
-
-                    btn.textContent = 'Copied!';
-
-                    setTimeout(() => {
-                        btn.textContent = 'Copy';
-                    }, 1500);
-
-                } catch {
-                    btn.textContent = 'Failed';
-
-                    setTimeout(() => {
-                        btn.textContent = 'Copy';
-                    }, 1500);
-                }
-            };
-
-            pre.appendChild(btn);
-        });
-    }
-
+    // ── Tree ─────────────────────────────────────────────────
     function buildTree() {
-        const rootContainer = document.getElementById('rootFiles');
-        const folders = {}; const rootFiles = [];
+        const root    = document.getElementById('rootFiles');
+        const folders = {};
+        const loose   = [];
+
         files.forEach(path => {
             const parts = path.split('/');
-            const display = parts[parts.length-1].replace('.md', '');
+            const label = parts.at(-1).replace('.md', '');
             if (parts.length > 1) {
-                if (!folders[parts[0]]) folders[parts[0]] = [];
-                folders[parts[0]].push({ path, name: display });
-            } else { rootFiles.push({ path, name: display }); }
+                (folders[parts[0]] ??= []).push({ path, label });
+            } else {
+                loose.push({ path, label });
+            }
         });
+
         Object.keys(folders).sort().forEach(name => {
             const group = document.createElement('div');
-            group.className = 'folder-group';
-            group.innerHTML = `<div class="folder-header" onclick="toggleFolder(this, '${name}')">${name}</div><div class="folder-content" id="f-${name}"></div>`;
-            rootContainer.appendChild(group);
-            folders[name].forEach(f => createFileEl(document.getElementById(`f-${name}`), f.path, f.name));
+            group.innerHTML =
+                `<div class="folder-header" onclick="toggleFolder(this,'${name}')">${name}</div>
+                 <div class="folder-content" id="f-${name}"></div>`;
+            root.appendChild(group);
+            folders[name].forEach(f => appendFileEl(document.getElementById(`f-${name}`), f.path, f.label));
         });
-        rootFiles.forEach(f => createFileEl(rootContainer, f.path, f.name));
+
+        loose.forEach(f => appendFileEl(root, f.path, f.label));
     }
 
-    function createFileEl(parent, path, name) {
-        const el = document.createElement('div'); el.className = 'file-item'; el.innerText = name;
-        el.onclick = (e) => { e.stopPropagation(); loadNote(path, el); };
+    function appendFileEl(parent, path, label) {
+        const el = document.createElement('div');
+        el.className  = 'file-item';
+        el.textContent = label;
+        el.onclick = e => { e.stopPropagation(); loadNote(path, el); };
         parent.appendChild(el);
     }
 
     function toggleFolder(el, name) {
-        const content = document.getElementById(`f-${name}`);
-        el.classList.toggle('expanded'); content.classList.toggle('expanded');
-        selectFolder(name, el);
+        el.classList.toggle('expanded');
+        document.getElementById(`f-${name}`).classList.toggle('expanded');
     }
 
-    function selectFolder(path, el) {
-        activeFolder = path;
-        document.querySelectorAll('.folder-header').forEach(h => h.classList.remove('active-folder'));
-        el.classList.add('active-folder');
-        document.getElementById('pathDisp').innerText = (path || 'Notes') + ' /';
-    }
-
-    function toggleMode() {
-        const txt = document.getElementById('noteContent'); const pre = document.getElementById('previewArea'); const btn = document.getElementById('toggleModeBtn');
-        if (isPreviewMode) {
-            txt.style.display = 'block'; pre.style.display = 'none';
-            btn.innerText = 'Preview Mode'; isPreviewMode = false;
-        } else { renderPreview(); }
-    }
-
-    function renderPreview() {
-        const txt = document.getElementById('noteContent');
-        const pre = document.getElementById('previewArea');
-        const btn = document.getElementById('toggleModeBtn');
-
-        fetch('/notes/preview', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                content: txt.value
+    // ── Mode: preview ↔ edit ─────────────────────────────────
+    function setMode(mode) {
+        isPreview = mode === 'preview';
+        if (isPreview) {
+            // Render then swap
+            fetch('/notes/preview', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: elContent.value })
             })
-        })
-        .then(res => res.json())
-        .then(data => {
+            .then(r => r.json())
+            .then(({ html }) => {
+                elPreview.innerHTML = html;
+                attachCopyButtons();
+                elContent.style.display = 'none';
+                elPreview.style.display  = 'block';
+                elToggleBtn.textContent  = 'Edit';
+            });
+        } else {
+            elPreview.style.display  = 'none';
+            elContent.style.display  = 'block';
+            elContent.focus();
+            elToggleBtn.textContent  = 'Preview';
+        }
+    }
 
-            pre.innerHTML = data.html;
+    function toggleMode() { setMode(isPreview ? 'edit' : 'preview'); }
 
-            addCopyButtons();
-
-            txt.style.display = 'none';
-            pre.style.display = 'block';
-
-            btn.innerText = 'Edit Mode';
-            isPreviewMode = true;
+    // ── Copy buttons in code blocks ──────────────────────────
+    function attachCopyButtons() {
+        elPreview.querySelectorAll('pre:not(:has(.copy-code-btn))').forEach(pre => {
+            const btn = document.createElement('button');
+            btn.className   = 'copy-code-btn';
+            btn.textContent = 'Copy';
+            btn.onclick = async () => {
+                const text = (pre.querySelector('code') ?? pre).innerText;
+                await navigator.clipboard.writeText(text).catch(() => {});
+                btn.textContent = 'Copied!';
+                setTimeout(() => btn.textContent = 'Copy', 1500);
+            };
+            pre.appendChild(btn);
         });
     }
 
+    // ── Load / Save / Delete ─────────────────────────────────
     function loadNote(fullPath, el) {
-        isCreating = false;
+        isNew = false;
         document.querySelectorAll('.file-item').forEach(i => i.classList.remove('active'));
         el.classList.add('active');
-        const parts = fullPath.split('/'); const name = parts.pop().replace('.md', ''); activeFolder = parts.join('/');
-        fetch(`/notes/load/${fullPath}`).then(res => res.json()).then(data => {
-            document.getElementById('noteTitle').value = name; document.getElementById('noteContent').value = data.content;
-            document.getElementById('pathDisp').innerText = (activeFolder || 'Notes') + ' /';
-            document.getElementById('delBtn').style.display = "flex"; document.getElementById('saveStatus').innerText = "";
-            renderPreview();
-        });
+
+        const parts  = fullPath.split('/');
+        const name   = parts.pop().replace('.md', '');
+        activeFolder = parts.join('/');
+
+        fetch(`/notes/load/${fullPath}`)
+            .then(r => r.json())
+            .then(({ content }) => {
+                elTitle.value    = name;
+                elContent.value  = content;
+                elPath.textContent = (activeFolder || 'Notes') + ' /';
+                elStatus.textContent = '';
+                elDelBtn.style.display = 'flex';
+                setMode('preview');
+            });
     }
 
-    function autoSave() {
-        const status = document.getElementById('saveStatus'); const name = document.getElementById('noteTitle').value; if (!name) return;
-        status.innerText = "Saving..."; clearTimeout(saveTimeout);
-        saveTimeout = setTimeout(() => {
-            let filename = name.endsWith('.md') ? name : name + '.md';
-            const path = activeFolder ? `${activeFolder}/${filename}` : filename;
-            fetch('/notes/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: path, content: document.getElementById('noteContent').value }) })
-            .then(() => { status.innerText = "Saved"; if (isCreating) { isCreating = false; location.reload(); } });
-        }, 800);
+    function scheduleSave() {
+        const name = elTitle.value.trim();
+        if (!name) return;
+        elStatus.textContent = 'Saving…';
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveNote, 800);
+    }
+
+    function saveNote() {
+        const name = elTitle.value.trim();
+        if (!name) return;
+
+        const filename = name.endsWith('.md') ? name : name + '.md';
+        const path     = activeFolder ? `${activeFolder}/${filename}` : filename;
+
+        fetch('/notes/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: path, content: elContent.value })
+        }).then(() => {
+            elStatus.textContent = 'Saved';
+            if (isNew) { isNew = false; location.reload(); }
+        });
     }
 
     function newNote() {
-        isCreating = true;
-        document.getElementById('noteTitle').value = ""; document.getElementById('noteContent').value = "";
-        document.getElementById('delBtn').style.display = "none";
+        isNew = true;
+        elTitle.value    = '';
+        elContent.value  = '';
+        elDelBtn.style.display = 'none';
+        elStatus.textContent   = '';
         document.querySelectorAll('.file-item').forEach(i => i.classList.remove('active'));
-        isPreviewMode = false;
-        document.getElementById('noteContent').style.display = 'block'; document.getElementById('previewArea').style.display = 'none';
-        document.getElementById('toggleModeBtn').innerText = 'Preview Mode';
-        document.getElementById('noteTitle').focus();
+        setMode('edit');
+        elTitle.focus();
     }
 
     function deleteNote() {
-        let name = document.getElementById('noteTitle').value; if (!name.endsWith('.md')) name += '.md';
+        let name = elTitle.value.trim();
+        if (!name) return;
+        if (!name.endsWith('.md')) name += '.md';
         const path = activeFolder ? `${activeFolder}/${name}` : name;
-        if (confirm("Delete?")) { fetch('/notes/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: path }) }).then(() => location.reload()); }
+
+        if (!confirm(`Delete "${name}"?`)) return;
+
+        fetch('/notes/delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ filename: path })
+        }).then(() => location.reload());
     }
 
     buildTree();

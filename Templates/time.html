@@ -3,194 +3,976 @@
 
 {% block extra_css %}
 <style>
-    .time-layout { display: grid; grid-template-columns: 1fr 380px; gap: 24px; height: 100%; min-height: 0; }
-    .scroll-panel { overflow-y: auto; padding-right: 8px; }
+/* ── Page shell ───────────────────────────────────────────── */
+.time-root {
+    display: flex;
+    flex-direction: column;
+    min-height: 100%;
+    gap: 0;
+}
 
-    .card { background: white; border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin-bottom: 20px; display: flex; flex-direction: column; min-height: 0; }
-    .section-label { font-size: 0.7rem; font-weight: 800; color: var(--teal-700); text-transform: uppercase; margin-bottom: 12px; letter-spacing: 1px; }
+/* ── Collapsible section ──────────────────────────────────── */
+.section {
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    background: var(--surface-card);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
 
-    /* Sticky Table Container */
-    .table-container { flex: 1; overflow-y: auto; border: 1px solid var(--surface-page); border-radius: 6px; }
-    .activity-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; table-layout: fixed; }
+/* Daily section: tries to fill remaining space; if not enough, scrolls */
+.section.daily {
+    flex: 1 0 400px;   /* grow to fill, min 400px so it's always usable */
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0;
+}
+.section.daily:not(.expanded) { flex: 0 0 auto; min-height: 0; }
 
-    /* The Fix for Sticky Headers */
-    .activity-table thead th {
-        position: sticky;
-        top: 0;
-        background: white;
-        z-index: 10;
-        box-shadow: inset 0 -2px 0 var(--surface-page);
-        padding: 12px 8px;
-        text-align: left;
-        color: var(--teal-700);
-    }
+.section-body { display: none; }
+.section.expanded .section-body { display: block; }
 
-    .activity-table td { padding: 10px 8px; border-bottom: 1px solid var(--surface-page); vertical-align: middle; }
+/* Daily body: flex column, log-table scrolls inside */
+.section.daily .section-body {
+    display: none;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    overflow: hidden;
+}
+.section.daily.expanded .section-body {
+    display: flex;
+}
 
-    .app-tag { font-weight: 700; color: var(--teal-400); font-size: 0.7rem; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .title-text { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--teal-900); }
+.section-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 18px;
+    cursor: pointer;
+    user-select: none;
+    background: var(--surface-card);
+    transition: background 130ms;
+    border-bottom: 1px solid transparent;
+    flex-shrink: 0;
+}
+.section-head:hover { background: var(--surface-in); }
+.section.expanded .section-head { border-bottom-color: var(--border); }
 
-    .bar-row { margin-bottom: 15px; }
-    .bar-info { display: flex; justify-content: space-between; font-size: 0.8125rem; margin-bottom: 5px; }
-    .bar-outer { height: 8px; background: var(--surface-page); border-radius: 4px; overflow: hidden; }
-    .bar-inner { height: 100%; background: var(--teal-700); transition: width 0.5s; }
-    .bar-inner.project-bar { background: var(--amber); }
+.section-title { font-size: 0.9375rem; font-weight: 600; color: var(--text); white-space: nowrap; }
+.section-meta  { font-size: 0.8125rem; color: var(--text-muted); font-weight: 400; }
 
-    .assign-select { padding: 4px; border: 1px solid var(--border); border-radius: 4px; font-size: 0.75rem; width: 100%; cursor: pointer; }
-    .assign-select:focus { border-color: var(--teal-700); outline: none; box-shadow: 0 0 0 2px var(--teal-100); }
+/* Chevron — right-most element */
+.section-chevron {
+    margin-left: auto;
+    width: 20px; height: 20px;
+    color: var(--teal-400);
+    flex-shrink: 0;
+    transition: transform 200ms ease;
+}
+.section.expanded .section-chevron { transform: rotate(180deg); }
+
+/* ── Nav arrow buttons (all sections) ────────────────────── */
+/* Same height as btn-sm, square, SVG centred */
+.nav-arrow-btn {
+    width: 30px !important;
+    height: 30px !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    flex-shrink: 0;
+}
+.nav-arrow-btn svg { width: 16px; height: 16px; display: block; }
+
+/* ── Toolbar inside section body (week + daily) ───────────── */
+.section-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-in);
+    flex-shrink: 0;
+}
+.toolbar-label {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    flex: 1;
+}
+
+/* ── Date picker ──────────────────────────────────────────── */
+input[type=date].date-input {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 9px;
+    font-family: var(--font);
+    font-size: 0.8125rem;
+    color: var(--text);
+    outline: none;
+    background: var(--surface-card);
+    cursor: pointer;
+    height: 30px;
+    transition: border-color 130ms;
+}
+input[type=date].date-input:hover { border-color: var(--teal-700); }
+input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+/* ── Weekly table ─────────────────────────────────────────── */
+.week-table-wrap { overflow-x: auto; padding: 14px 18px 16px; }
+
+.wtable {
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    table-layout: fixed;
+    /* let the table be as wide as its columns, not 100% */
+    width: auto;
+    min-width: 100%;
+}
+.wtable thead th {
+    padding: 7px 12px;
+    text-align: center;
+    background: var(--surface-in);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border-bottom: 2px solid var(--border);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.wtable thead th.col-proj { text-align: left; width: 150px; }
+.wtable thead th.col-act  { text-align: left; width: 170px; }
+.wtable thead th.col-day  { width: 90px; }
+.wtable thead th.today-col { color: var(--amber); }
+
+.wtable tbody td {
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    vertical-align: middle;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.wtable tbody td.col-proj { text-align: left; font-size: 0.8rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.wtable tbody td.col-act  { text-align: left; font-size: 0.8rem; white-space: nowrap; }
+.wtable tbody td.col-day  { text-align: right; font-size: 0.8rem; font-variant-numeric: tabular-nums; white-space: nowrap; padding-right: 10px; }
+.wtable tbody td.today-col { background: #FDF3D7; }
+.wtable tbody tr:last-child td { border-bottom: none; }
+.wtable tbody tr:hover td           { background: var(--surface-in); }
+.wtable tbody tr:hover td.today-col { background: #FEF3C7; }
+
+/* Day cell content: value + icon, right-aligned as a unit */
+.day-cell { display: inline-flex; align-items: center; gap: 3px; justify-content: flex-end; width: 100%; }
+
+.wtable tfoot td {
+    padding: 7px 12px;
+    font-weight: 700;
+    background: var(--teal-100);
+    color: var(--ink);
+    border-top: 2px solid var(--border);
+    font-size: 0.8rem;
+    /* RIGHT-align so totals line up with data */
+    text-align: right;
+    padding-right: 10px;
+    font-variant-numeric: tabular-nums;
+}
+.wtable tfoot td.col-proj { text-align: left; padding-right: 12px; }
+.wtable tfoot td.col-act  { text-align: left; }
+.wtable tfoot td.today-col { background: #FEF3C7; }
+
+.desc-btn {
+    background: none; border: none; cursor: pointer;
+    padding: 1px 2px; border-radius: 3px;
+    color: var(--border); font-size: 0.78rem;
+    transition: color 130ms; line-height: 1; flex-shrink: 0;
+}
+.desc-btn:hover  { color: var(--teal-700); }
+.desc-btn.filled { color: var(--amber); }
+
+/* ── Day summary bars ─────────────────────────────────────── */
+.summary-stack {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+/* Bar row: proj-name | act-name | bar | time | pct — single row, no wrapping */
+.sbar-row {
+    display: grid;
+    grid-template-columns: 160px 140px 1fr 68px 46px;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+.sbar-proj  { font-size: 0.8125rem; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sbar-act   { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sbar-track { height: 5px; background: var(--surface-in); border-radius: 3px; overflow: hidden; min-width: 0; }
+.sbar-fill  { height: 100%; border-radius: 3px; background: var(--amber); transition: width 0.4s ease; }
+.sbar-time  { font-size: 0.8rem; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.sbar-pct   { font-size: 0.75rem; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+/* ── Activity log table ───────────────────────────────────── */.log-table-wrap { flex: 1; overflow-y: auto; }
+.log-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; table-layout: fixed; }
+.log-table thead th {
+    position: sticky; top: 0;
+    background: var(--surface-in);
+    z-index: 2;
+    box-shadow: inset 0 -2px 0 var(--border);
+    padding: 8px 12px;
+    text-align: left;
+    color: var(--text-muted);
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+}
+.log-table tbody td { padding: 7px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.log-table tbody tr:last-child td { border-bottom: none; }
+.log-table tbody tr:hover td { background: var(--surface-in); }
+
+.win-cell { display: flex; align-items: center; gap: 7px; overflow: hidden; }
+.win-pill {
+    display: inline-flex; align-items: center; flex-shrink: 0;
+    padding: 2px 7px; border-radius: 20px;
+    background: var(--teal-100); color: var(--teal-900);
+    font-size: 0.68rem; font-weight: 700; white-space: nowrap;
+    max-width: 110px; overflow: hidden; text-overflow: ellipsis;
+}
+.win-title-text { font-size: 0.8rem; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.proj-select {
+    width: 100%; padding: 5px 7px;
+    background: var(--surface-card);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    font-family: var(--font);
+    font-size: 0.8rem;
+    color: var(--text);
+    cursor: pointer;
+    transition: border-color 130ms;
+}
+.proj-select:hover { border-color: var(--teal-700); }
+.proj-select:focus { border-color: var(--teal-700); outline: none; box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+.proj-select.none  { color: #7A9E9E; }
+
+/* ── Setup body ───────────────────────────────────────────── */
+.setup-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; }
+
+/* Single table — add-row is the last row, inherits same column widths automatically */
+.proj-table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.proj-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed; }
+.proj-table col.c-code { width: 72px; }
+.proj-table col.c-name { width: 150px; }
+.proj-table col.c-act-code { width: 64px; }
+.proj-table col.c-act-name { /* flex */ }
+.proj-table col.c-btns { width: 120px; }
+
+.proj-table thead th {
+    background: var(--surface-in);
+    padding: 7px 10px;
+    text-align: left;
+    font-size: 0.6875rem; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+}
+.proj-table tbody.data-rows td {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    vertical-align: middle;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.proj-table tbody.data-rows tr:last-child td { border-bottom: none; }
+.proj-table tbody.data-rows tr:hover td { background: var(--surface-in); }
+.pt-code    { font-weight: 600; color: var(--text-muted); }
+.pt-actions { display: flex; gap: 4px; }
+
+/* Add row */
+.proj-table tbody.add-rows td {
+    background: var(--surface-in);
+    padding: 8px 10px;
+    border-top: 2px solid var(--border);
+    vertical-align: bottom;
+    overflow: visible;
+}
+.add-row-lbl {
+    display: block;
+    font-size: 0.6rem; font-weight: 600; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.06em;
+    margin-bottom: 3px; white-space: nowrap;
+}
+.proj-table tbody.add-rows .input { width: 100%; font-size: 0.8rem; padding: 5px 7px; }
+
+/* ── Popups ───────────────────────────────────────────────── */
+.overlay {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    background: rgba(1,45,44,0.32);
+    align-items: center; justify-content: center;
+}
+.overlay.open { display: flex; }
+.modal {
+    background: var(--surface-card);
+    border-radius: 12px;
+    width: 480px; max-width: 95vw; max-height: 88vh;
+    display: flex; flex-direction: column;
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--border);
+}
+.modal-head { display: flex; align-items: flex-start; padding: 16px 20px; border-bottom: 1px solid var(--border); gap: 12px; }
+.modal-title { font-weight: 600; font-size: 0.9375rem; color: var(--text); flex: 1; }
+.modal-sub   { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+.modal-body  { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+.modal-foot  { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+
+.task-list { display: flex; flex-direction: column; gap: 6px; }
+.task-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
+    font-size: 0.875rem; color: var(--text);
+    transition: background 130ms, border-color 130ms; user-select: none;
+}
+.task-item:hover   { background: var(--surface-in); border-color: var(--teal-400); }
+.task-item.checked { background: var(--teal-100); border-color: var(--teal-700); font-weight: 600; color: var(--ink); }
+.task-item input   { accent-color: var(--teal-700); width: 14px; height: 14px; flex-shrink: 0; pointer-events: none; }
+
+.field-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+.desc-area, .tasks-area {
+    width: 100%; resize: vertical;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 9px 12px; font-family: var(--font); font-size: 0.875rem;
+    color: var(--text); outline: none; line-height: 1.6;
+    transition: border-color 130ms, box-shadow 130ms;
+}
+.desc-area  { min-height: 90px; }
+.tasks-area { min-height: 120px; }
+.desc-area::placeholder, .tasks-area::placeholder { color: #7A9E9E; }
+.desc-area:hover,  .tasks-area:hover  { border-color: var(--teal-700); }
+.desc-area:focus,  .tasks-area:focus  { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
 </style>
 {% endblock %}
 
 {% block content %}
-<div class="time-layout">
-    <div class="scroll-panel">
-        <div class="section-label">Active Windows (Today)</div>
-        <div class="card" style="height: calc(100vh - 180px);">
-            <div class="table-container">
-                <table class="activity-table">
-                    <thead>
-                        <tr>
-                            <th style="width: 50%;">App & Window Title</th>
-                            <th style="width: 25%;">Duration</th>
-                            <th style="width: 25%;">Project</th>
-                        </tr>
-                    </thead>
-                    <tbody id="logTable"></tbody>
+<div class="time-root">
+
+    <!-- ════════════════════════════════════════════════════════
+         SECTION 1 — WEEKLY REPORT  (collapsed)
+    ════════════════════════════════════════════════════════ -->
+    <div class="section" id="sec-week">
+        <div class="section-head" onclick="toggleSection('week')">
+            <span class="section-title">Weekly Report</span>
+            <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+        </div>
+        <div class="section-body">
+            <!-- Toolbar inside body: nav + range label -->
+            <div class="section-toolbar">
+                <button class="btn btn-outline btn-sm nav-arrow-btn" onclick="shiftWeek(-1)">
+                    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 4 6 9 11 14"></polyline></svg>
+                </button>
+                <button class="btn btn-outline btn-sm nav-arrow-btn" onclick="shiftWeek(1)">
+                    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 4 12 9 7 14"></polyline></svg>
+                </button>
+                <span class="toolbar-label" id="weekRangeLabel"></span>
+            </div>
+            <div class="week-table-wrap">
+                <div id="weekTableWrap"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         SECTION 2 — SETUP  (collapsed)
+    ════════════════════════════════════════════════════════ -->
+    <div class="section" id="sec-setup">
+        <div class="section-head" onclick="toggleSection('setup')">
+            <span class="section-title">Setup</span>
+            <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+        </div>
+        <div class="section-body">
+            <div class="setup-body">
+
+                <!-- Default project -->
+                <div>
+                    <div class="field-label">Default project for unclassified time</div>
+                    <div style="max-width:380px">
+                        <select id="defaultProjSel" class="proj-select" onchange="saveDefaultProject()">
+                            <option value="">— None —</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="border-top:1px solid var(--border)"></div>
+
+                <!-- Project table + add row (same table = perfect column alignment) -->
+                <div>
+                    <div class="field-label" style="margin-bottom:10px">Projects</div>
+                    <div class="proj-table-wrap">
+                        <table class="proj-table">
+                            <colgroup>
+                                <col class="c-code">
+                                <col class="c-name">
+                                <col class="c-act-code">
+                                <col class="c-act-name">
+                                <col class="c-btns">
+                            </colgroup>
+                            <thead><tr>
+                                <th>Code</th>
+                                <th>Project</th>
+                                <th>Code</th>
+                                <th>Activity</th>
+                                <th></th>
+                            </tr></thead>
+                            <tbody class="data-rows" id="projTableBody"></tbody>
+                            <tbody class="add-rows">
+                                <tr>
+                                    <td><span class="add-row-lbl">Proj Code</span><input id="fProjCode" class="input" placeholder="P001"></td>
+                                    <td><span class="add-row-lbl">Project Name</span><input id="fProjName" class="input" placeholder="Client Alpha"></td>
+                                    <td><span class="add-row-lbl">Act Code</span><input id="fActCode" class="input" placeholder="DEV"></td>
+                                    <td><span class="add-row-lbl">Activity Name</span><input id="fActName" class="input" placeholder="Development"></td>
+                                    <td style="vertical-align:bottom"><button class="btn btn-primary btn-sm" onclick="addProjectActivity()" style="width:100%">Add</button></td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         SECTION 3 — DAILY REPORT  (expanded, fills remaining space)
+    ════════════════════════════════════════════════════════ -->
+    <div class="section daily expanded" id="sec-daily">
+        <div class="section-head" onclick="toggleSection('daily')">
+            <span class="section-title">Daily Report</span>
+            <span class="section-meta" id="dayLabel"></span>
+            <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+        </div>
+        <div class="section-body">
+            <!-- Toolbar: date nav + today + total -->
+            <div class="section-toolbar">
+                <button class="btn btn-outline btn-sm nav-arrow-btn" onclick="shiftDate(-1)">
+                    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 4 6 9 11 14"></polyline></svg>
+                </button>
+                <input type="date" id="datePicker" class="date-input" onchange="onDatePick()">
+                <button class="btn btn-outline btn-sm nav-arrow-btn" onclick="shiftDate(1)">
+                    <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="7 4 12 9 7 14"></polyline></svg>
+                </button>
+                <button class="btn btn-outline btn-sm" onclick="goToday()">Today</button>
+                <span class="toolbar-label" style="text-align:right">
+                    Total: <strong id="totalTime" style="color:var(--text)">—</strong>
+                </span>
+            </div>
+            <!-- Summary bars -->
+            <div class="summary-stack" id="summaryStack"></div>
+            <!-- Activity log -->
+            <div class="log-table-wrap" id="logWrap">
+                <table class="log-table">
+                    <thead><tr>
+                        <th style="width:45%">Application &amp; Window</th>
+                        <th style="width:16%">Time</th>
+                        <th style="width:39%">Project / Activity</th>
+                    </tr></thead>
+                    <tbody id="logBody"></tbody>
                 </table>
             </div>
         </div>
     </div>
 
-    <div class="scroll-panel">
-        <div class="section-label">Project Summary</div>
-        <div class="card" id="projectBars"></div>
+</div>
 
-        <div class="section-label">Add Project</div>
-        <div class="card">
-            <div style="display:flex; gap:5px">
-                <input type="text" id="newPId" style="width:60px; padding:8px; border:1px solid var(--border); border-radius:4px;" placeholder="ID">
-                <input type="text" id="newPName" style="flex:1; padding:8px; border:1px solid var(--border); border-radius:4px;" placeholder="Name">
-                <button class="btn btn-outline" onclick="addProject()">+</button>
+<!-- ── Description Popup ── -->
+<div class="overlay" id="descOverlay" onclick="overlayClick(event)">
+    <div class="modal">
+        <div class="modal-head">
+            <div style="flex:1">
+                <div class="modal-title" id="descTitle"></div>
+                <div class="modal-sub"   id="descSub"></div>
             </div>
+            <button class="btn btn-outline btn-sm" onclick="closeDesc()">&#x2715;</button>
+        </div>
+        <div class="modal-body">
+            <div>
+                <div class="field-label">Tasks completed</div>
+                <div class="task-list" id="taskList"></div>
+            </div>
+            <div>
+                <div class="field-label">Notes</div>
+                <textarea class="desc-area" id="descNotes" placeholder="Describe work done, decisions, blockers…"></textarea>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-outline" onclick="closeDesc()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveDesc()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Edit Tasks Popup ── -->
+<div class="overlay" id="editOverlay" onclick="editOverlayClick(event)">
+    <div class="modal">
+        <div class="modal-head">
+            <div style="flex:1">
+                <div class="modal-title" id="editTitle">Edit Tasks</div>
+                <div class="modal-sub"   id="editSub"></div>
+            </div>
+            <button class="btn btn-outline btn-sm" onclick="closeEdit()">&#x2715;</button>
+        </div>
+        <div class="modal-body">
+            <div>
+                <div class="field-label">Tasks (one per line)</div>
+                <textarea class="tasks-area" id="editTasksArea" placeholder="Code review&#10;Feature build&#10;Testing"></textarea>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-outline" onclick="closeEdit()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveEdit()">Save</button>
         </div>
     </div>
 </div>
 
 <script>
-    let logs = {};
-    let projects = [];
-    let isUserInteracting = false;
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+var selectedDate   = '';
+var currentMonday  = '';
+var dayLogs        = {};
+var projects       = [];
+var allocations    = {};
+var descriptions   = {};
+var defaultProject = '';
+var descCtx        = {};
+var editCtx        = {};
 
-    // Helper to format seconds like the original project
-    function formatDuration(sec) {
-        const h = Math.floor(sec / 3600);
-        const m = Math.floor((sec % 3600) / 60);
-        const s = sec % 60;
-        if (h > 0) return `${h}h ${m}m`;
-        if (m > 0) return `${m}m ${s}s`;
-        return `${s}s`;
+// Prevent mid-interaction re-renders
+var focusedCount = 0;
+var pendingDay   = null;
+var pendingWeek  = null;
+
+document.addEventListener('focusin',  function(e){ if(isInteractive(e.target)) focusedCount=Math.max(0,focusedCount+1); });
+document.addEventListener('focusout', function(e){ if(isInteractive(e.target)){ focusedCount=Math.max(0,focusedCount-1); setTimeout(flushPending,60); } });
+function isInteractive(el){ return el&&(el.tagName==='SELECT'||el.tagName==='INPUT'||el.tagName==='TEXTAREA'); }
+function isBusy(){ return focusedCount>0; }
+function flushPending(){ if(isBusy()) return; if(pendingDay){applyDayData(pendingDay);pendingDay=null;} if(pendingWeek){applyWeekData(pendingWeek);pendingWeek=null;} }
+
+// ═══════════════════════════════════════════════════════════════
+//  UTILS
+// ═══════════════════════════════════════════════════════════════
+function fmt(sec){ var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; if(h>0) return h+'h '+m+'m'; if(m>0) return m+'m '+s+'s'; return s+'s'; }
+function fmtH(sec){ return (sec/3600).toFixed(1); }
+function isoToday(){ return new Date().toISOString().slice(0,10); }
+
+function mondayOf(ds){
+    var d=new Date(ds+'T00:00:00');
+    var wd=d.getDay()===0?6:d.getDay()-1; // 0=Mon ... 6=Sun
+    d.setDate(d.getDate()-wd);
+    return d.toISOString().slice(0,10);
+}
+function addDays(ds,n){ var d=new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function shortDate(ds){ return new Date(ds+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}); }
+function dayHeader(ds){
+    var d=new Date(ds+'T00:00:00');
+    return d.toLocaleDateString('en-GB',{weekday:'short'})+'<br>'+d.getDate()+'\u00a0'+d.toLocaleDateString('en-GB',{month:'short'});
+}
+function escH(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escA(s){ return String(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function projKey(pid,sid){ return pid+'|||'+sid; }
+function splitKey(k){ var p=k.split('|||'); return {projectId:p[0],subId:p[1]}; }
+
+// Dropdown options: names only, no codes
+function projOptions(includeNone){
+    var o=includeNone?'<option value="">Unassigned</option>':'';
+    projects.forEach(function(p){
+        (p.activities||[]).forEach(function(a){
+            var k=projKey(p.id,a.subId);
+            o+='<option value="'+escA(k)+'">'+escH(p.name)+' \u2013 '+escH(a.name)+'</option>';
+        });
+    });
+    return o;
+}
+
+function resolveAlloc(title){ var e=allocations[title]; return (e&&e.projectId)?projKey(e.projectId,e.subId):''; }
+
+function findProjAct(k){
+    var sp=splitKey(k);
+    var proj=projects.find(function(p){return p.id===sp.projectId;});
+    var act=proj&&(proj.activities||[]).find(function(a){return a.subId===sp.subId;});
+    return {proj:proj,act:act};
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SECTION TOGGLE
+// ═══════════════════════════════════════════════════════════════
+function toggleSection(name){
+    var el=document.getElementById('sec-'+name);
+    var wasOpen=el.classList.contains('expanded');
+    el.classList.toggle('expanded',!wasOpen);
+    if(name==='week'&&!wasOpen) fetchWeek();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT & POLL
+// ═══════════════════════════════════════════════════════════════
+(function(){
+    selectedDate  =isoToday();
+    currentMonday =mondayOf(selectedDate);
+    defaultProject=localStorage.getItem('defaultProject')||'';
+    document.getElementById('datePicker').value=selectedDate;
+    fetchDay();
+    setInterval(function(){
+        fetchDay();
+        if(document.getElementById('sec-week').classList.contains('expanded')) fetchWeek();
+    },5000);
+})();
+
+// ═══════════════════════════════════════════════════════════════
+//  DATE NAV
+// ═══════════════════════════════════════════════════════════════
+function goToday()   { selectedDate=isoToday(); document.getElementById('datePicker').value=selectedDate; fetchDay(); }
+function shiftDate(n){ selectedDate=addDays(selectedDate,n); document.getElementById('datePicker').value=selectedDate; fetchDay(); }
+function onDatePick(){ selectedDate=document.getElementById('datePicker').value; fetchDay(); }
+
+// Week nav: always jump exactly 7 days so Mon stays Mon
+function shiftWeek(n){ currentMonday=addDays(currentMonday,n*7); fetchWeek(); }
+
+// ═══════════════════════════════════════════════════════════════
+//  FETCH
+// ═══════════════════════════════════════════════════════════════
+function fetchDay(){
+    fetch('/api/time_data?date='+selectedDate)
+        .then(function(r){return r.json();})
+        .then(function(data){
+            projects=data.projects; allocations=data.allocations; dayLogs=data.logs;
+            if(isBusy()) pendingDay=data; else applyDayData(data);
+        });
+}
+function fetchWeek(){
+    fetch('/api/week_data?start='+currentMonday)
+        .then(function(r){return r.json();})
+        .then(function(data){ if(isBusy()) pendingWeek=data; else applyWeekData(data); });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  RENDER: DAY
+// ═══════════════════════════════════════════════════════════════
+function applyDayData(data){
+    projects=data.projects; allocations=data.allocations; dayLogs=data.logs;
+    var today=isoToday();
+    document.getElementById('dayLabel').textContent=shortDate(selectedDate)+(selectedDate===today?' \u2014 Today':'');
+
+    var totalSec=Object.values(dayLogs).reduce(function(a,b){return a+b;},0);
+    document.getElementById('totalTime').textContent=totalSec>0?fmt(totalSec):'—';
+
+    var total=Math.max(totalSec,1);
+    var sorted=Object.entries(dayLogs).sort(function(a,b){return b[1]-a[1];});
+    renderSummary(sorted,total);
+    renderLogTable(sorted,total);
+    renderProjTable();
+    syncDefaultSel();
+}
+
+function renderSummary(sorted,total){
+    var projSec={};
+    sorted.forEach(function(e){
+        var title=e[0].split('|||')[1];
+        var val=resolveAlloc(title)||defaultProject;
+        if(val) projSec[val]=(projSec[val]||0)+e[1];
+    });
+    var stack=document.getElementById('summaryStack');
+    var items=Object.entries(projSec).sort(function(a,b){return b[1]-a[1];});
+    if(!items.length){
+        stack.innerHTML='<div style="color:var(--text-muted);font-size:0.8rem">No project allocations for this day.</div>';
+        return;
     }
+    stack.innerHTML=items.map(function(e){
+        var k=e[0],sec=e[1];
+        var pct=((sec/total)*100).toFixed(0);
+        var pa=findProjAct(k);
+        var projName=pa.proj?escH(pa.proj.name):escH(k);
+        var actName =pa.act ?escH(pa.act.name):'';
+        return '<div class="sbar-row">'+
+               '<div class="sbar-proj">'+projName+'</div>'+
+               '<div class="sbar-act">'+actName+'</div>'+
+               '<div class="sbar-track"><div class="sbar-fill" style="width:'+pct+'%"></div></div>'+
+               '<div class="sbar-time">'+fmt(sec)+'</div>'+
+               '<div class="sbar-pct">('+pct+'%)</div>'+
+               '</div>';
+    }).join('');
+}
 
-    async function loadData() {
-        const res = await fetch('/api/time_data');
-        const data = await res.json();
-        logs = data.logs;
-        projects = data.projects;
-
-        // Anti-flicker: Only render if user isn't currently selecting something
-        if (!isUserInteracting) {
-            render();
+function renderLogTable(sorted,total){
+    var tbody=document.getElementById('logBody');
+    var existing={};
+    tbody.querySelectorAll('tr[data-key]').forEach(function(r){existing[r.dataset.key]=r;});
+    var seen=new Set();
+    sorted.forEach(function(entry){
+        var key=entry[0],sec=entry[1];
+        var parts=key.split('|||'),app=parts[0],title=parts[1];
+        var pct=((sec/total)*100).toFixed(1);
+        var cur=resolveAlloc(title);
+        seen.add(key);
+        var row=existing[key];
+        if(!row){
+            row=document.createElement('tr'); row.dataset.key=key;
+            row.innerHTML=
+                '<td><div class="win-cell">'+
+                    '<span class="win-pill" data-p="app"></span>'+
+                    '<span class="win-title-text" data-p="ttl"></span>'+
+                '</div></td>'+
+                '<td><span data-p="dur" style="font-variant-numeric:tabular-nums;font-size:0.8rem"></span>'+
+                    ' <span data-p="pct" style="font-size:0.75rem;color:var(--text-muted)"></span></td>'+
+                '<td><select class="proj-select" data-p="sel" onchange="assignTitle(\''+escA(title)+'\',this.value)">'+projOptions(true)+'</select></td>';
         }
-    }
-
-    function render() {
-        const total = Object.values(logs).reduce((a, b) => a + b, 0) || 1;
-        const logTable = document.getElementById('logTable');
-        const projectBars = document.getElementById('projectBars');
-
-        let tableHtml = '';
-        let projTimeMap = {};
-
-        Object.entries(logs).sort((a,b) => b[1] - a[1]).forEach(([key, sec]) => {
-            const [app, title] = key.split('|||');
-            const pct = ((sec/total)*100).toFixed(1);
-
-            let assignedPId = "";
-            projects.forEach(p => { if(p.titles && p.titles.includes(title)) assignedPId = p.id; });
-            if(assignedPId) projTimeMap[assignedPId] = (projTimeMap[assignedPId] || 0) + sec;
-
-            tableHtml += `
-                <tr>
-                    <td>
-                        <span class="app-tag">${app}</span>
-                        <span class="title-text" title="${title}">${title}</span>
-                    </td>
-                    <td>
-                        <div style="font-weight:600">${formatDuration(sec)}</div>
-                        <div style="font-size:0.7rem; color:var(--teal-400)">${pct}%</div>
-                    </td>
-                    <td>
-                        <select class="assign-select"
-                                onfocus="isUserInteracting=true"
-                                onblur="isUserInteracting=false"
-                                onchange="assignTitle('${title}', this.value)">
-                            <option value="">Unassigned</option>
-                            ${projects.map(p => `<option value="${p.id}" ${assignedPId==p.id?'selected':''}>${p.name}</option>`).join('')}
-                        </select>
-                    </td>
-                </tr>`;
-        });
-        logTable.innerHTML = tableHtml;
-
-        // Render Summary Bars
-        projectBars.innerHTML = projects.map(p => {
-            const pSec = projTimeMap[p.id] || 0;
-            const pPct = ((pSec/total)*100).toFixed(1);
-            return `
-                <div class="bar-row">
-                    <div class="bar-info">
-                        <span><strong>${p.id}</strong> ${p.name}</span>
-                        <span>${formatDuration(pSec)} (${pPct}%)</span>
-                    </div>
-                    <div class="bar-outer"><div class="bar-inner project-bar" style="width: ${pPct}%"></div></div>
-                </div>`;
-        }).join('') || '<div style="color:var(--teal-400); font-size:0.8rem;">No projects defined.</div>';
-    }
-
-    async function assignTitle(title, pId) {
-        isUserInteracting = false; // Release lock on change
-        projects.forEach(p => { p.titles = (p.titles || []).filter(t => t !== title); });
-        if(pId) {
-            const proj = projects.find(p => p.id === pId);
-            if(proj) {
-                if(!proj.titles) proj.titles = [];
-                proj.titles.push(title);
-            }
+        // Always append in sorted order (moves row to bottom if already present)
+        tbody.appendChild(row);
+        row.querySelector('[data-p=app]').textContent=app;
+        row.querySelector('[data-p=ttl]').textContent=title;
+        row.querySelector('[data-p=ttl]').title=title;
+        row.querySelector('[data-p=dur]').textContent=fmt(sec);
+        row.querySelector('[data-p=pct]').textContent='('+pct+'%)';
+        var sel=row.querySelector('[data-p=sel]');
+        if(document.activeElement!==sel){
+            sel.innerHTML=projOptions(true);
+            sel.value=cur;
+            sel.className='proj-select'+(cur?'':' none');
         }
-        await fetch('/api/projects', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(projects)
-        });
-        loadData();
-    }
+    });
+    Object.keys(existing).forEach(function(k){if(!seen.has(k)) existing[k].remove();});
+}
 
-    async function addProject() {
-        const id = document.getElementById('newPId').value;
-        const name = document.getElementById('newPName').value;
-        if(!id || !name) return;
-        projects.push({id, name, titles: []});
-        await fetch('/api/projects', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify(projects)
-        });
-        document.getElementById('newPId').value = '';
-        document.getElementById('newPName').value = '';
-        loadData();
-    }
+// ═══════════════════════════════════════════════════════════════
+//  RENDER: WEEK
+// ═══════════════════════════════════════════════════════════════
+function applyWeekData(data){
+    descriptions=data.descriptions; currentMonday=data.monday;
+    var wProjs=data.projects,wLogs=data.week_logs,wAllocs=data.week_allocs;
 
-    setInterval(loadData, 3000);
-    loadData();
+    // Always Mon→Sun from currentMonday
+    var days=[];
+    for(var i=0;i<7;i++) days.push(addDays(currentMonday,i));
+    var todayStr=isoToday();
+
+    document.getElementById('weekRangeLabel').textContent=
+        shortDate(days[0])+' \u2013 '+shortDate(days[6]);
+
+    // Accumulate seconds per project-key per day
+    var totals={};
+    days.forEach(function(day,di){
+        var logs=wLogs[day]||{},allocs=wAllocs[day]||{};
+        Object.entries(logs).forEach(function(e){
+            var title=e[0].split('|||')[1],sec=e[1];
+            var alloc=allocs[title];
+            var pk=(alloc&&alloc.projectId)?projKey(alloc.projectId,alloc.subId):(defaultProject||null);
+            if(!pk) return;
+            if(!totals[pk]) totals[pk]=[0,0,0,0,0,0,0];
+            totals[pk][di]+=sec;
+        });
+    });
+    var dayTotals=[0,0,0,0,0,0,0];
+    Object.values(totals).forEach(function(arr){arr.forEach(function(v,i){dayTotals[i]+=v;});});
+
+    // thead
+    var thead='<tr><th class="col-proj">Project</th><th class="col-act">Activity</th>';
+    days.forEach(function(d){
+        var isT=(d===todayStr);
+        thead+='<th class="col-day'+(isT?' today-col':'')+'">'+dayHeader(d)+'</th>';
+    });
+    thead+='</tr>';
+
+    // tbody
+    var tbody='';
+    wProjs.forEach(function(proj){
+        (proj.activities||[]).forEach(function(act){
+            var pk=projKey(proj.id,act.subId);
+            var arr=totals[pk];
+            if(!arr||!arr.some(function(v){return v>0;})) return;
+            tbody+='<tr>'+
+                '<td class="col-proj">'+escH(proj.name)+'</td>'+
+                '<td class="col-act">'+escH(act.name)+'</td>';
+            arr.forEach(function(s,di){
+                var descKey=days[di]+'|||'+proj.id+'|||'+act.subId;
+                var hasDesc=descriptions[descKey]&&(descriptions[descKey].notes||(descriptions[descKey].tasks||[]).length);
+                var isT=(days[di]===todayStr);
+                tbody+='<td class="col-day'+(isT?' today-col':'')+'">'+
+                    '<div class="day-cell">'+
+                    (s>0?'<span>'+fmtH(s)+'h</span>':'<span style="color:var(--border)">—</span>')+
+                    (s>0?' <button class="desc-btn'+(hasDesc?' filled':'')+'" onclick="openDesc(\''+escA(days[di])+'\',\''+escA(proj.id)+'\',\''+escA(act.subId)+'\')" title="Notes">\u270E</button>':'')+
+                    '</div></td>';
+            });
+            tbody+='</tr>';
+        });
+    });
+
+    // tfoot
+    var tfoot='<tr><td class="col-proj" colspan="2">Total</td>';
+    dayTotals.forEach(function(s,di){
+        var isT=(days[di]===todayStr);
+        tfoot+='<td class="col-day'+(isT?' today-col':'')+'">'+(s>0?fmtH(s)+'h':'<span style="color:var(--border)">—</span>')+'</td>';
+    });
+    tfoot+='</tr>';
+
+    document.getElementById('weekTableWrap').innerHTML=tbody
+        ?'<table class="wtable"><thead>'+thead+'</thead><tbody>'+tbody+'</tbody><tfoot>'+tfoot+'</tfoot></table>'
+        :'<div style="color:var(--text-muted);font-size:0.8rem;padding:4px 0">No tracked time this week.</div>';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ASSIGNMENT
+// ═══════════════════════════════════════════════════════════════
+function assignTitle(title,key){
+    var sp=key?splitKey(key):{projectId:'',subId:''};
+    allocations[title]={projectId:sp.projectId,subId:sp.subId};
+    fetch('/api/allocation',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({date:selectedDate,title:title,projectId:sp.projectId,subId:sp.subId})
+    }).then(function(){
+        var total=Math.max(Object.values(dayLogs).reduce(function(a,b){return a+b;},0),1);
+        renderSummary(Object.entries(dayLogs).sort(function(a,b){return b[1]-a[1];}),total);
+    });
+}
+
+function saveDefaultProject(){
+    defaultProject=document.getElementById('defaultProjSel').value;
+    localStorage.setItem('defaultProject',defaultProject);
+    var total=Math.max(Object.values(dayLogs).reduce(function(a,b){return a+b;},0),1);
+    renderSummary(Object.entries(dayLogs).sort(function(a,b){return b[1]-a[1];}),total);
+}
+
+function syncDefaultSel(){
+    var sel=document.getElementById('defaultProjSel');
+    if(document.activeElement!==sel){ sel.innerHTML='<option value="">None</option>'+projOptions(false); sel.value=defaultProject; }
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SETUP: PROJECT TABLE
+// ═══════════════════════════════════════════════════════════════
+function renderProjTable(){
+    var tbody=document.getElementById('projTableBody');
+    var rows='';
+    projects.forEach(function(p,pi){
+        (p.activities||[]).forEach(function(a,ai){
+            rows+='<tr>'+
+                '<td class="pt-code">'+escH(p.id)+'</td>'+
+                '<td>'+escH(p.name)+'</td>'+
+                '<td class="pt-code">'+escH(a.subId)+'</td>'+
+                '<td>'+escH(a.name)+'</td>'+
+                '<td><div class="pt-actions">'+
+                    '<button class="btn btn-outline btn-sm" onclick="openEdit('+pi+','+ai+')">Edit</button>'+
+                    '<button class="btn btn-danger btn-sm"  onclick="removeActivity('+pi+','+ai+')">Delete</button>'+
+                '</div></td>'+
+                '</tr>';
+        });
+    });
+    tbody.innerHTML=rows||'<tr><td colspan="5" style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:14px">No projects yet.</td></tr>';
+}
+
+function addProjectActivity(){
+    var pc=document.getElementById('fProjCode').value.trim();
+    var pn=document.getElementById('fProjName').value.trim();
+    var ac=document.getElementById('fActCode').value.trim();
+    var an=document.getElementById('fActName').value.trim();
+    if(!pc||!pn||!ac||!an) return;
+    var proj=projects.find(function(p){return p.id===pc;});
+    if(!proj){ proj={id:pc,name:pn,activities:[]}; projects.push(proj); }
+    proj.activities=proj.activities||[];
+    if(!proj.activities.find(function(a){return a.subId===ac;}))
+        proj.activities.push({subId:ac,name:an,tasks:[]});
+    ['fProjCode','fProjName','fActCode','fActName'].forEach(function(id){document.getElementById(id).value='';});
+    saveProjects();
+}
+
+function removeActivity(pi,ai){
+    if(!confirm('Delete this activity?')) return;
+    projects[pi].activities.splice(ai,1);
+    if(!projects[pi].activities.length) projects.splice(pi,1);
+    saveProjects();
+}
+
+function saveProjects(){
+    fetch('/api/projects',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(projects)})
+        .then(function(){
+            renderProjTable(); syncDefaultSel();
+            var total=Math.max(Object.values(dayLogs).reduce(function(a,b){return a+b;},0),1);
+            renderSummary(Object.entries(dayLogs).sort(function(a,b){return b[1]-a[1];}),total);
+            if(document.getElementById('sec-week').classList.contains('expanded')) fetchWeek();
+        });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  EDIT TASKS POPUP
+// ═══════════════════════════════════════════════════════════════
+function openEdit(pi,ai){
+    editCtx={pi:pi,ai:ai};
+    var p=projects[pi],a=(p.activities||[])[ai];
+    document.getElementById('editTitle').textContent=p.name+' \u2014 '+a.name;
+    document.getElementById('editSub').textContent='One task per line';
+    document.getElementById('editTasksArea').value=(a.tasks||[]).join('\n');
+    document.getElementById('editOverlay').classList.add('open');
+}
+function editOverlayClick(e){ if(e.target===document.getElementById('editOverlay')) closeEdit(); }
+function closeEdit(){ document.getElementById('editOverlay').classList.remove('open'); }
+function saveEdit(){
+    var pi=editCtx.pi,ai=editCtx.ai;
+    var tasks=document.getElementById('editTasksArea').value
+        .split('\n').map(function(t){return t.trim();}).filter(Boolean);
+    projects[pi].activities[ai].tasks=tasks;
+    saveProjects(); closeEdit();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  DESCRIPTION POPUP
+// ═══════════════════════════════════════════════════════════════
+function openDesc(date,pid,sid){
+    descCtx={date:date,projectId:pid,subId:sid};
+    var proj=projects.find(function(p){return p.id===pid;});
+    var act=proj&&(proj.activities||[]).find(function(a){return a.subId===sid;});
+    var key=date+'|||'+pid+'|||'+sid;
+    var saved=descriptions[key]||{tasks:[],notes:''};
+    document.getElementById('descTitle').textContent=(proj?proj.name:pid)+(act?' \u2014 '+act.name:'');
+    document.getElementById('descSub').textContent=shortDate(date);
+    var tasks=(act&&act.tasks)||[];
+    var tl=document.getElementById('taskList');
+    tl.innerHTML=tasks.length?tasks.map(function(t){
+        var chk=(saved.tasks||[]).indexOf(t)>=0;
+        return '<div class="task-item'+(chk?' checked':'')+'" onclick="toggleTask(this,\''+escA(t)+'\')">'+
+               '<input type="checkbox"'+(chk?' checked':'')+' value="'+escA(t)+'"> '+escH(t)+'</div>';
+    }).join(''):'<div style="color:var(--text-muted);font-size:0.8rem">No predefined tasks. Add them via Edit in Setup.</div>';
+    document.getElementById('descNotes').value=saved.notes||'';
+    document.getElementById('descOverlay').classList.add('open');
+}
+
+function toggleTask(div,task){
+    var cb=div.querySelector('input');
+    var now=!cb.checked; cb.checked=now;
+    div.classList.toggle('checked',now);
+    if(now){ var n=document.getElementById('descNotes'); n.value=n.value?n.value+'\n\u2022 '+task:'\u2022 '+task; }
+}
+
+function overlayClick(e){ if(e.target===document.getElementById('descOverlay')) closeDesc(); }
+function closeDesc(){ document.getElementById('descOverlay').classList.remove('open'); }
+
+function saveDesc(){
+    var tasks=Array.from(document.querySelectorAll('#taskList input:checked')).map(function(el){return el.value;});
+    var notes=document.getElementById('descNotes').value;
+    fetch('/api/descriptions',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({date:descCtx.date,projectId:descCtx.projectId,subId:descCtx.subId,tasks:tasks,notes:notes})
+    }).then(function(){
+        descriptions[descCtx.date+'|||'+descCtx.projectId+'|||'+descCtx.subId]={tasks:tasks,notes:notes};
+        closeDesc();
+        if(document.getElementById('sec-week').classList.contains('expanded')) fetchWeek();
+    });
+}
 </script>
 {% endblock %}

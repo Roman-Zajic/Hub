@@ -3,6 +3,7 @@ import re
 from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, redirect, url_for
 import markdown
+from markdown_checklist.extension import ChecklistExtension
 import tracker
 
 app = Flask(__name__)
@@ -68,17 +69,48 @@ def delete_note():
         os.remove(path)
     return jsonify({'status': 'ok'})
 
+
 @app.route('/notes/preview', methods=['POST'])
 def preview_note():
     content = request.json.get('content', '')
-    content = re.sub(
-        r'\n{3,}',
-        lambda m: '\n\n' + ('<br>' * (len(m.group(0)) - 2)) + '\n\n',
-        content
-    )
-    html = markdown.markdown(content, extensions=['fenced_code', 'tables', 'extra'])
-    return jsonify({'html': html})
 
+    # 1. Safely extract Code Blocks FIRST
+    # We replace them with a magic placeholder so they are completely protected
+    code_blocks = []
+
+    def extract_code(match):
+        code_blocks.append(match.group(0))
+        return f"__MAGIC_CODE_BLOCK_{len(code_blocks) - 1}__"
+
+    # Match ``` followed by anything (including newlines) until the next ```
+    content = re.sub(r'```[\s\S]*?```', extract_code, content)
+
+    # 2. Safely extract other complex blocks (Tables, Admonitions, Checklists)
+    other_blocks = []
+
+    def extract_other(match):
+        other_blocks.append(match.group(0))
+        return f"__MAGIC_OTHER_BLOCK_{len(other_blocks) - 1}__"
+
+    content = re.sub(r'(?:^\|.*\|(?:\n|$))+', extract_other, content, flags=re.MULTILINE)
+    content = re.sub(r'^!!!.*(?:\n(?: {4,}|\t).*)*', extract_other, content, flags=re.MULTILINE)
+    content = re.sub(r'(?:^[-*+] +\[[ xX]\].*(?:\n|$))+', extract_other, content, flags=re.MULTILINE)
+
+    # 3. Apply your custom newline logic ONLY to the plain text that is left
+    content = re.sub(r'\n+', lambda m: '\n\n' + ('<br>' * (len(m.group(0)) - 1)) + '\n\n', content)
+
+    # 4. Put the blocks back into the text
+    # We surround them with \n\n to guarantee Markdown recognizes them as distinct blocks
+    for i, block in enumerate(other_blocks):
+        content = content.replace(f"__MAGIC_OTHER_BLOCK_{i}__", f"\n\n{block}\n\n")
+
+    for i, code in enumerate(code_blocks):
+        content = content.replace(f"__MAGIC_CODE_BLOCK_{i}__", f"\n\n{code}\n\n")
+
+    # 5. Render to HTML
+    extensions = ['fenced_code', 'tables', 'extra', 'toc', ChecklistExtension(), 'admonition']
+    html = markdown.markdown(content, extensions=extensions)
+    return jsonify({'html': html})
 
 # ── Time Tracker API ─────────────────────────────────────────
 
@@ -163,4 +195,4 @@ def save_description():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001, use_reloader=False)
+    app.run(host='0.0.0.0',debug=True, port=5001, use_reloader=False)

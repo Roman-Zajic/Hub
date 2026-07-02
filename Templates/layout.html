@@ -8,7 +8,6 @@
         /* ── Design Tokens ─────────────────────────────────── */
         :root {
             --font:          "Segoe UI", system-ui, -apple-system, sans-serif;
-            /* Brand colour palette */
             --teal-900:      #005A5A;
             --teal-700:      #008282;
             --teal-400:      #50C1C1;
@@ -16,7 +15,6 @@
             --amber:         #E1A01E;
             --red:           #C41E3A;
             --ink:           #012D2C;
-            /* Semantic tokens */
             --text:          #005A5A;
             --text-muted:    #008282;
             --surface-page:  #F0FAFA;
@@ -26,7 +24,6 @@
             --shadow:        0 1px 4px rgba(1,45,44,.10);
             --shadow-md:     0 4px 14px rgba(1,45,44,.12);
             --r:             10px;
-            /* Layout */
             --nav-h:         52px;
             --sidebar-w:     220px;
         }
@@ -87,8 +84,6 @@
         .content-area { flex: 1; padding: 24px; overflow-y: auto; display: flex; flex-direction: column; }
 
         /* ── Shared Component Tokens ───────────────────────── */
-        /* Used by every module — define once here, never repeat. */
-
         .btn {
             display: inline-flex;
             align-items: center;
@@ -108,20 +103,12 @@
         }
         .btn:active  { opacity: .85; }
         .btn:disabled { opacity: .4; cursor: not-allowed; }
-
-        /* Primary: teal-900 resting, teal-700 hover — matches brand spec */
         .btn-primary { background: var(--teal-900); color: #fff; border-color: var(--teal-900); }
         .btn-primary:hover { background: var(--teal-700); border-color: var(--teal-700); }
-
-        /* Outline */
         .btn-outline { background: transparent; color: var(--text); border-color: var(--border); }
         .btn-outline:hover { border-color: var(--teal-700); color: var(--teal-700); }
-
-        /* Danger */
         .btn-danger { background: var(--red); color: #fff; border-color: var(--red); }
         .btn-danger:hover { background: #A01830; border-color: #A01830; }
-
-        /* Sizes */
         .btn-sm { font-size: 0.75rem; padding: 6px 14px; }
         .btn-lg { font-size: 1rem; padding: 12px 28px; }
 
@@ -140,38 +127,24 @@
         .input:hover  { border-color: var(--teal-700); }
         .input:focus  { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
 
-        .card {
-            background: var(--surface-card);
-            border: 1px solid var(--border);
-            border-radius: var(--r);
-            padding: 20px;
-            box-shadow: var(--shadow);
-        }
-
-        .section-label {
-            font-size: 0.6875rem;
-            font-weight: 600;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-            margin-bottom: 12px;
-        }
+        .card { background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; box-shadow: var(--shadow); }
+        .section-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
 <body>
     <header class="navbar">
-        <!-- Logo -->
-        <svg width="42" height="30" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;flex-shrink:0">
-            <rect x="0"  y="6"  width="11" height="8" rx="1.5" fill="#95DFDB"/>
-            <rect x="15" y="6"  width="11" height="8" rx="1.5" fill="#008282"/>
-            <rect x="29" y="6"  width="11" height="8" rx="1.5" fill="#005A5A"/>
-            <rect x="0"  y="16" width="11" height="8" rx="1.5" fill="#95DFDB"/>
-            <rect x="15" y="16" width="11" height="8" rx="1.5" fill="#008282"/>
-            <rect x="29" y="16" width="11" height="8" rx="1.5" fill="#005A5A"/>
-            <rect x="0"  y="26" width="11" height="8" rx="1.5" fill="#95DFDB"/>
-            <rect x="15" y="26" width="11" height="8" rx="1.5" fill="#008282"/>
-            <rect x="29" y="26" width="11" height="8" rx="1.5" fill="#E1A01E"/>
+        <!-- FIXED LOGO: Using Icon-Dark palette for visibility on Teal 900 -->
+        <svg width="32" height="22" viewBox="0 0 60 42" fill="none" xmlns="http://www.w3.org/2000/svg" style="display:block;flex-shrink:0">
+            <rect x="0"  y="0"  width="17" height="12" rx="2.5" fill="#95DFDB"/>
+            <rect x="21" y="0"  width="17" height="12" rx="2.5" fill="#50C1C1"/>
+            <rect x="43" y="0"  width="17" height="12" rx="2.5" fill="#008282"/>
+            <rect x="0"  y="15" width="17" height="12" rx="2.5" fill="#95DFDB"/>
+            <rect x="21" y="15" width="17" height="12" rx="2.5" fill="#50C1C1"/>
+            <rect x="43" y="15" width="17" height="12" rx="2.5" fill="#008282"/>
+            <rect x="0"  y="30" width="17" height="12" rx="2.5" fill="#95DFDB"/>
+            <rect x="21" y="30" width="17" height="12" rx="2.5" fill="#50C1C1"/>
+            <rect x="43" y="30" width="17" height="12" rx="2.5" fill="#E1A01E"/>
         </svg>
         <div class="nav-pipe"></div>
         <span class="nav-brand-text">financial models</span>

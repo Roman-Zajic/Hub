@@ -7,10 +7,14 @@ import threading
 from datetime import datetime, timedelta
 
 # ── File paths ───────────────────────────────────────────────
-TIME_LOG         = 'time_log.json'
-PROJECTS_FILE    = 'projects.json'
-ALLOCATIONS_FILE = 'allocations.json'
-DESCRIPTIONS_FILE = 'time_descriptions.json'
+# All JSON data lives in a dedicated "Time Monitor Data" folder.
+DATA_FOLDER = os.path.join(os.getcwd(), 'Time Monitor Data')
+os.makedirs(DATA_FOLDER, exist_ok=True)
+
+TIME_LOG          = os.path.join(DATA_FOLDER, 'time_log.json')
+PROJECTS_FILE     = os.path.join(DATA_FOLDER, 'projects.json')
+ALLOCATIONS_FILE  = os.path.join(DATA_FOLDER, 'allocations.json')
+DESCRIPTIONS_FILE = os.path.join(DATA_FOLDER, 'time_descriptions.json')
 
 _lock      = threading.Lock()
 _dirty     = False          # write only when data changed

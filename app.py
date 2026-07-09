@@ -44,6 +44,10 @@ def compare_module():
 def time_module():
     return render_template('time.html')
 
+@app.route('/email')
+def email_module():
+    return render_template('email.html')
+
 
 # ── Notes API ────────────────────────────────────────────────
 

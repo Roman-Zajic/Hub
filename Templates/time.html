@@ -273,11 +273,12 @@ input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0
 /* Single table — add-row is the last row, inherits same column widths automatically */
 .proj-table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
 .proj-table { width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed; }
-.proj-table col.c-code { width: 72px; }
-.proj-table col.c-name { width: 150px; }
-.proj-table col.c-act-code { width: 64px; }
-.proj-table col.c-act-name { /* flex */ }
-.proj-table col.c-btns { width: 120px; }
+.proj-table col.c-code { width: 64px; }
+.proj-table col.c-name { width: 130px; }
+.proj-table col.c-act-code { width: 56px; }
+.proj-table col.c-act-name { width: 130px; }
+.proj-table col.c-tasks { /* flex — soaks up remaining width for the task list */ }
+.proj-table col.c-btns { width: 172px; }
 
 .proj-table thead th {
     background: var(--surface-in);
@@ -297,7 +298,9 @@ input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0
 .proj-table tbody.data-rows tr:last-child td { border-bottom: none; }
 .proj-table tbody.data-rows tr:hover td { background: var(--surface-in); }
 .pt-code    { font-weight: 600; color: var(--text-muted); }
-.pt-actions { display: flex; gap: 4px; }
+.pt-actions { display: flex; gap: 6px; }
+.pt-tasks   { color: var(--text-muted); }
+.proj-table tbody.data-rows td.pt-btns-cell { overflow: visible; }
 
 /* Add row */
 .proj-table tbody.add-rows td {
@@ -424,6 +427,7 @@ input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0
                                 <col class="c-name">
                                 <col class="c-act-code">
                                 <col class="c-act-name">
+                                <col class="c-tasks">
                                 <col class="c-btns">
                             </colgroup>
                             <thead><tr>
@@ -431,6 +435,7 @@ input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0
                                 <th>Project</th>
                                 <th>Code</th>
                                 <th>Activity</th>
+                                <th>Tasks</th>
                                 <th></th>
                             </tr></thead>
                             <tbody class="data-rows" id="projTableBody"></tbody>
@@ -440,12 +445,14 @@ input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0
                                     <td><span class="add-row-lbl">Project Name</span><input id="fProjName" class="input" placeholder="Client Alpha"></td>
                                     <td><span class="add-row-lbl">Act Code</span><input id="fActCode" class="input" placeholder="DEV"></td>
                                     <td><span class="add-row-lbl">Activity Name</span><input id="fActName" class="input" placeholder="Development"></td>
+                                    <td style="color:var(--text-muted);font-size:0.75rem;vertical-align:bottom;padding-bottom:9px">Add tasks via Edit</td>
                                     <td style="vertical-align:bottom"><button class="btn btn-primary btn-sm" onclick="addProjectActivity()" style="width:100%">Add</button></td>
                                 </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
+
 
             </div>
         </div>
@@ -558,14 +565,18 @@ var descCtx        = {};
 var editCtx        = {};
 
 // Prevent mid-interaction re-renders
-var focusedCount = 0;
 var pendingDay   = null;
 var pendingWeek  = null;
 
-document.addEventListener('focusin',  function(e){ if(isInteractive(e.target)) focusedCount=Math.max(0,focusedCount+1); });
-document.addEventListener('focusout', function(e){ if(isInteractive(e.target)){ focusedCount=Math.max(0,focusedCount-1); setTimeout(flushPending,60); } });
+// isBusy() reads the DOM directly instead of maintaining a manual counter.
+// (A counter that increments on focusin / decrements on focusout can drift out of
+// sync — e.g. clicking the native <input type="date"> calendar icon or tabbing
+// between its month/day/year segments can fire mismatched focus events in some
+// browsers — and once it drifts positive it never recovers, permanently blocking
+// re-renders. Checking document.activeElement is always accurate.)
+document.addEventListener('focusout', function(e){ if(isInteractive(e.target)) setTimeout(flushPending,60); });
 function isInteractive(el){ return el&&(el.tagName==='SELECT'||el.tagName==='INPUT'||el.tagName==='TEXTAREA'); }
-function isBusy(){ return focusedCount>0; }
+function isBusy(){ return isInteractive(document.activeElement); }
 function flushPending(){ if(isBusy()) return; if(pendingDay){applyDayData(pendingDay);pendingDay=null;} if(pendingWeek){applyWeekData(pendingWeek);pendingWeek=null;} }
 
 // ═══════════════════════════════════════════════════════════════
@@ -573,15 +584,21 @@ function flushPending(){ if(isBusy()) return; if(pendingDay){applyDayData(pendin
 // ═══════════════════════════════════════════════════════════════
 function fmt(sec){ var h=Math.floor(sec/3600),m=Math.floor((sec%3600)/60),s=sec%60; if(h>0) return h+'h '+m+'m'; if(m>0) return m+'m '+s+'s'; return s+'s'; }
 function fmtH(sec){ return (sec/3600).toFixed(1); }
-function isoToday(){ return new Date().toISOString().slice(0,10); }
+function pad2(n){ return n<10?'0'+n:''+n; }
+// Format a Date using its LOCAL year/month/day. Do NOT use toISOString() for this —
+// toISOString() converts to UTC, so a Date built from local midnight can come out
+// as the previous day whenever the local timezone is ahead of UTC. That off-by-one
+// was silently eating a day on every date-shift/comparison.
+function toISODate(d){ return d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate()); }
+function isoToday(){ return toISODate(new Date()); }
 
 function mondayOf(ds){
     var d=new Date(ds+'T00:00:00');
     var wd=d.getDay()===0?6:d.getDay()-1; // 0=Mon ... 6=Sun
     d.setDate(d.getDate()-wd);
-    return d.toISOString().slice(0,10);
+    return toISODate(d);
 }
-function addDays(ds,n){ var d=new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
+function addDays(ds,n){ var d=new Date(ds+'T00:00:00'); d.setDate(d.getDate()+n); return toISODate(d); }
 function shortDate(ds){ return new Date(ds+'T00:00:00').toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short'}); }
 function dayHeader(ds){
     var d=new Date(ds+'T00:00:00');
@@ -641,9 +658,19 @@ function toggleSection(name){
 // ═══════════════════════════════════════════════════════════════
 //  DATE NAV
 // ═══════════════════════════════════════════════════════════════
-function goToday()   { selectedDate=isoToday(); document.getElementById('datePicker').value=selectedDate; fetchDay(); }
-function shiftDate(n){ selectedDate=addDays(selectedDate,n); document.getElementById('datePicker').value=selectedDate; fetchDay(); }
+function goToday()   { selectedDate=isoToday(); document.getElementById('datePicker').value=selectedDate; unstickDatePicker(); fetchDay(); }
+function shiftDate(n){ selectedDate=addDays(selectedDate,n); document.getElementById('datePicker').value=selectedDate; unstickDatePicker(); fetchDay(); }
 function onDatePick(){ selectedDate=document.getElementById('datePicker').value; fetchDay(); }
+// Clicking the nav arrows is an explicit request to navigate. In some browsers
+// (notably Safari on macOS) clicking a <button> does not move focus away from a
+// previously-focused <input>, so the date picker can stay "focused" indefinitely.
+// That kept isBusy() stuck true forever, so fetchDay's response just piled up in
+// pendingDay and the screen never updated. Explicitly blur it here so navigation
+// always applies immediately regardless of that quirk.
+function unstickDatePicker(){
+    var dp=document.getElementById('datePicker');
+    if(document.activeElement===dp) dp.blur();
+}
 
 // Week nav: always jump exactly 7 days so Mon stays Mon
 function shiftWeek(n){ currentMonday=addDays(currentMonday,n*7); fetchWeek(); }
@@ -863,19 +890,21 @@ function renderProjTable(){
     var rows='';
     projects.forEach(function(p,pi){
         (p.activities||[]).forEach(function(a,ai){
+            var taskStr=(a.tasks||[]).join(' | ');
             rows+='<tr>'+
                 '<td class="pt-code">'+escH(p.id)+'</td>'+
                 '<td>'+escH(p.name)+'</td>'+
                 '<td class="pt-code">'+escH(a.subId)+'</td>'+
                 '<td>'+escH(a.name)+'</td>'+
-                '<td><div class="pt-actions">'+
+                '<td class="pt-tasks" title="'+escA(taskStr)+'">'+(taskStr?escH(taskStr):'—')+'</td>'+
+                '<td class="pt-btns-cell"><div class="pt-actions">'+
                     '<button class="btn btn-outline btn-sm" onclick="openEdit('+pi+','+ai+')">Edit</button>'+
                     '<button class="btn btn-danger btn-sm"  onclick="removeActivity('+pi+','+ai+')">Delete</button>'+
                 '</div></td>'+
                 '</tr>';
         });
     });
-    tbody.innerHTML=rows||'<tr><td colspan="5" style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:14px">No projects yet.</td></tr>';
+    tbody.innerHTML=rows||'<tr><td colspan="6" style="color:var(--text-muted);font-size:0.8rem;text-align:center;padding:14px">No projects yet.</td></tr>';
 }
 
 function addProjectActivity(){
@@ -957,7 +986,7 @@ function toggleTask(div,task){
     var cb=div.querySelector('input');
     var now=!cb.checked; cb.checked=now;
     div.classList.toggle('checked',now);
-    if(now){ var n=document.getElementById('descNotes'); n.value=n.value?n.value+'\n\u2022 '+task:'\u2022 '+task; }
+    if(now){ var n=document.getElementById('descNotes'); n.value=n.value?n.value+' | '+task:task; }
 }
 
 function overlayClick(e){ if(e.target===document.getElementById('descOverlay')) closeDesc(); }

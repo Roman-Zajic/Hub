@@ -151,7 +151,7 @@ input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0
 }
 .wtable thead th.col-proj { text-align: left; width: 150px; }
 .wtable thead th.col-act  { text-align: left; width: 170px; }
-.wtable thead th.col-day  { width: 90px; }
+.wtable thead th.col-day  { width: 90px; text-align: right; padding-right: 10px; }
 .wtable thead th.today-col { color: var(--amber); }
 
 .wtable tbody td {
@@ -170,8 +170,13 @@ input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0
 .wtable tbody tr:hover td           { background: var(--surface-in); }
 .wtable tbody tr:hover td.today-col { background: #FEF3C7; }
 
-/* Day cell content: value + icon, right-aligned as a unit */
+/* Day cell content: value + icon-slot, right-aligned as a unit.
+   The icon slot has a fixed width whether or not a real button is rendered in it,
+   so the numeric value sits at the same horizontal position in every row —
+   otherwise rows with a pencil (icon present) push the number left of rows/totals
+   without one, breaking column alignment. */
 .day-cell { display: inline-flex; align-items: center; gap: 3px; justify-content: flex-end; width: 100%; }
+.desc-btn, .desc-btn-spacer { width: 16px; height: 16px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; }
 
 .wtable tfoot td {
     padding: 7px 12px;
@@ -192,8 +197,8 @@ input[type=date].date-input:focus { border-color: var(--teal-700); box-shadow: 0
 .desc-btn {
     background: none; border: none; cursor: pointer;
     padding: 1px 2px; border-radius: 3px;
-    color: var(--border); font-size: 0.78rem;
-    transition: color 130ms; line-height: 1; flex-shrink: 0;
+    color: var(--text-muted); font-size: 0.78rem;
+    transition: color 130ms; line-height: 1;
 }
 .desc-btn:hover  { color: var(--teal-700); }
 .desc-btn.filled { color: var(--amber); }
@@ -836,7 +841,9 @@ function applyWeekData(data){
                 tbody+='<td class="col-day'+(isT?' today-col':'')+'">'+
                     '<div class="day-cell">'+
                     (s>0?'<span>'+fmtH(s)+'h</span>':'<span style="color:var(--border)">—</span>')+
-                    (s>0?' <button class="desc-btn'+(hasDesc?' filled':'')+'" onclick="openDesc(\''+escA(days[di])+'\',\''+escA(proj.id)+'\',\''+escA(act.subId)+'\')" title="Notes">\u270E</button>':'')+
+                    (s>0
+                        ?'<button class="desc-btn'+(hasDesc?' filled':'')+'" onclick="openDesc(\''+escA(days[di])+'\',\''+escA(proj.id)+'\',\''+escA(act.subId)+'\')" title="Notes">\u270E</button>'
+                        :'<span class="desc-btn-spacer" aria-hidden="true"></span>')+
                     '</div></td>';
             });
             tbody+='</tr>';
@@ -847,7 +854,10 @@ function applyWeekData(data){
     var tfoot='<tr><td class="col-proj" colspan="2">Total</td>';
     dayTotals.forEach(function(s,di){
         var isT=(days[di]===todayStr);
-        tfoot+='<td class="col-day'+(isT?' today-col':'')+'">'+(s>0?fmtH(s)+'h':'<span style="color:var(--border)">—</span>')+'</td>';
+        tfoot+='<td class="col-day'+(isT?' today-col':'')+'"><div class="day-cell">'+
+            (s>0?'<span>'+fmtH(s)+'h</span>':'<span style="color:var(--border)">—</span>')+
+            '<span class="desc-btn-spacer" aria-hidden="true"></span>'+
+            '</div></td>';
     });
     tfoot+='</tr>';
 
@@ -986,7 +996,12 @@ function toggleTask(div,task){
     var cb=div.querySelector('input');
     var now=!cb.checked; cb.checked=now;
     div.classList.toggle('checked',now);
-    if(now){ var n=document.getElementById('descNotes'); n.value=n.value?n.value+' | '+task:task; }
+    var n=document.getElementById('descNotes');
+    var parts=n.value.split('|').map(function(s){return s.trim();}).filter(function(s){return s.length;});
+    var idx=parts.indexOf(task);
+    if(now){ if(idx===-1) parts.push(task); }
+    else   { if(idx!==-1) parts.splice(idx,1); }
+    n.value=parts.join(' | ');
 }
 
 function overlayClick(e){ if(e.target===document.getElementById('descOverlay')) closeDesc(); }

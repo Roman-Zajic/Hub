@@ -4,6 +4,7 @@ import time
 import ctypes
 import ctypes.wintypes
 import threading
+import traceback
 from datetime import datetime, timedelta
 
 # ── File paths ───────────────────────────────────────────────
@@ -15,10 +16,36 @@ TIME_LOG          = os.path.join(DATA_FOLDER, 'time_log.json')
 PROJECTS_FILE     = os.path.join(DATA_FOLDER, 'projects.json')
 ALLOCATIONS_FILE  = os.path.join(DATA_FOLDER, 'allocations.json')
 DESCRIPTIONS_FILE = os.path.join(DATA_FOLDER, 'time_descriptions.json')
+ERROR_LOG         = os.path.join(DATA_FOLDER, 'tracker_error.log')
 
 _lock      = threading.Lock()
 _dirty     = False          # write only when data changed
 _last_save = 0              # epoch seconds of last flush
+
+
+def _log_error(context):
+    """Record an exception instead of letting it vanish silently. Logging
+    itself is wrapped so a logging failure can never crash the caller."""
+    try:
+        with open(ERROR_LOG, 'a', encoding='utf-8') as f:
+            f.write(f'--- {datetime.now().isoformat()} [{context}] ---\n')
+            f.write(traceback.format_exc())
+            f.write('\n')
+    except Exception:
+        pass
+
+
+def _cleanup_stale_tmp_files():
+    """Remove any .tmp files left behind by a previous crash mid-write.
+    save_json() only ever renames a *fully written* tmp file over the real
+    one, so a surviving .tmp is always leftover junk, never live data."""
+    for path in (TIME_LOG, PROJECTS_FILE, ALLOCATIONS_FILE, DESCRIPTIONS_FILE):
+        tmp = path + '.tmp'
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
 
 
 # ── Generic JSON helpers ─────────────────────────────────────
@@ -34,11 +61,21 @@ def load_json(path, default):
 
 
 def save_json(path, data):
-    """Thread-safe atomic write."""
+    """Thread-safe atomic write. If the write fails partway, the stray .tmp
+    is removed instead of being left behind — it's re-raised so the caller
+    (e.g. the tracking loop) can log it, but no orphan file lingers."""
     tmp = path + '.tmp'
-    with open(tmp, 'w', encoding='utf-8') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    except Exception:
+        if os.path.exists(tmp):
+            try:
+                os.remove(tmp)
+            except Exception:
+                pass
+        raise
 
 
 # ── Window tracking ──────────────────────────────────────────
@@ -70,31 +107,46 @@ def get_active_window():
 
 
 def start_tracking():
-    """Background thread: increments window time every second, flushes every 5s."""
+    """Background thread: increments window time every second, flushes every 5s.
+
+    The loop body is wrapped in try/except so a single bad iteration (a
+    transient file lock, a flaky win32 call, etc.) is logged to
+    'Time Monitor Data/tracker_error.log' and tracking keeps going, instead
+    of an unhandled exception silently killing the whole thread forever with
+    no visible error.
+    """
     def loop():
         global _dirty, _last_save
         log_data = load_json(TIME_LOG, {})   # load once at startup
 
         while True:
-            app, title = get_active_window()
-            today = datetime.now().strftime('%Y-%m-%d')
+            try:
+                app, title = get_active_window()
+                today = datetime.now().strftime('%Y-%m-%d')
 
-            with _lock:
-                day = log_data.setdefault(today, {})
-                key = f'{app}|||{title}'
-                day[key] = day.get(key, 0) + 1
-                _dirty = True
-
-            # Flush to disk every 5 seconds at most
-            now = time.monotonic()
-            if _dirty and (now - _last_save) >= 5:
                 with _lock:
-                    save_json(TIME_LOG, log_data)
-                    _dirty     = False
-                    _last_save = now
+                    day = log_data.setdefault(today, {})
+                    key = f'{app}|||{title}'
+                    day[key] = day.get(key, 0) + 1
+                    _dirty = True
+
+                # Flush to disk every 5 seconds at most
+                now = time.monotonic()
+                if _dirty and (now - _last_save) >= 5:
+                    with _lock:
+                        save_json(TIME_LOG, log_data)
+                        _dirty     = False
+                        _last_save = now
+
+            except Exception:
+                _log_error('tracking loop')
+                # Brief backoff so a persistent failure (e.g. disk full)
+                # doesn't spin the CPU with rapid-fire retries.
+                time.sleep(2)
 
             time.sleep(1)
 
+    _cleanup_stale_tmp_files()
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
 

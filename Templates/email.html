@@ -1,0 +1,1109 @@
+{% extends "layout.html" %}
+{% block module_name %}Email Composer{% endblock %}
+
+{% block extra_css %}
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --font:         "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono:         "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  --teal-900:     #005A5A;
+  --teal-700:     #008282;
+  --teal-400:     #50C1C1;
+  --teal-100:     #95DFDB;
+  --amber:        #E1A01E;
+  --ink:          #012D2C;
+  --text:         #005A5A;
+  --text-muted:   #008282;
+  --surface-page: #F0FAFA;
+  --surface-card: #FFFFFF;
+  --surface-in:   #F0FAFA;
+  --border:       #D0ECEB;
+  --shadow:       0 1px 4px rgba(1,45,44,.10);
+  --shadow-md:    0 4px 14px rgba(1,45,44,.12);
+  --r:            10px;
+  --nav-h:        52px;
+}
+
+html { font-size: 16px; }
+body {
+  font-family: var(--font);
+  font-size: 0.9375rem;
+  color: var(--text);
+  background: var(--surface-page);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── NAVBAR ─────────────────────────────────────────── */
+.navbar {
+  display: flex;
+  align-items: center;
+  height: var(--nav-h);
+  padding: 0 32px;
+  background: var(--teal-900);
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+.brand-icon { display: flex; align-items: center; flex-shrink: 0; }
+.nav-pipe { width: 1px; height: 18px; background: rgba(149,223,219,.30); flex-shrink: 0; margin: 0 14px; }
+.nav-brand-text { font-size: 0.9375rem; font-weight: 600; color: var(--teal-100); white-space: nowrap; }
+
+/* ── LAYOUT ─────────────────────────────────────────── */
+.wrap { width: 100%; }
+
+/* ── TOOLBAR ─────────────────────────────────────────── */
+.toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  padding: 10px;
+  margin-bottom: 20px;
+}
+.tb-group { display: flex; align-items: center; gap: 4px; }
+.tb-sep { width: 1px; height: 22px; background: var(--border); margin: 0 6px; flex-shrink: 0; }
+
+/* ── BUTTONS ─────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font); font-size: 0.875rem; font-weight: 600;
+  padding: 9px 18px; border-radius: 6px; border: 1px solid transparent;
+  cursor: pointer; text-decoration: none;
+  transition: background 130ms, color 130ms, border-color 130ms;
+  user-select: none; line-height: 1; white-space: nowrap;
+}
+.btn:active { opacity: .85; }
+.btn-primary { background: var(--teal-900); color: #fff; border-color: var(--teal-900); }
+.btn-primary:hover { background: var(--teal-700); border-color: var(--teal-700); }
+.btn-outline { background: transparent; color: var(--text); border-color: var(--border); }
+.btn-outline:hover { border-color: var(--teal-700); color: var(--teal-700); background: var(--surface-in); }
+.btn-sm { font-size: 0.75rem; padding: 6px 12px; }
+
+/* ── FIELDS ──────────────────────────────────────────── */
+.field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 14px; }
+.field-label { font-size: 0.75rem; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; color: var(--text-muted); }
+.input {
+  font-family: var(--font); font-size: 0.875rem; color: var(--text);
+  background: var(--surface-card); border: 1px solid var(--border);
+  border-radius: 6px; padding: 9px 12px; outline: none; width: 100%;
+  transition: border-color 130ms, box-shadow 130ms;
+}
+.input::placeholder { color: #7A9E9E; }
+.input:hover  { border-color: var(--teal-700); }
+.input:focus  { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+.textarea {
+  font-family: var(--mono);
+  font-size: 0.8125rem;
+  color: var(--ink);
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  outline: none;
+  width: 100%;
+  height: 560px;
+  resize: none;
+  line-height: 1.7;
+  tab-size: 2;
+  transition: border-color 130ms, box-shadow 130ms;
+}
+.textarea:hover { border-color: var(--teal-700); }
+.textarea:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+/* ── PANELS / GRID ───────────────────────────────────── */
+/* align-items: stretch (the grid default) makes both panels match the
+   tallest one; each panel is then a flex column so its body/frame can grow
+   to fill that stretched height instead of relying on independently-guessed
+   fixed pixel heights, which is what let the two panels drift out of sync. */
+.composer-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+@media (max-width: 1000px) { .composer-grid { grid-template-columns: 1fr; } }
+
+.panel {
+  background: var(--surface-card);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--surface-in);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.panel-title { font-size: 0.75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.panel-body { padding: 16px; flex: 1; display: flex; min-height: 0; }
+.panel-body .textarea { height: auto; flex: 1; }
+
+/* ── PREVIEW CHROME ──────────────────────────────────── */
+.mail-frame-wrap { background: #ECECEE; flex: 1; min-height: 650px; }
+#previewFrame { display: block; width: 100%; height: 100%; border: 0; background: #ECECEE; }
+
+/* ── REFERENCE ───────────────────────────────────────── */
+.reference { margin-top: 20px; }
+.reference summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 0.875rem; font-weight: 600; color: var(--text);
+  padding: 14px 16px;
+}
+.reference summary::-webkit-details-marker { display: none; }
+.reference summary::before { content: '▸'; color: var(--text-muted); font-size: 0.75rem; transition: transform 150ms; }
+.reference[open] summary::before { transform: rotate(90deg); }
+.ref-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+.ref-table th { text-align: left; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface-in); }
+.ref-table td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text); }
+.ref-table tr:last-child td { border-bottom: none; }
+.ref-table code { font-family: var(--mono); font-size: 0.75rem; background: var(--surface-in); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; color: var(--teal-900); white-space: nowrap; }
+.ref-table .desc { color: var(--text-muted); }
+
+
+.toast-fb {
+  position: fixed; bottom: 22px; right: 22px;
+  background: var(--teal-900); color: #fff;
+  font-size: 0.8125rem; font-weight: 600;
+  padding: 11px 18px; border-radius: 7px;
+  box-shadow: var(--shadow-md);
+  opacity: 0; transform: translateY(8px);
+  transition: opacity 180ms, transform 180ms;
+  pointer-events: none; z-index: 999;
+}
+.toast-fb.show { opacity: 1; transform: translateY(0); }
+</style>
+{% endblock %}
+
+{% block content %}
+{% raw %}
+<div class="wrap">
+
+  <div class="toolbar" id="toolbar">
+    <div class="tb-group">
+      <button class="btn btn-outline btn-sm" data-action="h1">H1</button>
+      <button class="btn btn-outline btn-sm" data-action="h2">H2</button>
+      <button class="btn btn-outline btn-sm" data-action="h3">H3</button>
+      <button class="btn btn-outline btn-sm" style="font-weight:800" data-action="bold">B</button>
+      <button class="btn btn-outline btn-sm" style="font-style:italic" data-action="italic">I</button>
+      <button class="btn btn-outline btn-sm" data-action="pill">Pill</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button class="btn btn-outline btn-sm" data-action="quote">&gt; Quote</button>
+      <button class="btn btn-outline btn-sm" data-action="note">+ Note</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button class="btn btn-outline btn-sm" data-action="bullet">• List</button>
+      <button class="btn btn-outline btn-sm" data-action="numbered">1. List</button>
+      <button class="btn btn-outline btn-sm" data-action="table">Table</button>
+      <button class="btn btn-outline btn-sm" data-action="divider">Divider</button>
+      <button class="btn btn-outline btn-sm" data-action="link">Link</button>
+    </div>
+    <div class="tb-sep"></div>
+    <div class="tb-group">
+      <button class="btn btn-outline btn-sm" data-action="logo">+ Logo</button>
+      <button class="btn btn-outline btn-sm" data-action="button">+ CTA button</button>
+      <button class="btn btn-outline btn-sm" data-action="footer">+ Footer</button>
+      <button class="btn btn-outline btn-sm" data-action="calendar">+ Calendar</button>
+      <button class="btn btn-outline btn-sm" data-action="signature">+ Signature</button>
+    </div>
+    <div class="tb-group" style="margin-left:auto">
+      <button class="btn btn-primary btn-sm" id="downloadBtn">Download .eml</button>
+    </div>
+  </div>
+
+  <div class="composer-grid">
+
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Markup</span></div>
+      <div class="panel-body">
+        <textarea class="textarea" id="markup" spellcheck="false" placeholder="Start typing… use # for a heading, **bold**, - for a bullet list, or click an insert button above."></textarea>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="panel-head"><span class="panel-title">Live preview</span></div>
+      <div class="mail-frame-wrap">
+        <iframe id="previewFrame" title="Email preview"></iframe>
+      </div>
+    </div>
+
+  </div>
+
+  <details class="reference panel">
+    <summary>Markup reference</summary>
+    <table class="ref-table">
+      <thead><tr><th>Syntax</th><th>Result</th></tr></thead>
+      <tbody>
+        <tr><td><code># Heading</code></td><td class="desc">Large title (H1)</td></tr>
+        <tr><td><code>## Heading</code></td><td class="desc">Section heading (H2)</td></tr>
+        <tr><td><code>### Heading</code></td><td class="desc">Small eyebrow heading (H3)</td></tr>
+        <tr><td><code>**bold**</code></td><td class="desc">Bold text</td></tr>
+        <tr><td><code>*italic*</code></td><td class="desc">Italic text</td></tr>
+        <tr><td><code>{{pill:Label}}</code><br><code>{{pill:Label|dark}}</code></td><td class="desc">Inline rounded pill badge to highlight a word inline. Variants: yellow (default), dark, grey</td></tr>
+        <tr><td><code>[label](https://url)</code></td><td class="desc">Inline link</td></tr>
+        <tr><td><code>- item</code></td><td class="desc">Bullet list (consecutive lines)</td></tr>
+        <tr><td><code>1. item</code></td><td class="desc">Numbered list (consecutive lines)</td></tr>
+        <tr><td><code>&gt; text</code></td><td class="desc">Blockquote / disclaimer style</td></tr>
+        <tr><td><code>---</code></td><td class="desc">Horizontal divider</td></tr>
+        <tr><td><code>[[logo]]</code><br><code>[[logo: Title text]]</code></td><td class="desc">Predefined EY logo on a full‑height dark header bar with a yellow accent line. Title is optional and appears next to the mark.</td></tr>
+        <tr><td><code>[[button: Label | https://url]]</code></td><td class="desc">EY‑styled yellow call‑to‑action button</td></tr>
+        <tr><td><code>[[note: text]]</code></td><td class="desc">Highlighted callout box</td></tr>
+        <tr><td><code>[[table]]<br>Col A | Col B<br>Val 1 | Val 2<br>[[/table]]</code></td><td class="desc">Data table — pipe‑separated columns, first row is the header, no blank lines inside</td></tr>
+        <tr><td><code>[[footer: text]]</code></td><td class="desc">Small disclaimer-style block, usually placed at the very end</td></tr>
+        <tr><td><code>[[calendar: YYYY-MM]]</code></td><td class="desc">Monday-start month calendar; add <code>| 1,4,9</code> to ring specific days in yellow</td></tr>
+        <tr><td><code>[[signature: Name | Rank | Dept | Company | Cell | Email]]</code></td><td class="desc">Sign-off block; all six fields must be specified</td></tr>
+        <tr><td>blank line</td><td class="desc">Starts a new paragraph</td></tr>
+      </tbody>
+    </table>
+  </details>
+
+</div>
+
+<div class="toast-fb" id="toastFb">Copied to clipboard</div>
+
+<script>
+/* ════════════════════════════════════════════════════════════
+   EY EMAIL MARKUP → HTML
+   ════════════════════════════════════════════════════════════ */
+const EY_YELLOW  = '#FFE600';
+const EY_DARK    = '#2e2e38';
+const EY_TEXT    = '#2E2E38';
+const EY_MUTED   = '#6F6F76';
+const EY_FAINT   = '#9A9AA0';
+const EY_BORDER  = '#E2E2E5';
+const EY_NOTE_BG = '#FFF9D9';
+const EY_QUOTE_BG= '#FAFAFA';
+const FONT       = 'Arial, Helvetica, sans-serif';
+
+/* Source mark — rasterized to PNG at runtime for cross-client email compatibility (most
+   mail clients, including the default OS .eml viewers, do not render inline <svg>). */
+const EY_LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 393 402" width="34" height="35" fill="#fff">' +
+  '<polygon points="267.91,202.77 234.19,267.54 200.56,202.77 134.74,202.77 204.09,322.86 204.09,401.26 263.44,401.26 263.44,322.86 332.89,202.77"></polygon>' +
+  '<polygon fill="#ffeb0a" points="392.42,0 0,143.22 392.42,73.9"></polygon>' +
+  '<polygon points="3.43,401.26 162.23,401.26 162.23,355.61 62.96,355.61 62.96,322.86 134.74,322.86 134.74,281.18 62.96,281.18 62.96,248.42 142.37,248.42 116.02,202.77 3.43,202.77"></polygon>' +
+'</svg>';
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function safeUrl(url) {
+  const trimmed = (url || '').trim();
+  if (/^javascript:/i.test(trimmed)) return '#';
+  return trimmed || '#';
+}
+
+const PILL_VARIANTS = {
+  yellow: { bg: EY_YELLOW, color: EY_DARK },
+  dark:   { bg: EY_DARK,   color: EY_YELLOW },
+  grey:   { bg: '#E2E2E5', color: EY_DARK },
+  gray:   { bg: '#E2E2E5', color: EY_DARK }
+};
+
+const PILL_FONT = '700 11px Arial, Helvetica, sans-serif';
+
+/* border-radius on a <span> is silently ignored by Outlook's Word rendering engine.
+   The reliable cross-client approach is to rasterize the pill to a PNG on an offscreen
+   canvas (same technique used for the EY logo) and embed it as an inline <img>.
+   Canvas drawing is synchronous so this runs inside parseInline() on every keystroke. */
+function renderPillImage(label, variant) {
+  const v = PILL_VARIANTS[variant] || PILL_VARIANTS.yellow;
+  const scale = 4;
+  const padX = 6;
+  const height = 16;
+  const radius = height / 2;
+
+  /* One canvas serves both jobs: font metrics are read before the canvas is sized
+     (sizing/scaling a canvas resets its context state anyway), then the same
+     context is reused to draw once the final width is known. */
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.font = PILL_FONT;
+  const width = Math.ceil(ctx.measureText(label).width) + padX * 2;
+
+  canvas.width = width * scale;
+  canvas.height = height * scale;
+  ctx.scale(scale, scale);
+
+  ctx.fillStyle = v.bg;
+  ctx.beginPath();
+  ctx.moveTo(radius, 0);
+  ctx.arcTo(width, 0, width, height, radius);
+  ctx.arcTo(width, height, 0, height, radius);
+  ctx.arcTo(0, height, 0, 0, radius);
+  ctx.arcTo(0, 0, width, 0, radius);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = v.color;
+  ctx.font = PILL_FONT;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, width / 2, height / 2 + 1);
+
+  return { dataUrl: canvas.toDataURL('image/png'), width: width, height: height };
+}
+
+function renderPillImg(label, variant) {
+  if (!label) return '';
+  const r = renderPillImage(label, variant);
+  /* vertical-align:middle on an inline <img> is not honored consistently by
+     Outlook's Word rendering engine. align="absmiddle" is the legacy attribute
+     Word actually respects for centering an inline image against surrounding
+     text, so both are set: absmiddle for Outlook, vertical-align for everyone else. */
+  return `<img src="${r.dataUrl}" width="${r.width}" height="${r.height}" alt="${escapeHtml(label)}" align="absmiddle" style="display:inline-block;vertical-align:middle;border:0;outline:none;">`;
+}
+
+/* Pills are an inline element (used mid-sentence to highlight a word or status), so
+   they use {{ }} rather than the [[ ]] used for block-level tags like [[note: ]] --
+   that keeps the two syntaxes visually distinct and unambiguous to parse.
+   Pills are extracted from the *raw* text before escapeHtml() runs (canvas text
+   drawing needs the literal characters, not HTML entities) and swapped back in via
+   a placeholder token afterwards, so the rest of the line still goes through the
+   normal escape → link → bold → italic pipeline untouched. */
+function parseInline(raw) {
+  const pillTokens = [];
+  const withoutPills = raw.replace(/\{\{\s*pill\s*:\s*([^{}|]+?)\s*(?:\|\s*([a-zA-Z]+)\s*)?\}\}/gi, function (_, label, variant) {
+    const html = renderPillImg(label.trim(), (variant || '').trim().toLowerCase());
+    const token = '\u0000PILL' + pillTokens.length + '\u0000';
+    pillTokens.push(html);
+    return token;
+  });
+
+  let s = escapeHtml(withoutPills);
+  s = s.replace(/\[([^\[\]]+)\]\(([^()\s]+)\)/g, function (_, text, url) {
+    return `<a href="${safeUrl(url)}" style="color:${EY_DARK};text-decoration:underline;font-weight:600;">${text}</a>`;
+  });
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  s = s.replace(/\u0000PILL(\d+)\u0000/g, function (_, idx) { return pillTokens[parseInt(idx, 10)]; });
+  return s;
+}
+
+/* ── Logo rasterization (SVG → PNG data URL, cached) ─── */
+function svgToPngDataUrl(svgMarkup, canvasW, canvasH) {
+  return new Promise(function (resolve, reject) {
+    try {
+      const svgBlob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = function () {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvasW;
+        canvas.height = canvasH;
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvasW, canvasH);
+        ctx.drawImage(img, 0, 0, canvasW, canvasH);
+        URL.revokeObjectURL(url);
+        try { resolve(canvas.toDataURL('image/png')); } catch (e) { reject(e); }
+      };
+      img.onerror = function (err) { URL.revokeObjectURL(url); reject(err); };
+      img.src = url;
+    } catch (err) { reject(err); }
+  });
+}
+
+let logoPngDataUrl = '';
+let logoPngPromise = null;
+function ensureLogoPng() {
+  if (!logoPngPromise) {
+    logoPngPromise = svgToPngDataUrl(EY_LOGO_SVG, 136, 140)
+      .then(function (dataUrl) { logoPngDataUrl = dataUrl; return dataUrl; })
+      .catch(function () { return ''; });
+  }
+  return logoPngPromise;
+}
+
+/* Shared wrapper for the repeated `<table role="presentation" border="0"
+   cellpadding="0" cellspacing="0" ...>` shell that every block-level component
+   below sits inside. Centralizing it means the Outlook-safe attributes
+   (border="0", no cellspacing/cellpadding) only need to be right in one place. */
+/* mso-table-lspace/rspace + border-collapse:collapse are required on every stacked
+   presentation table -- without them Outlook's Word engine can render a stray
+   hairline of the page background in the gap between two adjacent tables (e.g.
+   between a table row and the next block, or along a cell's border-bottom). */
+function presTable(inner, style) {
+  const base = 'border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;';
+  const full = base + (style || '');
+  return '<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="' + full + '">' + inner + '</table>';
+}
+
+/* Full-bleed dark header. Accent line is a border on the cell itself (not a sibling
+   cell) so it always spans the full height regardless of rendering engine. */
+function renderLogo(title) {
+  const imgTag = logoPngDataUrl
+    ? `<img src="${logoPngDataUrl}" width="34" height="35" alt="EY" style="display:block;border:0;outline:none;">`
+    : EY_LOGO_SVG;
+  const titleCell = title
+    ? `<td style="padding-left:16px;vertical-align:middle;font-family:${FONT};font-size:16px;font-weight:700;color:#FFFFFF;">${escapeHtml(title)}</td>`
+    : '';
+  const inner = presTable(`<tr><td style="vertical-align:middle;">${imgTag}</td>${titleCell}</tr>`, null);
+  const cell = `<td style="background-color:${EY_DARK};border-left-width:6px;border-left-style:solid;border-left-color:${EY_YELLOW};padding:22px 26px;" bgcolor="${EY_DARK}">${inner}</td>`;
+  return presTable(`<tr>${cell}</tr>`, 'width:100%;');
+}
+
+function renderHeading(level, text) {
+  if (level === 1) {
+    return `<h1 style="margin:0;font-family:${FONT};font-size:25px;line-height:33px;mso-line-height-rule:exactly;font-weight:700;color:${EY_DARK};">${text}</h1>`;
+  }
+  if (level === 2) {
+    return `<h2 style="margin:28px 0 0;font-family:${FONT};font-size:18px;line-height:24px;mso-line-height-rule:exactly;font-weight:700;color:${EY_DARK};border-bottom-width:2px;border-bottom-style:solid;border-bottom-color:${EY_YELLOW};padding-bottom:7px;">${text}</h2>`;
+  }
+  return `<div style="margin:22px 0 0;font-family:${FONT};font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:${EY_MUTED};">${text}</div>`;
+}
+
+function renderParagraph(text) {
+  return `<p style="margin:0;font-family:${FONT};font-size:15px;line-height:25px;mso-line-height-rule:exactly;color:${EY_TEXT};">${text}</p>`;
+}
+
+/* Quote and note both use a single table cell with a border-left (not a separate
+   spacer cell, and not a bare <div>) -- this is the combination that survives the
+   widest range of mail-client CSS sanitizers and renders a true full-height rule. */
+function renderQuote(text) {
+  const cell = `<td style="background-color:${EY_QUOTE_BG};border-left-width:3px;border-left-style:solid;border-left-color:${EY_YELLOW};padding:12px 18px;font-family:${FONT};font-size:14px;line-height:22px;mso-line-height-rule:exactly;color:${EY_MUTED};font-style:italic;" bgcolor="${EY_QUOTE_BG}">${text}</td>`;
+  return presTable(`<tr>${cell}</tr>`, 'width:100%;');
+}
+
+function renderNote(text) {
+  const cell = `<td style="background-color:${EY_NOTE_BG};border-left-width:4px;border-left-style:solid;border-left-color:${EY_YELLOW};padding:14px 16px;font-family:${FONT};font-size:14px;line-height:22px;mso-line-height-rule:exactly;color:${EY_DARK};" bgcolor="${EY_NOTE_BG}">${text}</td>`;
+  return presTable(`<tr>${cell}</tr>`, 'width:100%;');
+}
+
+/* Native <ul>/<li> bullet styling is rendered very inconsistently across mail
+   clients (Outlook in particular often drops it entirely), and even where it works
+   it doesn't read as visually distinct from plain typed "1. 2. 3." text. Both list
+   types are built from a single text cell per item instead: the marker (a solid
+   yellow square for bullets, a dark numbered badge for ordered items) is rasterized
+   to a PNG and placed as an inline image at the start of the line, using the exact
+   same align="absmiddle" technique already used for pills below -- this is what
+   reliably centers an inline image against surrounding text in Outlook, because
+   it's anchored within the same line box rather than synced across two separate
+   table cells (which is what the previous implementation did, and which never
+   lined up consistently in Word's rendering engine no matter how the padding
+   was tuned -- Word doesn't distribute line-height above/below text the way
+   browsers do, so any calculation assuming a centered line box breaks there).
+   A hanging indent (padding-left + negative text-indent) reserves space for the
+   marker so a second line, if the item wraps, starts under the item's own text
+   rather than under the marker. */
+const LIST_INDENT = 30; // px reserved for marker + gap before the text column
+
+function renderBulletMarkerImg() {
+  const scale = 4;
+  const size = 8;
+  const canvas = document.createElement('canvas');
+  canvas.width = size * scale;
+  canvas.height = size * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = EY_YELLOW;
+  ctx.fillRect(0, 0, size, size);
+  const dataUrl = canvas.toDataURL('image/png');
+  return `<img src="${dataUrl}" width="${size}" height="${size}" alt="" align="absmiddle" style="display:inline-block;vertical-align:middle;border:0;outline:none;">`;
+}
+
+function renderNumberBadgeImg(n) {
+  const scale = 4;
+  const size = 22;
+  const canvas = document.createElement('canvas');
+  canvas.width = size * scale;
+  canvas.height = size * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = EY_DARK;
+  ctx.fillRect(0, 0, size, size);
+  ctx.fillStyle = EY_YELLOW;
+  ctx.font = '700 12px Arial, Helvetica, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(n), size / 2, size / 2 + 1);
+  const dataUrl = canvas.toDataURL('image/png');
+  return `<img src="${dataUrl}" width="${size}" height="${size}" alt="${n}." align="absmiddle" style="display:inline-block;vertical-align:middle;border:0;outline:none;">`;
+}
+
+function renderList(items, ordered) {
+  const rows = items.map(function (item, idx) {
+    const isLast = idx === items.length - 1;
+    const padBottom = isLast ? '0' : '10px';
+    const marker = ordered ? renderNumberBadgeImg(idx + 1) : renderBulletMarkerImg();
+    return `<tr><td valign="top" style="vertical-align:top;font-family:${FONT};font-size:15px;line-height:24px;mso-line-height-rule:exactly;color:${EY_TEXT};padding:0 0 ${padBottom} ${LIST_INDENT}px;text-indent:-${LIST_INDENT}px;">${marker}&nbsp;&nbsp;${item}</td></tr>`;
+  }).join('');
+  return presTable(rows, 'width:100%;');
+}
+
+/* Table-based rule instead of a native <hr> -- some mail-client renderers ignore the
+   containing cell's width/padding for <hr> specifically and let it bleed past the
+   email card. A table cell with a border-top always stays inside its container. */
+function renderDivider() {
+  const rule = presTable('<tr><td style="font-size:0;line-height:0;border-top-width:3px;border-top-style:solid;border-top-color:#D5D5DA;">&nbsp;</td></tr>', 'width:90%;margin:0 auto;');
+  return presTable(`<tr><td align="center" style="padding:0;">${rule}</td></tr>`, 'width:100%;');
+}
+
+/* EY-style CTA: solid yellow, sharp corners, bold dark uppercase label. */
+function renderButton(label, url) {
+  const safeLabel = escapeHtml(label || 'Click Here');
+  const href = safeUrl(escapeHtml(url || '#'));
+  const link = `<a href="${href}" target="_blank" rel="noopener" style="display:inline-block !important;width:auto !important;max-width:none !important;padding:14px 32px;font-family:${FONT};font-size:14px;font-weight:700;color:${EY_DARK};background-color:${EY_YELLOW};text-decoration:none;text-align:center;letter-spacing:.4px;text-transform:uppercase;white-space:nowrap !important;">${safeLabel}</a>`;
+  const cell = `<td align="center" bgcolor="${EY_YELLOW}" style="background-color:${EY_YELLOW};mso-padding-alt:14px 32px;">${link}</td>`;
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" align="left" style="width:auto !important;max-width:none !important;border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;"><tr>${cell}</tr></table>` +
+    '<div style="clear:both;line-height:0;font-size:0;">&nbsp;</div>';
+}
+
+function renderTable(content) {
+  const lines = content.split('\n').map(function (r) { return r.trim(); }).filter(Boolean);
+  if (!lines.length) return '';
+  const cells = lines.map(function (r) { return r.split('|').map(function (c) { return c.trim(); }); });
+  const header = cells[0];
+  const body = cells.slice(1);
+  /* border-collapse:collapse is intentionally omitted -- it causes Outlook to render
+     phantom lines through cell content. Borders are applied per-cell instead, with
+     cellspacing="0" keeping rows flush against each other. */
+  let rows = '<tr>' + header.map(function (h) {
+    return `<td valign="middle" style="background-color:${EY_DARK};color:${EY_YELLOW};font-family:${FONT};font-size:12px;line-height:16px;mso-line-height-rule:exactly;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:11px 14px;vertical-align:middle;border-top-width:0;border-left-width:0;border-right-width:0;border-bottom-width:2px;border-bottom-style:solid;border-bottom-color:${EY_YELLOW};" bgcolor="${EY_DARK}">${parseInline(h)}</td>`;
+  }).join('') + '</tr>';
+  body.forEach(function (row, i) {
+    const bg = i % 2 === 0 ? '#FFFFFF' : '#F6F6F7';
+    rows += '<tr>' + row.map(function (c) {
+      return `<td valign="middle" style="background-color:${bg};color:${EY_TEXT};font-family:${FONT};font-size:14px;line-height:20px;mso-line-height-rule:exactly;padding:10px 14px;vertical-align:middle;border-top-width:0;border-left-width:0;border-right-width:0;border-bottom-width:1px;border-bottom-style:solid;border-bottom-color:${EY_BORDER};" bgcolor="${bg}">${parseInline(c)}</td>`;
+    }).join('') + '</tr>';
+  });
+  return presTable(rows, 'width:100%;');
+}
+
+function renderFooter(text) {
+  return `<div style="margin:0;padding-top:18px;border-top-width:1px;border-top-style:solid;border-top-color:${EY_BORDER};font-family:${FONT};font-size:11px;line-height:18px;mso-line-height-rule:exactly;color:${EY_FAINT};">${text}</div>`;
+}
+
+/* ── Signature ───────────────────────────────────────────
+   [[signature: Name | Rank | Dept | Company | Cell | Email]] -- all six
+   fields are required and must be typed out explicitly; there are no
+   hardcoded fallback values, so a missing field renders as blank rather
+   than silently filling in someone else's details. */
+function renderSignature(spec) {
+  const parts = (spec || '').split('|').map(function (s) { return s.trim(); });
+  const name = parts[0] || '';
+  const rank = parts[1] || '';
+  const department = parts[2] || '';
+  const company = parts[3] || '';
+  const cell = parts[4] || '';
+  const email = parts[5] || '';
+
+  const line1 = `${escapeHtml(name)} | ${escapeHtml(rank)} | ${escapeHtml(department)}`;
+  const line2 = escapeHtml(company);
+  const line3 = `Mobile: ${escapeHtml(cell)} | ${escapeHtml(email)}`;
+
+  return `<table role="presentation" border="0" cellpadding="0" cellspacing="0" style="border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;width:100%;"><tr><td style="padding-top:18px;border-top-width:1px;border-top-style:solid;border-top-color:${EY_BORDER};">` +
+    `<div style="font-family:${FONT};font-size:13px;line-height:19px;mso-line-height-rule:exactly;font-weight:700;color:${EY_DARK};">${line1}</div>` +
+    `<div style="font-family:${FONT};font-size:12px;line-height:18px;mso-line-height-rule:exactly;color:${EY_TEXT};padding-top:2px;">${line2}</div>` +
+    `<div style="font-family:${FONT};font-size:12px;line-height:18px;mso-line-height-rule:exactly;color:${EY_MUTED};padding-top:2px;">${line3}</div>` +
+  '</td></tr></table>';
+}
+
+/* ── Calendar ────────────────────────────────────────────
+   [[calendar: YYYY-MM]] or [[calendar: YYYY-MM | 1,4,9]] (optional comma-
+   separated highlight days). Weeks run Monday -> Sunday. Day cells rely on the
+   HTML valign attribute for vertical centering rather than CSS vertical-align --
+   unlike inline replaced elements, valign on a <td> with a fixed height is
+   reliably honored by Outlook. Highlighted days swap the plain number for a
+   small canvas-rasterized yellow disc badge: CSS border-radius has no effect
+   in Outlook's Word engine, so the circle reuses the same PNG-rasterization
+   technique already used for the logo and pills. The calendar renders at a
+   fixed, compact width rather than stretching to fill the card, and is
+   centred inside a full-width wrapper row. Cells that hold the badge image
+   must NOT carry the plain-text line-height/mso-line-height-rule pairing --
+   Outlook clips a cell's content to that exact line-height, so a 28px image
+   inside a 16px "exact" line box gets silently cropped to its bottom half. */
+const CAL_WIDTH = 392;
+const CAL_DAY_BG = '#F4F4F5';
+const CAL_WEEKEND_BG = '#D9D9DC';
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const WEEKDAY_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function renderDayBadgeImg(day) {
+  const scale = 4;
+  const size = 26;
+  const canvas = document.createElement('canvas');
+  canvas.width = size * scale;
+  canvas.height = size * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  ctx.fillStyle = EY_YELLOW;
+  ctx.beginPath();
+  ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = EY_DARK;
+  ctx.font = '700 13px Arial, Helvetica, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(String(day), size / 2, size / 2 + 1);
+  const dataUrl = canvas.toDataURL('image/png');
+  /* Line-height matches the badge's own height (not the surrounding day
+     cells' 14px text line-height) so Outlook doesn't clip the image. */
+  return `<img src="${dataUrl}" width="${size}" height="${size}" alt="${day}" style="display:block;margin:0 auto;line-height:${size}px;mso-line-height-rule:exactly;border:0;outline:none;">`;
+}
+
+function renderCalendar(spec) {
+  const parts = spec.split('|').map(function (s) { return s.trim(); });
+  const ymMatch = parts[0].match(/^(\d{4})-(\d{1,2})$/);
+  if (!ymMatch) {
+    return renderNote('Calendar: expected format YYYY-MM, e.g. [[calendar: 2026-07]].');
+  }
+  const year = parseInt(ymMatch[1], 10);
+  const month = parseInt(ymMatch[2], 10);
+  if (month < 1 || month > 12) {
+    return renderNote('Calendar: month must be between 01 and 12.');
+  }
+  const daysInMonth = new Date(year, month, 0).getDate();
+  const highlightSet = new Set(
+    (parts[1] || '').split(',').map(function (s) { return parseInt(s.trim(), 10); })
+      .filter(function (n) { return n >= 1 && n <= daysInMonth; })
+  );
+  const firstWeekday = (new Date(year, month - 1, 1).getDay() + 6) % 7; // 0=Mon .. 6=Sun
+
+  const weeks = [];
+  let week = new Array(firstWeekday).fill(null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    week.push(d);
+    if (week.length === 7) { weeks.push(week); week = []; }
+  }
+  if (week.length) {
+    while (week.length < 7) week.push(null);
+    weeks.push(week);
+  }
+
+  const colWidth = Math.floor(CAL_WIDTH / 7);
+
+  const titleRow = `<tr><td colspan="7" style="background-color:${EY_DARK};padding:8px 10px;text-align:center;font-family:${FONT};font-size:13px;line-height:18px;mso-line-height-rule:exactly;font-weight:700;letter-spacing:.03em;color:#FFFFFF;border-bottom-width:3px;border-bottom-style:solid;border-bottom-color:${EY_YELLOW};" bgcolor="${EY_DARK}">${MONTH_NAMES[month - 1]} ${year}</td></tr>`;
+
+  const headerRow = '<tr>' + WEEKDAY_LABELS.map(function (label) {
+    return `<td width="${colWidth}" align="center" style="background-color:${EY_BORDER};color:${EY_MUTED};font-family:${FONT};font-size:10px;line-height:14px;mso-line-height-rule:exactly;font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:5px 2px;border-width:1px;border-style:solid;border-color:${EY_BORDER};" bgcolor="${EY_BORDER}">${label}</td>`;
+  }).join('') + '</tr>';
+
+  const bodyRows = weeks.map(function (weekRow) {
+    return '<tr>' + weekRow.map(function (day, idx) {
+      if (day === null) {
+        return `<td width="${colWidth}" height="34" style="height:34px;background-color:#FFFFFF;border-width:1px;border-style:solid;border-color:${EY_BORDER};" bgcolor="#FFFFFF">&nbsp;</td>`;
+      }
+      const isWeekend = idx === 5 || idx === 6;
+      const bg = isWeekend ? CAL_WEEKEND_BG : CAL_DAY_BG;
+      const isHighlighted = highlightSet.has(day);
+      const content = isHighlighted ? renderDayBadgeImg(day) : String(day);
+      const textStyle = isHighlighted ? '' : 'font-size:13px;line-height:15px;mso-line-height-rule:exactly;';
+      return `<td width="${colWidth}" align="center" valign="middle" height="34" style="height:34px;background-color:${bg};font-family:${FONT};${textStyle}color:#000000;border-width:1px;border-style:solid;border-color:${EY_BORDER};" bgcolor="${bg}">${content}</td>`;
+    }).join('') + '</tr>';
+  }).join('');
+
+  const calendarTable = presTable(titleRow + headerRow + bodyRows, `width:${CAL_WIDTH}px;`);
+  return presTable(`<tr><td align="center">${calendarTable}</td></tr>`, 'width:100%;');
+}
+
+function renderBlock(block) {
+  const lines = block.split('\n').map(function (l) { return l.trim(); });
+  const first = lines[0];
+  let m;
+
+  if (m = block.match(/^\[\[\s*logo\s*(?::([\s\S]*))?\]\]\s*$/i)) {
+    return renderLogo(m[1] ? m[1].trim() : '');
+  }
+  if (m = block.match(/^\[\[\s*table\s*\]\]\n([\s\S]*?)\n\[\[\/table\s*\]\]\s*$/i)) {
+    return renderTable(m[1]);
+  }
+  if (m = block.match(/^\[\[\s*button\s*:([\s\S]*)\]\]\s*$/i)) {
+    const parts = m[1].split('|').map(function (s) { return s.trim(); });
+    return renderButton(parts[0], parts[1]);
+  }
+  if (m = block.match(/^\[\[\s*note\s*:([\s\S]*)\]\]\s*$/i)) {
+    return renderNote(parseInline(m[1].trim()));
+  }
+  if (m = block.match(/^\[\[\s*footer\s*:([\s\S]*)\]\]\s*$/i)) {
+    return renderFooter(parseInline(m[1].trim()));
+  }
+  if (m = block.match(/^\[\[\s*calendar\s*:([\s\S]*)\]\]\s*$/i)) {
+    return renderCalendar(m[1].trim());
+  }
+  if (m = block.match(/^\[\[\s*signature\s*(?::([\s\S]*))?\]\]\s*$/i)) {
+    return renderSignature(m[1] ? m[1].trim() : '');
+  }
+  if (lines.length === 1 && /^-{3,}$/.test(first)) {
+    return renderDivider();
+  }
+  if (m = first.match(/^(#{1,3})\s+(.*)$/)) {
+    return renderHeading(m[1].length, parseInline(m[2]));
+  }
+  if (lines.every(function (l) { return /^>\s?/.test(l); })) {
+    const text = lines.map(function (l) { return l.replace(/^>\s?/, ''); }).join(' ');
+    return renderQuote(parseInline(text));
+  }
+  if (lines.every(function (l) { return /^[-*]\s+/.test(l); })) {
+    return renderList(lines.map(function (l) { return parseInline(l.replace(/^[-*]\s+/, '')); }), false);
+  }
+  if (lines.every(function (l) { return /^\d+\.\s+/.test(l); })) {
+    return renderList(lines.map(function (l) { return parseInline(l.replace(/^\d+\.\s+/, '')); }), true);
+  }
+  return renderParagraph(parseInline(lines.join(' ')));
+}
+
+/* Fixed-height spacer row. border="0" is critical -- without it Outlook adds a
+   default 1px frame to every table, producing ghost lines between components. */
+function renderGap(px) {
+  return presTable(`<tr><td height="${px}" style="font-size:0;line-height:${px}px;mso-line-height-rule:exactly;">&nbsp;</td></tr>`, 'width:100%;');
+}
+
+/* Each additional consecutive blank line beyond the first becomes a real <br>. */
+function renderExtraBreaks(count) {
+  const brs = '<br>'.repeat(count);
+  return `<div style="font-size:15px;line-height:25px;font-family:${FONT};mso-line-height-rule:exactly;">${brs}</div>`;
+}
+
+const BASE_GAP_PX = 16;
+
+/* Splits markup into a dedicated full-bleed logo header (first [[logo]] tag found)
+   and the rest of the body, so the header bar can span edge-to-edge. Segmentation is
+   line-based so runs of more than one blank line can be told apart from a normal
+   single-blank-line paragraph break. Every component renders with no margin of its
+   own -- spacing between blocks is inserted uniformly here via renderGap(), the same
+   way, for every component type (including the [[footer: ...]] block, if present),
+   so the HTML preview and the .eml always match. */
+function parseMarkup(src) {
+  const normalized = (src || '').replace(/\r\n/g, '\n');
+  const lines = normalized.split('\n');
+
+  const segments = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (lines[i].trim() === '') {
+      let count = 0;
+      while (i < lines.length && lines[i].trim() === '') { count++; i++; }
+      segments.push({ type: 'blank', count: count });
+    } else {
+      const block = [];
+      while (i < lines.length && lines[i].trim() !== '') { block.push(lines[i]); i++; }
+      segments.push({ type: 'content', text: block.join('\n') });
+    }
+  }
+  while (segments.length && segments[0].type === 'blank') segments.shift();
+  while (segments.length && segments[segments.length - 1].type === 'blank') segments.pop();
+
+  if (!segments.length) {
+    return {
+      logo: '',
+      content: '<p style="margin:0;font-family:' + FONT + ';font-size:14px;color:' + EY_FAINT + ';text-align:center;padding:40px 0;">Start typing in the markup panel to see your email preview.</p>'
+    };
+  }
+
+  let logoHtml = '';
+  let logoUsed = false;
+  const renderedBlocks = [];
+  const gapAfter = [];
+
+  segments.forEach(function (seg) {
+    if (seg.type === 'blank') {
+      if (renderedBlocks.length) gapAfter[renderedBlocks.length - 1] = seg.count;
+      return;
+    }
+    const block = seg.text;
+    const logoMatch = !logoUsed && block.match(/^\[\[\s*logo\s*(?::([\s\S]*))?\]\]\s*$/i);
+    if (logoMatch) {
+      logoHtml = renderLogo(logoMatch[1] ? logoMatch[1].trim() : '');
+      logoUsed = true;
+    } else {
+      renderedBlocks.push(renderBlock(block));
+    }
+  });
+
+  let content = '';
+  renderedBlocks.forEach(function (html, idx) {
+    content += html;
+    if (idx < renderedBlocks.length - 1) {
+      const blankCount = gapAfter[idx] || 1;
+      content += renderGap(BASE_GAP_PX);
+      const extra = blankCount - 1;
+      if (extra > 0) content += renderExtraBreaks(extra);
+    }
+  });
+
+  return { logo: logoHtml, content: content };
+}
+
+function buildEmailBody(parsed) {
+  const logoRow = parsed.logo ? `<tr><td style="padding:0;">${parsed.logo}</td></tr>` : '';
+  const card = `<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background-color:#FFFFFF;border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;" bgcolor="#FFFFFF">${logoRow}<tr><td style="padding:36px 40px 32px;">${parsed.content}</td></tr></table>`;
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:#ECECEE;padding:32px 16px;font-family:${FONT};border-collapse:collapse;mso-table-lspace:0pt;mso-table-rspace:0pt;"><tr><td align="center">${card}</td></tr></table>`;
+}
+
+function buildStandaloneDoc(subject, parsed) {
+  return `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<title>${escapeHtml(subject || 'Email')}</title>\n</head>\n<body style="margin:0;padding:0;background-color:#ECECEE;">\n${buildEmailBody(parsed)}\n</body>\n</html>`;
+}
+
+/* ════════════════════════════════════════════════════════════
+   APP WIRING
+   ════════════════════════════════════════════════════════════ */
+const markupEl = document.getElementById('markup');
+const frameEl  = document.getElementById('previewFrame');
+
+/* There's no separate Subject field any more -- the email's subject (used for the
+   .eml file's Subject header and download filename) is simply the first H1 heading
+   in the markup, the same way a reader would identify "what this email is about". */
+function extractSubjectFromMarkup(src) {
+  const m = (src || '').match(/^#\s+(.+)$/m);
+  if (!m) return '';
+  return m[1].replace(/\*\*/g, '').replace(/\*/g, '').trim();
+}
+
+function render() {
+  const parsed = parseMarkup(markupEl.value);
+  const subject = extractSubjectFromMarkup(markupEl.value);
+  frameEl.srcdoc = buildStandaloneDoc(subject, parsed);
+}
+
+markupEl.addEventListener('input', render);
+
+/* ── Synchronized scrolling ──────────────────────────────
+   The textarea and the rendered preview have very different content shapes (raw
+   markup vs. a styled, padded email card), so an exact line-for-line match isn't
+   meaningful -- instead both panels stay in sync by scroll *percentage*. A guard
+   flag prevents the two scroll listeners from triggering each other in a loop. */
+let scrollSyncGuard = false;
+
+markupEl.addEventListener('scroll', function () {
+  if (scrollSyncGuard) return;
+  const win = frameEl.contentWindow;
+  if (!win || !win.document || !win.document.documentElement) return;
+  const taMax = markupEl.scrollHeight - markupEl.clientHeight;
+  const frameMax = win.document.documentElement.scrollHeight - win.innerHeight;
+  if (taMax <= 0 || frameMax <= 0) return;
+  const pct = markupEl.scrollTop / taMax;
+  scrollSyncGuard = true;
+  win.scrollTo(0, pct * frameMax);
+  requestAnimationFrame(function () { scrollSyncGuard = false; });
+});
+
+function attachFrameScrollSync() {
+  const win = frameEl.contentWindow;
+  if (!win) return;
+  win.addEventListener('scroll', function () {
+    if (scrollSyncGuard) return;
+    if (!win.document || !win.document.documentElement) return;
+    const frameMax = win.document.documentElement.scrollHeight - win.innerHeight;
+    const taMax = markupEl.scrollHeight - markupEl.clientHeight;
+    if (frameMax <= 0 || taMax <= 0) return;
+    const pct = win.scrollY / frameMax;
+    scrollSyncGuard = true;
+    markupEl.scrollTop = pct * taMax;
+    requestAnimationFrame(function () { scrollSyncGuard = false; });
+  });
+}
+frameEl.addEventListener('load', attachFrameScrollSync);
+
+/* ── Toolbar insert helpers ─────────────────────────────
+   Every insertion captures the textarea's scrollTop beforehand and restores it
+   after the value/selection update, so the view doesn't jump away from where
+   the user was working (assigning .value resets scrollTop to 0 by default). */
+/* Every toolbar insertion follows the same shape: save scrollTop, mutate the
+   textarea's value/selection, restore focus + scrollTop, re-render. This wrapper
+   holds that shared shell so each insert function below only needs to express
+   its own text-splicing and cursor placement. */
+function withPreservedScroll(mutate) {
+  const scrollTop = markupEl.scrollTop;
+  mutate();
+  markupEl.focus();
+  markupEl.scrollTop = scrollTop;
+  render();
+}
+
+function wrapSelection(marker) {
+  withPreservedScroll(function () {
+    const start = markupEl.selectionStart, end = markupEl.selectionEnd;
+    const value = markupEl.value;
+    const selected = value.slice(start, end) || 'text';
+    markupEl.value = value.slice(0, start) + marker + selected + marker + value.slice(end);
+    const newStart = start + marker.length;
+    markupEl.selectionStart = newStart;
+    markupEl.selectionEnd = newStart + selected.length;
+  });
+}
+
+/* Pills wrap with an asymmetric prefix/suffix ({{pill: ... }}) rather than a single
+   repeated marker, so they get their own small helper instead of wrapSelection(). */
+function wrapPill() {
+  withPreservedScroll(function () {
+    const start = markupEl.selectionStart, end = markupEl.selectionEnd;
+    const value = markupEl.value;
+    const selected = value.slice(start, end) || 'Label';
+    const prefix = '{{pill:';
+    const suffix = '}}';
+    markupEl.value = value.slice(0, start) + prefix + selected + suffix + value.slice(end);
+    const newStart = start + prefix.length;
+    markupEl.selectionStart = newStart;
+    markupEl.selectionEnd = newStart + selected.length;
+  });
+}
+
+function insertLinePrefix(prefix) {
+  withPreservedScroll(function () {
+    const pos = markupEl.selectionStart;
+    const value = markupEl.value;
+    const lineStart = value.lastIndexOf('\n', pos - 1) + 1;
+    markupEl.value = value.slice(0, lineStart) + prefix + value.slice(lineStart);
+    markupEl.selectionStart = markupEl.selectionEnd = pos + prefix.length;
+  });
+}
+
+function insertBlock(snippet) {
+  withPreservedScroll(function () {
+    const pos = markupEl.selectionStart;
+    const value = markupEl.value;
+    const before = value.slice(0, pos);
+    const after = value.slice(pos);
+    const leadGap = before.length === 0 ? '' : (before.endsWith('\n\n') ? '' : before.endsWith('\n') ? '\n' : '\n\n');
+    const trailGap = after.length === 0 ? '' : (after.startsWith('\n\n') ? '' : after.startsWith('\n') ? '\n' : '\n\n');
+    markupEl.value = before + leadGap + snippet + trailGap + after;
+    const newPos = (before + leadGap + snippet).length;
+    markupEl.selectionStart = markupEl.selectionEnd = newPos;
+  });
+}
+
+const TOOLBAR_ACTIONS = {
+  h1: function () { insertLinePrefix('# '); },
+  h2: function () { insertLinePrefix('## '); },
+  h3: function () { insertLinePrefix('### '); },
+  bold: function () { wrapSelection('**'); },
+  italic: function () { wrapSelection('*'); },
+  pill: function () { wrapPill(); },
+  quote: function () { insertLinePrefix('> '); },
+  bullet: function () { insertLinePrefix('- '); },
+  numbered: function () { insertLinePrefix('1. '); },
+  table: function () { insertBlock('[[table]]\nMetric | Q1 | Q2\nRevenue | €1.2m | €1.4m\nEBITDA | €310k | €365k\n[[/table]]'); },
+  divider: function () { insertBlock('---'); },
+  link: function () { insertBlock('[Link label](https://example.com)'); },
+  logo: function () {
+    const subj = extractSubjectFromMarkup(markupEl.value);
+    insertBlock('[[logo' + (subj ? ': ' + subj : '') + ']]');
+  },
+  button: function () { insertBlock('[[button: Click Here | https://example.com]]'); },
+  note: function () { insertBlock('[[note: Add an important note here.]]'); },
+  footer: function () { insertBlock('[[footer: Add disclaimer or footer text here.]]'); },
+  calendar: function () {
+    const now = new Date();
+    const ym = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+    insertBlock('[[calendar: ' + ym + ']]');
+  },
+  signature: function () { insertBlock('[[signature: Name | Rank | Dept | Company | Cell | Email]]'); }
+};
+
+document.getElementById('toolbar').addEventListener('click', function (e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const action = TOOLBAR_ACTIONS[btn.dataset.action];
+  if (action) action();
+});
+
+markupEl.addEventListener('keydown', function (e) {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'b') { e.preventDefault(); wrapSelection('**'); }
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'i') { e.preventDefault(); wrapSelection('*'); }
+});
+
+/* ── Download .eml ──────────────────────────────────── */
+const toastFb = document.getElementById('toastFb');
+function showToast(msg) {
+  toastFb.textContent = msg;
+  toastFb.classList.add('show');
+  setTimeout(function () { toastFb.classList.remove('show'); }, 1800);
+}
+
+async function downloadEml() {
+  await ensureLogoPng();
+  const parsed = parseMarkup(markupEl.value);
+  const subject = extractSubjectFromMarkup(markupEl.value) || '(no subject)';
+  const html = buildStandaloneDoc(subject, parsed);
+  const eml =
+    'From: Roman.Zajic1@gds.ey.com\r\n' +
+    'Subject: ' + subject + '\r\n' +
+    'MIME-Version: 1.0\r\n' +
+    'Content-Type: text/html; charset="UTF-8"\r\n' +
+    'Content-Transfer-Encoding: 8bit\r\n\r\n' +
+    html;
+  const blob = new Blob([eml], { type: 'message/rfc822' });
+  const fileName = (subject.replace(/[^\w\- ]+/g, '').trim() || 'email') + '.eml';
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(a.href);
+  showToast('Downloaded ' + fileName);
+}
+
+document.getElementById('downloadBtn').addEventListener('click', function () { downloadEml(); });
+
+const EXAMPLE_MARKUP = [
+'[[logo: Email Composer — Component Reference]]\n\n',
+'# Email Composer\n\n',
+'This tool lets you write structured professional emails using a simple markup language. The preview on the right updates live as you type. Every component below is available from the toolbar or by typing the syntax directly.\n\n',
+'## Text formatting\n\n',
+'Use **bold** to emphasise key terms and *italic* for secondary notes. Inline [links](https://example.com) are supported with standard markdown syntax. You can also place status labels inline using pills — for example: project is {{pill:In progress|dark}}, review is {{pill:Pending}} or deliverable is {{pill:Done|grey}}.\n\n',
+'## Headings\n\n',
+'Three heading levels are available. **# H1** is used for the email title at the top. **## H2** creates section headings with a yellow underline — like the ones on this page. **### H3** renders as a small uppercase label.\n\n',
+'### This is an H3 label\n\n',
+'Use it to introduce a subsection without the visual weight of an H2.\n\n',
+'## Lists\n\n',
+'Bullet lists use a **-** prefix. Each item gets a solid yellow square marker:\n\n',
+'- Compose emails using a lightweight markup language\n',
+'- Preview renders live alongside the editor {{pill:Live}}\n',
+'- Download a ready-to-send **.eml** file at any time\n\n',
+'Numbered lists use **1.** prefix and render with a dark badge:\n\n',
+'1. Type your markup in the left panel\n',
+'2. Review the formatted email in the right panel\n',
+'3. Click **Download .eml** to export\n\n',
+'## Data tables\n\n',
+'[[table]]\n',
+'Component | Syntax | Notes\n',
+'Heading | # / ## / ### | Three levels\n',
+'Bold | **text** | Inline\n',
+'Italic | *text* | Inline\n',
+'Bullet list | - item | Consecutive lines\n',
+'Numbered list | 1. item | Consecutive lines\n',
+'Data table | [[table]] … [[/table]] | Pipe-separated columns\n',
+'Divider | --- | Horizontal rule\n',
+'Link | [label](url) | Inline\n',
+'[[/table]]\n\n',
+'## Callouts\n\n',
+'[[note: Use a note to highlight something the reader must not overlook — a deadline, a caveat, or a key instruction.]]\n\n',
+'> Use a quote for a secondary disclaimer, a cited figure, or a statement that needs visual separation from the main copy.\n\n',
+'## Call to action\n\n',
+'[[button: Open Documentation | https://example.com]]\n\n',
+'## Calendar\n\n',
+'Use [[calendar: YYYY-MM]] to print a month, or add a pipe-separated list of days to ring in yellow: [[calendar: YYYY-MM | 1,4,9]].\n\n',
+'[[calendar: 2026-07 | 1,2,3,9]]\n\n',
+'---\n\n',
+'The **[[logo]]** tag at the top inserts the EY mark on a full-width dark header bar with a yellow accent line. You can optionally add a title: **[[logo: Your Title Here]]**. The **[[footer: text]]** tag at the very end adds a small disclaimer block — edit or delete it as needed.\n\n',
+'[[footer: This message (including any attachments) is confidential and may be privileged. If you are not the intended recipient, please notify the sender immediately and delete this message. EY refers to the global organization and may refer to one or more of the member firms of Ernst & Young Global Limited, each of which is a separate legal entity.]]\n\n',
+'[[signature: Name | Rank | Dept | Company | Cell | Email]]'
+].join('');
+
+/* ── Init ───────────────────────────────────────────── */
+markupEl.value = EXAMPLE_MARKUP;
+render();
+ensureLogoPng().then(function () { render(); });
+
+</script>
+{% endraw %}
+{% endblock %}

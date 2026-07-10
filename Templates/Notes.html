@@ -45,7 +45,7 @@
     .folder-content { margin-left: 16px; padding-left: 12px; border-left: 3px solid var(--border); display: none; }
     .folder-content.expanded { display: block; }
 
-    .file-item { padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8125rem; color: var(--text-muted); transition: background 130ms, color 130ms; }
+    .file-item { padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8125rem; color: var(--text-muted); transition: background 130ms, color 130ms; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .file-item:hover { background: var(--surface-in); color: var(--text); }
     .file-item.active { background: var(--teal-100); color: var(--ink); font-weight: 600; }
 
@@ -58,22 +58,26 @@
 
     /* ── Markdown Preview Styles ───────────────────────────── */
     .preview-area p { margin: 0; min-height: 1em; }
-    .preview-area h1, .preview-area h2, .preview-area h3 { color: var(--text); font-weight: 600; margin-bottom: 0.4em; }
-    .preview-area h1 { font-size: 1.75rem; margin-bottom: 0.5em; }
+    .preview-area h1, .preview-area h2, .preview-area h3 { color: var(--text); font-weight: 600; margin: 0; }
+    .preview-area h1 { font-size: 1.75rem; }
     .preview-area h2 { font-size: 1.375rem; }
     .preview-area h3 { font-size: 1.125rem; }
-    .preview-area * + h1, .preview-area * + h2, .preview-area * + h3 { margin-top: 1.5em; }
-    .preview-area ul, .preview-area ol { margin: 1em 0; padding-left: 2em; }
+    .preview-area ul, .preview-area ol { margin: 0; padding-left: 2em; }
     .preview-area li { margin: 0.25em 0; }
-    .preview-area hr { border: none; height: 2px; background: var(--border); margin: 32px auto; border-radius: 2px; }
-    .preview-area blockquote { margin: 1em 0; padding-left: 16px; border-left: 4px solid var(--amber); font-style: italic; color: var(--text-muted); }
-    .preview-area .toc { background: var(--surface-in); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; margin-bottom: 24px; display: inline-block; min-width: 240px; }
+    .preview-area hr { border: none; height: 2px; background: var(--border); margin: 0; border-radius: 2px; }
+    .preview-area blockquote { margin: 0; padding-left: 16px; border-left: 4px solid var(--amber); font-style: italic; color: var(--text-muted); }
+    .preview-area .toc { background: var(--surface-in); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; margin: 0; display: inline-block; min-width: 240px; }
     .preview-area .toc .toctitle { display: block; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-size: 0.75rem; }
     .preview-area .toc ul { list-style: none; padding-left: 16px; margin: 0; }
     .preview-area .toc > ul { padding-left: 0; }
     .preview-area .toc a { text-decoration: none; color: var(--teal-700); }
 
-    .admonition { padding: 16px; margin: 20px 0; border-radius: var(--r); border-left: 4px solid var(--teal-700); background: var(--surface-in); }
+    .preview-area a { color: var(--teal-700); text-decoration: underline; }
+    .preview-area a:hover { color: var(--teal-900); }
+    .preview-area a.note-link { text-decoration: none; border-bottom: 1px dashed var(--teal-400); cursor: pointer; }
+    .preview-area a.note-link:hover { color: var(--teal-900); border-bottom-color: var(--teal-900); }
+
+    .admonition { padding: 16px; margin: 0; border-radius: var(--r); border-left: 4px solid var(--teal-700); background: var(--surface-in); }
     .admonition-title { font-weight: 700; font-size: 0.8125rem; text-transform: uppercase; margin-bottom: 8px; display: block; color: var(--teal-700); }
     .admonition.warning { border-left-color: #d97706; background: rgba(217, 119, 6, 0.05); }
     .admonition.warning .admonition-title { color: #d97706; }
@@ -84,14 +88,14 @@
     .preview-area li:has(input[type="checkbox"]) { list-style: none; display: flex; align-items: flex-start; gap: 8px; }
     .preview-area input[type="checkbox"] { margin-top: 5px; pointer-events: none; }
 
-    .preview-area table { width: fit-content; max-width: 100%; margin: 24px 0; font-size: 0.875rem; background: var(--surface-card); border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; box-shadow: var(--shadow); }
+    .preview-area table { width: fit-content; max-width: 100%; margin: 0; font-size: 0.875rem; background: var(--surface-card); border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; box-shadow: var(--shadow); }
     .preview-area th { background: var(--surface-in); color: var(--text); font-weight: 600; text-align: left; padding: 10px 16px; border-right: 1px solid var(--border); border-bottom: 2px solid var(--border); font-size: 0.8125rem; }
     .preview-area td { padding: 10px 16px; color: var(--text); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
     .preview-area th:last-child, .preview-area td:last-child { border-right: none; }
     .preview-area tr:last-child td { border-bottom: none; }
     .preview-area tbody tr:hover td { background: var(--surface-in); }
 
-    .preview-area pre { position: relative; margin: 1em 0; padding: 16px; background: var(--surface-in); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
+    .preview-area pre { position: relative; margin: 0; padding: 16px; background: var(--surface-in); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
     .preview-area code { font-family: monospace; font-size: 0.875em; }
     .preview-area pre code { background: none; padding: 0; }
 
@@ -171,6 +175,8 @@
         const el = document.createElement('div');
         el.className = 'file-item';
         el.textContent = label;
+        el.title = label;
+        el.dataset.path = path;
         if (path === originalPath) el.classList.add('active');
         el.onclick = e => { e.stopPropagation(); loadNote(path, el); };
         parent.appendChild(el);
@@ -193,6 +199,7 @@
             .then(({ html }) => {
                 elPreview.innerHTML = html;
                 attachCopyButtons();
+                attachNoteLinks();
                 elContent.style.display = 'none';
                 elPreview.style.display = 'block';
                 elToggleBtn.textContent = 'Edit';
@@ -219,6 +226,40 @@
                 setTimeout(() => btn.textContent = 'Copy', 1500);
             };
             pre.appendChild(btn);
+        });
+    }
+
+    function resolveNoteLink(target) {
+        target = decodeURIComponent(target).trim();
+        const candidate = target.endsWith('.md') ? target : target + '.md';
+
+        // 1. exact path match
+        let match = files.find(f => f === candidate);
+        // 2. case-insensitive full path match
+        if (!match) match = files.find(f => f.toLowerCase() === candidate.toLowerCase());
+        // 3. match by filename only, ignoring folder path
+        if (!match) {
+            const baseTarget = candidate.split('/').pop().toLowerCase();
+            match = files.find(f => f.split('/').pop().toLowerCase() === baseTarget);
+        }
+        return match || null;
+    }
+
+    function attachNoteLinks() {
+        elPreview.querySelectorAll('a[href^="note:"]').forEach(a => {
+            const target = a.getAttribute('href').slice(5);
+            a.classList.add('note-link');
+            a.href = '#';
+            a.onclick = e => {
+                e.preventDefault();
+                const match = resolveNoteLink(target);
+                if (match) {
+                    const el = document.querySelector(`.file-item[data-path="${CSS.escape(match)}"]`);
+                    loadNote(match, el);
+                } else {
+                    alert(`Note not found: ${target}`);
+                }
+            };
         });
     }
 

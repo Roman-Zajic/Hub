@@ -155,10 +155,9 @@
     <div class="app-body">
         <aside class="sidebar">
             {% set path = request.path %}
-            <a href="/notes"   class="nav-item {% if path in ('/', '/notes')  %}active{% endif %}">Notes</a>
-            <a href="/compare" class="nav-item {% if path == '/compare'       %}active{% endif %}">Compare</a>
-            <a href="/time"    class="nav-item {% if path == '/time'          %}active{% endif %}">Time</a>
-            <a href="/email"   class="nav-item {% if path == '/email'         %}active{% endif %}">Email</a>
+            {% for m in nav_modules %}
+            <a href="{{ m.path }}" class="nav-item {% if path == m.path or (path == '/' and loop.first) %}active{% endif %}">{{ m.label }}</a>
+            {% endfor %}
         </aside>
         <main class="main-view">
             <div class="content-area">{% block content %}{% endblock %}</div>

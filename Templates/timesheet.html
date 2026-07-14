@@ -1,0 +1,410 @@
+{% extends 'layout.html' %}
+{% block module_name %}Timesheet{% endblock %}
+
+{% block extra_css %}
+<style>
+.ts-root { display: flex; flex-direction: column; gap: 0; min-height: 100%; }
+
+/* ── Collapsible section (same pattern as Time Monitor) ──────── */
+.section {
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    background: var(--surface-card);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+.section-body { display: none; }
+.section.expanded .section-body { display: block; }
+.section-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 18px; cursor: pointer; user-select: none;
+    background: var(--surface-card); transition: background 130ms;
+    border-bottom: 1px solid transparent;
+}
+.section-head:hover { background: var(--surface-in); }
+.section.expanded .section-head { border-bottom-color: var(--border); }
+.section-title { font-size: 0.9375rem; font-weight: 600; color: var(--text); white-space: nowrap; }
+.section-meta  { font-size: 0.8125rem; color: var(--text-muted); font-weight: 400; }
+.section-chevron {
+    margin-left: auto; width: 20px; height: 20px;
+    color: var(--teal-400); flex-shrink: 0; transition: transform 200ms ease;
+}
+.section.expanded .section-chevron { transform: rotate(180deg); }
+
+.section-inner { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+
+/* ── Data section ─────────────────────────────────────────────── */
+.ts-textarea {
+    width: 100%; min-height: 220px; resize: vertical;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 10px 12px; font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+    font-size: 0.8125rem; color: var(--text); outline: none; line-height: 1.5;
+    background: var(--surface-card);
+    transition: border-color 130ms, box-shadow 130ms;
+}
+.ts-textarea::placeholder { color: #7A9E9E; font-family: var(--font); }
+.ts-textarea:hover  { border-color: var(--teal-700); }
+.ts-textarea:focus  { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+.ts-toolbar { display: flex; align-items: center; gap: 10px; }
+.ts-warning {
+    display: none;
+    font-size: 0.8125rem; color: #8A5A00;
+    background: #FDF3D7; border: 1px solid #F0D687;
+    border-radius: 6px; padding: 9px 12px; line-height: 1.5;
+}
+.ts-warning.show { display: block; }
+
+/* ── Picker lists (dimensions / values) ──────────────────────── */
+.ts-pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.picker-list { display: flex; flex-direction: column; gap: 6px; }
+.picker-item {
+    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+    border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
+    font-size: 0.875rem; color: var(--text);
+    transition: background 130ms, border-color 130ms; user-select: none;
+}
+.picker-item:hover   { background: var(--surface-in); border-color: var(--teal-400); }
+.picker-item.checked { background: var(--teal-100); border-color: var(--teal-700); font-weight: 600; color: var(--ink); }
+.picker-item input   { accent-color: var(--teal-700); width: 14px; height: 14px; flex-shrink: 0; pointer-events: none; }
+.picker-item.missing { opacity: .5; cursor: not-allowed; }
+.picker-item.missing input { pointer-events: none; }
+.picker-label { flex: 1; }
+.picker-badge {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--teal-700); color: #fff;
+    font-size: 0.6875rem; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+}
+
+/* ── Report table ─────────────────────────────────────────────── */
+.rpt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
+.rpt-table { border-collapse: collapse; font-size: 0.8125rem; width: 100%; }
+.rpt-table thead th {
+    padding: 8px 12px; text-align: left; background: var(--surface-in);
+    color: var(--text-muted); font-weight: 600; font-size: 0.6875rem;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    border-bottom: 2px solid var(--border); white-space: nowrap;
+}
+.rpt-table thead th.rpt-val { text-align: right; }
+.rpt-table tbody td {
+    padding: 7px 12px; border-bottom: 1px solid var(--border);
+    color: var(--text); white-space: nowrap;
+}
+.rpt-table tbody td.rpt-val { text-align: right; font-variant-numeric: tabular-nums; }
+.rpt-table tbody tr:last-child td { border-bottom: none; }
+.rpt-table tbody tr:hover td { background: var(--surface-in); }
+.rpt-table tfoot td {
+    padding: 8px 12px; font-weight: 700; background: var(--teal-100);
+    color: var(--ink); border-top: 2px solid var(--border);
+    text-align: right; font-variant-numeric: tabular-nums;
+}
+.rpt-table tfoot td.rpt-total-label { text-align: left; }
+
+.ts-empty { color: var(--text-muted); font-size: 0.8125rem; padding: 14px 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="ts-root">
+
+    <!-- ════════════════════════════════════════════════════════
+         SECTION 1 — DATA
+    ════════════════════════════════════════════════════════ -->
+    <div class="section expanded" id="sec-data">
+        <div class="section-head" onclick="toggleSection('data')">
+            <span class="section-title">Data</span>
+            <span class="section-meta" id="dataMeta">No data pasted yet</span>
+            <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+        </div>
+        <div class="section-body">
+            <div class="section-inner">
+                <textarea class="ts-textarea" id="tsInput" placeholder="Paste TSV data here (copy a range in Excel and paste — first row must be the column headers)."></textarea>
+                <div class="ts-warning" id="tsWarning"></div>
+                <div class="ts-toolbar">
+                    <button class="btn btn-primary btn-sm" onclick="parseAndRender()">Parse Data</button>
+                    <button class="btn btn-outline btn-sm" onclick="clearData()">Clear</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         SECTION 2 — REPORT
+    ════════════════════════════════════════════════════════ -->
+    <div class="section expanded" id="sec-report">
+        <div class="section-head" onclick="toggleSection('report')">
+            <span class="section-title">Report</span>
+            <span class="section-meta" id="reportMeta"></span>
+            <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+        </div>
+        <div class="section-body">
+            <div class="section-inner">
+
+                <div class="ts-pickers">
+                    <div>
+                        <div class="field-label">Dimensions (click to select — order clicked = column order)</div>
+                        <div class="picker-list" id="dimPicker"></div>
+                    </div>
+                    <div>
+                        <div class="field-label">Values (sum aggregated)</div>
+                        <div class="picker-list" id="valPicker"></div>
+                    </div>
+                </div>
+
+                <div>
+                    <div class="rpt-table-wrap" id="reportWrap">
+                        <div class="ts-empty">Paste data above, then select at least one dimension and one value to build the report.</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  CONFIG
+// ═══════════════════════════════════════════════════════════════
+var DIM_DEFS = [
+    {key:'dim_employee', label:'Employee / Tech Product Name'},
+    {key:'dim_rank',     label:'Rank Method'},
+    {key:'dim_activity', label:'Activity Code Description'}
+];
+var VAL_DEFS = [
+    {key:'val_hours',  label:'Charged Hours / Tech Quantity'},
+    {key:'val_labor',  label:'Labor Cost'},
+    {key:'val_uplift', label:'Tech Uplift Cost'},
+    {key:'val_margin', label:'Margin Cost'},
+    {key:'val_nsr',    label:'NSR / Tech Revenue'},
+    {key:'val_ansr',   label:'ANSR / Tech Revenue'}
+];
+
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+var rawRows = [];       // parsed data rows: {dim_x:'text', val_y:number, ...}
+var missingCols = [];   // labels of expected columns not found in pasted headers
+var selectedDims = [];  // ordered array of dim keys, order = click order
+var selectedVals = [];  // ordered array of val keys, order = VAL_DEFS order
+
+// ═══════════════════════════════════════════════════════════════
+//  SECTION TOGGLE
+// ═══════════════════════════════════════════════════════════════
+function toggleSection(id){
+    document.getElementById('sec-'+id).classList.toggle('expanded');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  HELPERS
+// ═══════════════════════════════════════════════════════════════
+function escH(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function parseNum(v){
+    if(v===undefined||v===null) return 0;
+    var s=String(v).trim();
+    if(!s) return 0;
+    var neg=false;
+    if(/^\(.*\)$/.test(s)){ neg=true; s=s.slice(1,-1); }
+    s=s.replace(/[^0-9.\-]/g,'');
+    var n=parseFloat(s);
+    if(isNaN(n)) return 0;
+    return neg ? -Math.abs(n) : n;
+}
+
+function fmtNum(n){
+    return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PARSE TSV
+// ═══════════════════════════════════════════════════════════════
+function parseTSV(text){
+    var lines=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n').split('\n');
+    while(lines.length && lines[lines.length-1].trim()==='') lines.pop();
+    if(!lines.length) return {rows:[], missing:DIM_DEFS.concat(VAL_DEFS).map(function(c){return c.label;})};
+
+    var headers=lines[0].split('\t').map(function(h){return h.trim();});
+    var idx={};
+    DIM_DEFS.concat(VAL_DEFS).forEach(function(col){
+        idx[col.key]=headers.findIndex(function(h){return h.toLowerCase()===col.label.toLowerCase();});
+    });
+
+    var rows=[];
+    for(var li=1; li<lines.length; li++){
+        if(lines[li].trim()==='') continue;
+        var cells=lines[li].split('\t');
+        var row={};
+        DIM_DEFS.forEach(function(col){
+            row[col.key] = idx[col.key]>=0 ? (cells[idx[col.key]]||'').trim() : '';
+        });
+        VAL_DEFS.forEach(function(col){
+            row[col.key] = idx[col.key]>=0 ? parseNum(cells[idx[col.key]]) : 0;
+        });
+        rows.push(row);
+    }
+
+    var missing=DIM_DEFS.concat(VAL_DEFS)
+        .filter(function(col){ return idx[col.key]<0; })
+        .map(function(col){ return col.label; });
+
+    return {rows:rows, missing:missing};
+}
+
+function parseAndRender(){
+    var text=document.getElementById('tsInput').value;
+    var result=parseTSV(text);
+    rawRows=result.rows;
+    missingCols=result.missing;
+
+    var meta=document.getElementById('dataMeta');
+    meta.textContent = rawRows.length ? (rawRows.length+' row'+(rawRows.length===1?'':'s')+' parsed') : 'No data pasted yet';
+
+    var warn=document.getElementById('tsWarning');
+    if(rawRows.length && missingCols.length){
+        warn.textContent='Column(s) not found in the pasted data (values default to blank/0): '+missingCols.join(', ');
+        warn.classList.add('show');
+    } else {
+        warn.classList.remove('show');
+    }
+
+    renderPickers();
+    renderReport();
+}
+
+function clearData(){
+    document.getElementById('tsInput').value='';
+    rawRows=[]; missingCols=[];
+    document.getElementById('dataMeta').textContent='No data pasted yet';
+    document.getElementById('tsWarning').classList.remove('show');
+    renderPickers();
+    renderReport();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PICKERS
+// ═══════════════════════════════════════════════════════════════
+function colAvailable(key){
+    var def=DIM_DEFS.concat(VAL_DEFS).find(function(c){return c.key===key;});
+    return !missingCols.includes(def.label);
+}
+
+function toggleDim(key){
+    if(!colAvailable(key)) return;
+    var i=selectedDims.indexOf(key);
+    if(i===-1) selectedDims.push(key); else selectedDims.splice(i,1);
+    renderPickers();
+    renderReport();
+}
+
+function toggleVal(key){
+    if(!colAvailable(key)) return;
+    var i=selectedVals.indexOf(key);
+    if(i===-1) selectedVals.push(key); else selectedVals.splice(i,1);
+    renderPickers();
+    renderReport();
+}
+
+function renderPickers(){
+    var dimEl=document.getElementById('dimPicker');
+    dimEl.innerHTML=DIM_DEFS.map(function(d){
+        var checked=selectedDims.indexOf(d.key)!==-1;
+        var order=selectedDims.indexOf(d.key)+1;
+        var avail=colAvailable(d.key);
+        return '<div class="picker-item'+(checked?' checked':'')+(avail?'':' missing')+'" onclick="toggleDim(\''+d.key+'\')">'+
+            '<input type="checkbox"'+(checked?' checked':'')+'>'+
+            '<span class="picker-label">'+escH(d.label)+(avail?'':' (not found in data)')+'</span>'+
+            (checked?'<span class="picker-badge">'+order+'</span>':'')+
+            '</div>';
+    }).join('');
+
+    var valEl=document.getElementById('valPicker');
+    valEl.innerHTML=VAL_DEFS.map(function(v){
+        var checked=selectedVals.indexOf(v.key)!==-1;
+        var avail=colAvailable(v.key);
+        return '<div class="picker-item'+(checked?' checked':'')+(avail?'':' missing')+'" onclick="toggleVal(\''+v.key+'\')">'+
+            '<input type="checkbox"'+(checked?' checked':'')+'>'+
+            '<span class="picker-label">'+escH(v.label)+(avail?'':' (not found in data)')+'</span>'+
+            '</div>';
+    }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  REPORT
+// ═══════════════════════════════════════════════════════════════
+function renderReport(){
+    var wrap=document.getElementById('reportWrap');
+    var meta=document.getElementById('reportMeta');
+
+    if(!rawRows.length){
+        wrap.innerHTML='<div class="ts-empty">Paste data above, then select at least one dimension and one value to build the report.</div>';
+        meta.textContent='';
+        return;
+    }
+    if(!selectedDims.length || !selectedVals.length){
+        wrap.innerHTML='<div class="ts-empty">Select at least one dimension and one value column to build the report.</div>';
+        meta.textContent='';
+        return;
+    }
+
+    var dimDefs=selectedDims.map(function(k){ return DIM_DEFS.find(function(d){return d.key===k;}); });
+    var valDefs=selectedVals.map(function(k){ return VAL_DEFS.find(function(v){return v.key===k;}); });
+
+    // group + sum
+    var groups={};
+    var order=[];
+    rawRows.forEach(function(row){
+        var keyParts=dimDefs.map(function(d){ return row[d.key]||''; });
+        var key=keyParts.join('\u0001');
+        if(!groups[key]){
+            groups[key]={dims:keyParts, sums:valDefs.map(function(){return 0;})};
+            order.push(key);
+        }
+        valDefs.forEach(function(v,vi){ groups[key].sums[vi]+=row[v.key]||0; });
+    });
+
+    order.sort(function(a,b){
+        var ga=groups[a].dims.join('\u0001'), gb=groups[b].dims.join('\u0001');
+        return ga.localeCompare(gb);
+    });
+
+    var grandTotals=valDefs.map(function(){return 0;});
+    order.forEach(function(key){
+        groups[key].sums.forEach(function(s,vi){ grandTotals[vi]+=s; });
+    });
+
+    meta.textContent=order.length+' row'+(order.length===1?'':'s');
+
+    var thead='<tr>'+
+        dimDefs.map(function(d){ return '<th>'+escH(d.label)+'</th>'; }).join('')+
+        valDefs.map(function(v){ return '<th class="rpt-val">'+escH(v.label)+'</th>'; }).join('')+
+        '</tr>';
+
+    var tbody=order.map(function(key){
+        var g=groups[key];
+        return '<tr>'+
+            g.dims.map(function(d){ return '<td>'+(d?escH(d):'<span style="color:var(--border)">—</span>')+'</td>'; }).join('')+
+            g.sums.map(function(s){ return '<td class="rpt-val">'+fmtNum(s)+'</td>'; }).join('')+
+            '</tr>';
+    }).join('');
+
+    var tfoot='<tr>'+
+        '<td class="rpt-total-label" colspan="'+dimDefs.length+'">Total</td>'+
+        grandTotals.map(function(s){ return '<td>'+fmtNum(s)+'</td>'; }).join('')+
+        '</tr>';
+
+    wrap.innerHTML='<table class="rpt-table"><thead>'+thead+'</thead><tbody>'+tbody+'</tbody><tfoot>'+tfoot+'</tfoot></table>';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+renderPickers();
+renderReport();
+</script>
+{% endblock %}

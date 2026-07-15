@@ -416,23 +416,26 @@ function locatePeriod(fiscalYear, weekIndex){
     return {period:pattern.length};
 }
 
-// Buckets a yyyy-mm-dd string into a day / week / fiscal-month label.
+// Buckets a yyyy-mm-dd string into a day / week / fiscal-month label,
+// plus a numeric sortKey for correct chronological ordering (the display
+// label itself, e.g. "FY2027 P01" or "05 Aug 2026", does not sort
+// correctly as plain text).
 function computeDateBucket(dateStr, granularity){
-    if(!dateStr) return '';
+    if(!dateStr) return {label:'', sortKey:-Infinity};
     var dt=parseISODate(dateStr);
-    if(!dt) return dateStr; // unparseable — show the raw text rather than crash
+    if(!dt) return {label:dateStr, sortKey:dateStr}; // unparseable — fall back to text sort rather than crash
 
-    if(granularity==='day') return fmtISODate(dt);
+    if(granularity==='day') return {label:fmtISODate(dt), sortKey:dt.getTime()};
 
     var ws=startOfWeekUTC(dt, FISCAL_CONFIG.weekStartsOn);
-    if(granularity==='week') return 'Week of '+fmtISODate(ws);
+    if(granularity==='week') return {label:'Week of '+fmtISODate(ws), sortKey:ws.getTime()};
 
     // month → 5-4-4 fiscal period
     var anchorStart=startOfWeekUTC(parseISODate(FISCAL_CONFIG.fiscalYearAnchor), FISCAL_CONFIG.weekStartsOn);
     var weeksOffset=Math.round((ws.getTime()-anchorStart.getTime())/(7*86400000));
     var loc=locateFiscalYearWeek(weeksOffset);
     var per=locatePeriod(loc.fiscalYear, loc.weekIndex);
-    return 'FY'+loc.fiscalYear+' P'+pad2(per.period);
+    return {label:'FY'+loc.fiscalYear+' P'+pad2(per.period), sortKey:loc.fiscalYear*100+per.period};
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -614,14 +617,17 @@ function renderReport(){
     var groups={};
     var order=[];
     rawRows.forEach(function(row){
-        var keyParts=selectedDims.map(function(s,i){
+        var parts=selectedDims.map(function(s,i){
             var def=dimDefs[i];
             if(def.type==='date') return computeDateBucket(row[def.key], s.granularity||'day');
-            return row[def.key]||'';
+            var v=row[def.key]||'';
+            return {label:v, sortKey:v};
         });
+        var keyParts=parts.map(function(p){ return p.label; });
+        var sortKeys=parts.map(function(p){ return p.sortKey; });
         var key=keyParts.join('\u0001');
         if(!groups[key]){
-            groups[key]={dims:keyParts, sums:valDefs.map(function(){return 0;})};
+            groups[key]={dims:keyParts, sortKeys:sortKeys, sums:valDefs.map(function(){return 0;})};
             order.push(key);
         }
         valDefs.forEach(function(v,vi){ groups[key].sums[vi]+=row[v.key]||0; });
@@ -637,9 +643,19 @@ function renderReport(){
         return groups[key].sums.some(function(s){ return s!==0; });
     });
 
+    // Sort ascending, column by column, left to right (the leftmost
+    // selected column is the primary sort key, each column after that
+    // only breaks ties left by the ones before it).
     visibleOrder.sort(function(a,b){
-        var ga=groups[a].dims.join('\u0001'), gb=groups[b].dims.join('\u0001');
-        return ga.localeCompare(gb);
+        var ka=groups[a].sortKeys, kb=groups[b].sortKeys;
+        for(var i=0;i<ka.length;i++){
+            var va=ka[i], vb=kb[i];
+            var cmp = (typeof va==='number' && typeof vb==='number')
+                ? (va-vb)
+                : String(va).localeCompare(String(vb));
+            if(cmp!==0) return cmp;
+        }
+        return 0;
     });
 
     if(!visibleOrder.length){

@@ -110,13 +110,14 @@
 
 /* ── Report table ─────────────────────────────────────────────── */
 .rpt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; min-height: 420px; }
-.rpt-table { border-collapse: collapse; font-size: 0.8125rem; width: 100%; table-layout: fixed; }
+.rpt-table { border-collapse: collapse; font-size: 0.8125rem; width: auto; min-width: 100%; table-layout: fixed; }
 .rpt-table thead th {
     padding: 8px 12px; text-align: left; background: var(--surface-in);
     color: var(--text-muted); font-weight: 600; font-size: 0.6875rem;
     text-transform: uppercase; letter-spacing: 0.06em;
     border-bottom: 2px solid var(--border);
     white-space: normal; word-break: break-word; overflow-wrap: break-word;
+    overflow: hidden; min-width: 0;
     vertical-align: bottom;
 }
 .rpt-table thead th.rpt-val { text-align: right; width: 130px; }
@@ -237,30 +238,34 @@ var VAL_DEFS = [
 var FISCAL_CONFIG = {
     // Which weekday a "week" starts on. 0=Sunday, 1=Monday, 2=Tuesday,
     // 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday.
-    weekStartsOn: 1, // Monday
+    weekStartsOn: 6, // Saturday
 
-    // Any date that is itself the FIRST DAY of a fiscal week (i.e. it must
-    // fall on the weekStartsOn weekday above), representing Week 1 / Day 1
-    // of the fiscal year named in `anchorFiscalYear`. Every other fiscal
-    // week/period boundary is calculated outward from this one anchor —
-    // you only ever need to set ONE known start date.
-    fiscalYearAnchor: '2024-01-01',
-    anchorFiscalYear: 2024,
+    // Any date on or after the true first day of the fiscal year works —
+    // it does NOT need to land exactly on the weekStartsOn weekday. It's
+    // automatically snapped back to the start of its own week (per
+    // weekStartsOn above) before anything else is calculated, so e.g. a
+    // Monday anchor with weekStartsOn=Saturday just resolves to the
+    // Saturday on/before it. Every other fiscal week/period boundary,
+    // in any year, is calculated outward from that one snapped anchor.
+    fiscalYearAnchor: '2026-07-04',
+    anchorFiscalYear: 2027,
 
     // Weeks per fiscal month/period, in order, for one fiscal year.
-    // Default is the 5-4-4 pattern repeated across 4 quarters (5+4+4=13
-    // weeks/quarter × 4 quarters = 52 weeks). Change this array if your
-    // company uses a different split (e.g. 4-4-5).
+    // 5-4-4 pattern repeated across 4 quarters (5+4+4=13 weeks/quarter
+    // × 4 quarters = 52 weeks). Change this array if your company uses
+    // a different split (e.g. 4-4-5).
     monthWeekPattern: [5,4,4, 5,4,4, 5,4,4, 5,4,4],
 
     // Most fiscal years are 52 weeks (364 days), but every 5-6 years an
     // extra 53rd week is needed to stay aligned with the calendar. List
     // any such fiscal years here, mapping the fiscal year number to which
     // period (1-12, matching monthWeekPattern above) absorbs the extra
-    // week that year. Leave empty ({}) if you don't need this yet —
-    // you can add entries as those years come up.
-    // Example: { 2029: 12 }  →  fiscal year 2029's period 12 gets 5 weeks instead of 4.
-    leapWeekFiscalYears: {}
+    // week that year.
+    // FY2026 is configured as a leap (53-week) year below. The extra
+    // week is assumed to land in period 12 (the most common convention —
+    // added at fiscal year-end) since no specific period was given;
+    // change the "12" if your company adds it elsewhere.
+    leapWeekFiscalYears: { 2026: 12 }
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -273,16 +278,16 @@ var selectedVals = ['val_hours', 'val_margin']; // ordered array of val keys, or
 
 var SAMPLE_TSV =
 "Employee / Tech Product Name\tRank / Method\tActivity Code Description\tAccounting Date\tTransaction Date\tCharged Hours / Tech Quantity\tLabor Cost\tTech Uplift Cost\tMargin Cost\tNSR / Tech Revenue\tANSR / Tech Revenue\n"+
-"Alice Nowak\tSenior Consultant\tClient Review\t2024-01-08\t2024-01-05\t4.5\t450.00\t45.00\t120.00\t615.00\t598.00\n"+
-"Alice Nowak\tSenior Consultant\tDocumentation\t2024-01-10\t2024-01-09\t2.0\t200.00\t20.00\t50.00\t270.00\t262.00\n"+
-"Bartek Kowalski\tManager\tClient Review\t2024-01-15\t2024-01-12\t3.0\t420.00\t60.00\t95.00\t575.00\t560.00\n"+
-"Bartek Kowalski\tManager\tProject Planning\t2024-02-05\t2024-02-01\t5.0\t700.00\t100.00\t180.00\t980.00\t950.00\n"+
-"Bartek Kowalski\tManager\tTraining\t2024-02-19\t2024-02-16\t0\t0.00\t0.00\t0.00\t0.00\t0.00\n"+
-"Chloe Zielinska\tAssociate\tDocumentation\t2024-01-22\t2024-01-19\t6.5\t455.00\t35.00\t70.00\t560.00\t545.00\n"+
-"Chloe Zielinska\tAssociate\tClient Review\t2024-02-12\t2024-02-09\t1.5\t105.00\t8.00\t18.00\t131.00\t128.00\n"+
-"Damian Wojcik\tSenior Consultant\tProject Planning\t2024-03-04\t2024-02-28\t3.5\t385.00\t42.00\t88.00\t515.00\t500.00\n"+
-"Damian Wojcik\tSenior Consultant\tTraining\t2024-03-11\t2024-03-08\t2.5\t250.00\t25.00\t45.00\t320.00\t310.00\n"+
-"Ewa Mazur\tAssociate\tTraining\t2024-03-18\t2024-03-15\t0\t0.00\t0.00\t0.00\t0.00\t0.00\n";
+"Alice Nowak\tSenior Consultant\tClient Review\t12 Jul 2026\t09 Jul 2026\t4.5\t450.00\t45.00\t120.00\t615.00\t598.00\n"+
+"Alice Nowak\tSenior Consultant\tDocumentation\t14 Jul 2026\t13 Jul 2026\t2.0\t200.00\t20.00\t50.00\t270.00\t262.00\n"+
+"Bartek Kowalski\tManager\tClient Review\t19 Jul 2026\t16 Jul 2026\t3.0\t420.00\t60.00\t95.00\t575.00\t560.00\n"+
+"Bartek Kowalski\tManager\tProject Planning\t09 Aug 2026\t05 Aug 2026\t5.0\t700.00\t100.00\t180.00\t980.00\t950.00\n"+
+"Bartek Kowalski\tManager\tTraining\t23 Aug 2026\t20 Aug 2026\t0\t0.00\t0.00\t0.00\t0.00\t0.00\n"+
+"Chloe Zielinska\tAssociate\tDocumentation\t26 Jul 2026\t23 Jul 2026\t6.5\t455.00\t35.00\t70.00\t560.00\t545.00\n"+
+"Chloe Zielinska\tAssociate\tClient Review\t16 Aug 2026\t13 Aug 2026\t1.5\t105.00\t8.00\t18.00\t131.00\t128.00\n"+
+"Damian Wojcik\tSenior Consultant\tProject Planning\t06 Sep 2026\t02 Sep 2026\t3.5\t385.00\t42.00\t88.00\t515.00\t500.00\n"+
+"Damian Wojcik\tSenior Consultant\tTraining\t13 Sep 2026\t10 Sep 2026\t2.5\t250.00\t25.00\t45.00\t320.00\t310.00\n"+
+"Ewa Mazur\tAssociate\tTraining\t20 Sep 2026\t17 Sep 2026\t0\t0.00\t0.00\t0.00\t0.00\t0.00\n";
 
 // ═══════════════════════════════════════════════════════════════
 //  SECTION TOGGLE
@@ -302,8 +307,9 @@ function toggleDropdown(which){
 }
 
 document.addEventListener('click', function(e){
+    var path = e.composedPath ? e.composedPath() : [e.target];
     document.querySelectorAll('.dropdown-picker.open').forEach(function(d){
-        if(!d.contains(e.target)) d.classList.remove('open');
+        if(!path.includes(d)) d.classList.remove('open');
     });
 });
 
@@ -331,17 +337,41 @@ function fmtNum(n){
 
 function pad2(n){ return n<10 ? '0'+n : ''+n; }
 
+var MONTH_ABBR    = {jan:0,feb:1,mar:2,apr:3,may:4,jun:5,jul:6,aug:7,sep:8,oct:9,nov:10,dec:11};
+var MONTH_ABBR_UC = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 // All date math below is done in UTC on purpose (Date.UTC + getUTC*/setUTC*)
-// so a yyyy-mm-dd string always means the same calendar day regardless of
-// the browser's local timezone or daylight saving changes.
+// so a date string always means the same calendar day regardless of the
+// browser's local timezone or daylight saving changes.
+//
+// Parses "dd mmm yyyy" (e.g. "05 Jul 2027") — the display result of
+// Excel's custom format [$-en-US,1]dd mmm yyyy, which is what the
+// Accounting Date / Transaction Date columns are expected to paste in
+// as. Plain yyyy-mm-dd is also accepted as a fallback (used internally
+// for the fiscalYearAnchor value in FISCAL_CONFIG above).
 function parseISODate(s){
-    var p=String(s).trim().split('-');
-    if(p.length!==3) return null;
-    var dt=new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
-    return isNaN(dt.getTime()) ? null : dt;
+    var str=String(s).trim();
+    if(!str) return null;
+
+    var m=str.match(/^(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})$/);
+    if(m){
+        var mon=MONTH_ABBR[m[2].slice(0,3).toLowerCase()];
+        if(mon!==undefined){
+            var dt1=new Date(Date.UTC(+m[3], mon, +m[1]));
+            return isNaN(dt1.getTime()) ? null : dt1;
+        }
+    }
+
+    var p=str.split('-');
+    if(p.length===3){
+        var dt2=new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
+        if(!isNaN(dt2.getTime())) return dt2;
+    }
+
+    return null;
 }
 function fmtISODate(dt){
-    return dt.getUTCFullYear()+'-'+pad2(dt.getUTCMonth()+1)+'-'+pad2(dt.getUTCDate());
+    return pad2(dt.getUTCDate())+' '+MONTH_ABBR_UC[dt.getUTCMonth()]+' '+dt.getUTCFullYear();
 }
 function addDaysUTC(dt,n){
     var r=new Date(dt.getTime());
@@ -617,9 +647,12 @@ function renderReport(){
         return;
     }
 
+    var DIM_COL_PX=150, VAL_COL_PX=130;
+    var totalColPx=dimDefs.length*DIM_COL_PX + valDefs.length*VAL_COL_PX;
+
     var colgroup='<colgroup>'+
-        dimDefs.map(function(){ return '<col>'; }).join('')+
-        valDefs.map(function(){ return '<col style="width:130px">'; }).join('')+
+        dimDefs.map(function(){ return '<col style="width:'+DIM_COL_PX+'px">'; }).join('')+
+        valDefs.map(function(){ return '<col style="width:'+VAL_COL_PX+'px">'; }).join('')+
         '</colgroup>';
 
     var thead='<tr>'+
@@ -647,7 +680,7 @@ function renderReport(){
         grandTotals.map(function(s){ return '<td>'+fmtNum(s)+'</td>'; }).join('')+
         '</tr>';
 
-    wrap.innerHTML='<table class="rpt-table">'+colgroup+'<thead>'+thead+'</thead><tbody>'+tbody+'</tbody><tfoot>'+tfoot+'</tfoot></table>';
+    wrap.innerHTML='<table class="rpt-table" style="width:'+totalColPx+'px">'+colgroup+'<thead>'+thead+'</thead><tbody>'+tbody+'</tbody><tfoot>'+tfoot+'</tfoot></table>';
 }
 
 // ═══════════════════════════════════════════════════════════════

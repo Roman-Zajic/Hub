@@ -36,11 +36,13 @@
 .section-inner { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
 
 /* ── Data section ─────────────────────────────────────────────── */
+.ts-input-row { display: flex; align-items: flex-start; gap: 8px; }
+.ts-input-row .ts-toolbar { display: flex; gap: 8px; flex-shrink: 0; }
 .ts-textarea {
-    width: 100%; min-height: 220px; resize: vertical;
+    flex: 1; min-height: 38px; height: 38px; resize: vertical;
     border: 1px solid var(--border); border-radius: 6px;
-    padding: 10px 12px; font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
-    font-size: 0.8125rem; color: var(--text); outline: none; line-height: 1.5;
+    padding: 8px 12px; font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+    font-size: 0.8125rem; color: var(--text); outline: none; line-height: 1.4;
     background: var(--surface-card);
     transition: border-color 130ms, box-shadow 130ms;
 }
@@ -48,28 +50,45 @@
 .ts-textarea:hover  { border-color: var(--teal-700); }
 .ts-textarea:focus  { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
 
-.ts-toolbar { display: flex; align-items: center; gap: 10px; }
-.ts-warning {
-    display: none;
-    font-size: 0.8125rem; color: #8A5A00;
-    background: #FDF3D7; border: 1px solid #F0D687;
-    border-radius: 6px; padding: 9px 12px; line-height: 1.5;
-}
-.ts-warning.show { display: block; }
-
-/* ── Picker lists (dimensions / values) ──────────────────────── */
+/* ── Dropdown pickers (dimensions / values) ──────────────────── */
 .ts-pickers { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.picker-list { display: flex; flex-direction: column; gap: 6px; }
-.picker-item {
-    display: flex; align-items: center; gap: 10px; padding: 8px 12px;
-    border: 1px solid var(--border); border-radius: 7px; cursor: pointer;
-    font-size: 0.875rem; color: var(--text);
-    transition: background 130ms, border-color 130ms; user-select: none;
+.dropdown-picker { position: relative; }
+.dropdown-toggle {
+    width: 100%; display: flex; align-items: center; gap: 8px;
+    font-family: var(--font); font-size: 0.875rem; color: var(--text);
+    background: var(--surface-card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 9px 12px; cursor: pointer;
+    transition: border-color 130ms, box-shadow 130ms; text-align: left;
 }
-.picker-item:hover   { background: var(--surface-in); border-color: var(--teal-400); }
-.picker-item.checked { background: var(--teal-100); border-color: var(--teal-700); font-weight: 600; color: var(--ink); }
+.dropdown-toggle:hover { border-color: var(--teal-700); }
+.dropdown-picker.open .dropdown-toggle { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+.dropdown-toggle-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dropdown-toggle-label.placeholder { color: #7A9E9E; }
+.dropdown-chevron { width: 16px; height: 16px; color: var(--teal-400); flex-shrink: 0; transition: transform 200ms ease; }
+.dropdown-picker.open .dropdown-chevron { transform: rotate(180deg); }
+
+.dropdown-panel {
+    display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0; z-index: 20;
+    background: var(--surface-card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow-md); padding: 6px; max-height: 260px; overflow-y: auto;
+}
+.dropdown-picker.open .dropdown-panel { display: block; }
+
+.picker-list { display: flex; flex-direction: column; gap: 4px; }
+.picker-item {
+    border: 1px solid transparent; border-radius: 6px; overflow: hidden;
+    transition: border-color 130ms;
+}
+.picker-item.checked { border-color: var(--teal-700); }
+.picker-row {
+    display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+    cursor: pointer; font-size: 0.875rem; color: var(--text);
+    transition: background 130ms; user-select: none;
+}
+.picker-row:hover              { background: var(--surface-in); }
+.picker-item.checked .picker-row { background: var(--teal-100); font-weight: 600; color: var(--ink); }
 .picker-item input   { accent-color: var(--teal-700); width: 14px; height: 14px; flex-shrink: 0; pointer-events: none; }
-.picker-item.missing { opacity: .5; cursor: not-allowed; }
+.picker-item.missing .picker-row { opacity: .5; cursor: not-allowed; }
 .picker-item.missing input { pointer-events: none; }
 .picker-label { flex: 1; }
 .picker-badge {
@@ -79,20 +98,31 @@
     display: inline-flex; align-items: center; justify-content: center;
     flex-shrink: 0;
 }
+.gran-toggle { display: flex; gap: 4px; padding: 0 10px 8px 34px; background: var(--teal-100); }
+.gran-btn {
+    font-family: var(--font); font-size: 0.6875rem; font-weight: 600;
+    padding: 3px 10px; border-radius: 5px; border: 1px solid var(--border);
+    background: var(--surface-card); color: var(--text-muted); cursor: pointer;
+    transition: background 130ms, color 130ms, border-color 130ms;
+}
+.gran-btn:hover   { border-color: var(--teal-700); color: var(--teal-700); }
+.gran-btn.active  { background: var(--teal-700); border-color: var(--teal-700); color: #fff; }
 
 /* ── Report table ─────────────────────────────────────────────── */
-.rpt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; }
-.rpt-table { border-collapse: collapse; font-size: 0.8125rem; width: 100%; }
+.rpt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; min-height: 420px; }
+.rpt-table { border-collapse: collapse; font-size: 0.8125rem; width: 100%; table-layout: fixed; }
 .rpt-table thead th {
     padding: 8px 12px; text-align: left; background: var(--surface-in);
     color: var(--text-muted); font-weight: 600; font-size: 0.6875rem;
     text-transform: uppercase; letter-spacing: 0.06em;
-    border-bottom: 2px solid var(--border); white-space: nowrap;
+    border-bottom: 2px solid var(--border);
+    white-space: normal; word-break: break-word; overflow-wrap: break-word;
+    vertical-align: bottom;
 }
-.rpt-table thead th.rpt-val { text-align: right; }
+.rpt-table thead th.rpt-val { text-align: right; width: 130px; }
 .rpt-table tbody td {
     padding: 7px 12px; border-bottom: 1px solid var(--border);
-    color: var(--text); white-space: nowrap;
+    color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .rpt-table tbody td.rpt-val { text-align: right; font-variant-numeric: tabular-nums; }
 .rpt-table tbody tr:last-child td { border-bottom: none; }
@@ -104,7 +134,8 @@
 }
 .rpt-table tfoot td.rpt-total-label { text-align: left; }
 
-.ts-empty { color: var(--text-muted); font-size: 0.8125rem; padding: 14px 4px; }
+.rpt-table-wrap:has(.ts-empty) { display: flex; align-items: center; justify-content: center; }
+.ts-empty { color: var(--text-muted); font-size: 0.8125rem; padding: 14px 4px; text-align: center; }
 </style>
 {% endblock %}
 
@@ -117,16 +148,16 @@
     <div class="section expanded" id="sec-data">
         <div class="section-head" onclick="toggleSection('data')">
             <span class="section-title">Data</span>
-            <span class="section-meta" id="dataMeta">No data pasted yet</span>
             <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
         </div>
         <div class="section-body">
             <div class="section-inner">
-                <textarea class="ts-textarea" id="tsInput" placeholder="Paste TSV data here (copy a range in Excel and paste — first row must be the column headers)."></textarea>
-                <div class="ts-warning" id="tsWarning"></div>
-                <div class="ts-toolbar">
-                    <button class="btn btn-primary btn-sm" onclick="parseAndRender()">Parse Data</button>
-                    <button class="btn btn-outline btn-sm" onclick="clearData()">Clear</button>
+                <div class="ts-input-row">
+                    <div class="ts-toolbar">
+                        <button class="btn btn-primary btn-sm" onclick="parseAndRender()">Parse Data</button>
+                        <button class="btn btn-outline btn-sm" onclick="clearData()">Clear</button>
+                    </div>
+                    <textarea class="ts-textarea" id="tsInput" placeholder="Paste TSV data here (copy a range in Excel and paste — first row must be the column headers)."></textarea>
                 </div>
             </div>
         </div>
@@ -138,20 +169,31 @@
     <div class="section expanded" id="sec-report">
         <div class="section-head" onclick="toggleSection('report')">
             <span class="section-title">Report</span>
-            <span class="section-meta" id="reportMeta"></span>
             <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
         </div>
         <div class="section-body">
             <div class="section-inner">
 
                 <div class="ts-pickers">
-                    <div>
-                        <div class="field-label">Dimensions (click to select — order clicked = column order)</div>
-                        <div class="picker-list" id="dimPicker"></div>
+                    <div class="dropdown-picker" id="dimDropdown">
+                        <div class="field-label">Dimensions</div>
+                        <button type="button" class="dropdown-toggle" onclick="toggleDropdown('dim')">
+                            <span class="dropdown-toggle-label" id="dimToggleLabel"></span>
+                            <svg class="dropdown-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+                        </button>
+                        <div class="dropdown-panel">
+                            <div class="picker-list" id="dimPicker"></div>
+                        </div>
                     </div>
-                    <div>
-                        <div class="field-label">Values (sum aggregated)</div>
-                        <div class="picker-list" id="valPicker"></div>
+                    <div class="dropdown-picker" id="valDropdown">
+                        <div class="field-label">Values</div>
+                        <button type="button" class="dropdown-toggle" onclick="toggleDropdown('val')">
+                            <span class="dropdown-toggle-label" id="valToggleLabel"></span>
+                            <svg class="dropdown-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+                        </button>
+                        <div class="dropdown-panel">
+                            <div class="picker-list" id="valPicker"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -172,9 +214,11 @@
 //  CONFIG
 // ═══════════════════════════════════════════════════════════════
 var DIM_DEFS = [
-    {key:'dim_employee', label:'Employee / Tech Product Name'},
-    {key:'dim_rank',     label:'Rank Method'},
-    {key:'dim_activity', label:'Activity Code Description'}
+    {key:'dim_employee', label:'Employee / Tech Product Name', type:'text'},
+    {key:'dim_rank',     label:'Rank / Method',                type:'text'},
+    {key:'dim_activity', label:'Activity Code Description',    type:'text'},
+    {key:'dim_acct_date', label:'Accounting Date',             type:'date'},
+    {key:'dim_txn_date',  label:'Transaction Date',            type:'date'}
 ];
 var VAL_DEFS = [
     {key:'val_hours',  label:'Charged Hours / Tech Quantity'},
@@ -185,13 +229,60 @@ var VAL_DEFS = [
     {key:'val_ansr',   label:'ANSR / Tech Revenue'}
 ];
 
+// ─────────────────────────────────────────────────────────────
+//  FISCAL CALENDAR CONFIG — edit these values to match your
+//  company's calendar. No UI for this on purpose: it's a
+//  once-per-company setting, not a per-report choice.
+// ─────────────────────────────────────────────────────────────
+var FISCAL_CONFIG = {
+    // Which weekday a "week" starts on. 0=Sunday, 1=Monday, 2=Tuesday,
+    // 3=Wednesday, 4=Thursday, 5=Friday, 6=Saturday.
+    weekStartsOn: 1, // Monday
+
+    // Any date that is itself the FIRST DAY of a fiscal week (i.e. it must
+    // fall on the weekStartsOn weekday above), representing Week 1 / Day 1
+    // of the fiscal year named in `anchorFiscalYear`. Every other fiscal
+    // week/period boundary is calculated outward from this one anchor —
+    // you only ever need to set ONE known start date.
+    fiscalYearAnchor: '2024-01-01',
+    anchorFiscalYear: 2024,
+
+    // Weeks per fiscal month/period, in order, for one fiscal year.
+    // Default is the 5-4-4 pattern repeated across 4 quarters (5+4+4=13
+    // weeks/quarter × 4 quarters = 52 weeks). Change this array if your
+    // company uses a different split (e.g. 4-4-5).
+    monthWeekPattern: [5,4,4, 5,4,4, 5,4,4, 5,4,4],
+
+    // Most fiscal years are 52 weeks (364 days), but every 5-6 years an
+    // extra 53rd week is needed to stay aligned with the calendar. List
+    // any such fiscal years here, mapping the fiscal year number to which
+    // period (1-12, matching monthWeekPattern above) absorbs the extra
+    // week that year. Leave empty ({}) if you don't need this yet —
+    // you can add entries as those years come up.
+    // Example: { 2029: 12 }  →  fiscal year 2029's period 12 gets 5 weeks instead of 4.
+    leapWeekFiscalYears: {}
+};
+
 // ═══════════════════════════════════════════════════════════════
 //  STATE
 // ═══════════════════════════════════════════════════════════════
 var rawRows = [];       // parsed data rows: {dim_x:'text', val_y:number, ...}
 var missingCols = [];   // labels of expected columns not found in pasted headers
-var selectedDims = [];  // ordered array of dim keys, order = click order
-var selectedVals = [];  // ordered array of val keys, order = VAL_DEFS order
+var selectedDims = [{key:'dim_rank'}];          // ordered array of {key, granularity}, order = click order
+var selectedVals = ['val_hours', 'val_margin']; // ordered array of val keys, order = click order
+
+var SAMPLE_TSV =
+"Employee / Tech Product Name\tRank / Method\tActivity Code Description\tAccounting Date\tTransaction Date\tCharged Hours / Tech Quantity\tLabor Cost\tTech Uplift Cost\tMargin Cost\tNSR / Tech Revenue\tANSR / Tech Revenue\n"+
+"Alice Nowak\tSenior Consultant\tClient Review\t2024-01-08\t2024-01-05\t4.5\t450.00\t45.00\t120.00\t615.00\t598.00\n"+
+"Alice Nowak\tSenior Consultant\tDocumentation\t2024-01-10\t2024-01-09\t2.0\t200.00\t20.00\t50.00\t270.00\t262.00\n"+
+"Bartek Kowalski\tManager\tClient Review\t2024-01-15\t2024-01-12\t3.0\t420.00\t60.00\t95.00\t575.00\t560.00\n"+
+"Bartek Kowalski\tManager\tProject Planning\t2024-02-05\t2024-02-01\t5.0\t700.00\t100.00\t180.00\t980.00\t950.00\n"+
+"Bartek Kowalski\tManager\tTraining\t2024-02-19\t2024-02-16\t0\t0.00\t0.00\t0.00\t0.00\t0.00\n"+
+"Chloe Zielinska\tAssociate\tDocumentation\t2024-01-22\t2024-01-19\t6.5\t455.00\t35.00\t70.00\t560.00\t545.00\n"+
+"Chloe Zielinska\tAssociate\tClient Review\t2024-02-12\t2024-02-09\t1.5\t105.00\t8.00\t18.00\t131.00\t128.00\n"+
+"Damian Wojcik\tSenior Consultant\tProject Planning\t2024-03-04\t2024-02-28\t3.5\t385.00\t42.00\t88.00\t515.00\t500.00\n"+
+"Damian Wojcik\tSenior Consultant\tTraining\t2024-03-11\t2024-03-08\t2.5\t250.00\t25.00\t45.00\t320.00\t310.00\n"+
+"Ewa Mazur\tAssociate\tTraining\t2024-03-18\t2024-03-15\t0\t0.00\t0.00\t0.00\t0.00\t0.00\n";
 
 // ═══════════════════════════════════════════════════════════════
 //  SECTION TOGGLE
@@ -201,9 +292,26 @@ function toggleSection(id){
 }
 
 // ═══════════════════════════════════════════════════════════════
+//  DROPDOWN TOGGLE
+// ═══════════════════════════════════════════════════════════════
+function toggleDropdown(which){
+    var el=document.getElementById(which+'Dropdown');
+    var isOpen=el.classList.contains('open');
+    document.querySelectorAll('.dropdown-picker.open').forEach(function(d){ d.classList.remove('open'); });
+    if(!isOpen) el.classList.add('open');
+}
+
+document.addEventListener('click', function(e){
+    document.querySelectorAll('.dropdown-picker.open').forEach(function(d){
+        if(!d.contains(e.target)) d.classList.remove('open');
+    });
+});
+
+// ═══════════════════════════════════════════════════════════════
 //  HELPERS
 // ═══════════════════════════════════════════════════════════════
 function escH(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escA(s){ return String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 function parseNum(v){
     if(v===undefined||v===null) return 0;
@@ -219,6 +327,82 @@ function parseNum(v){
 
 function fmtNum(n){
     return n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+}
+
+function pad2(n){ return n<10 ? '0'+n : ''+n; }
+
+// All date math below is done in UTC on purpose (Date.UTC + getUTC*/setUTC*)
+// so a yyyy-mm-dd string always means the same calendar day regardless of
+// the browser's local timezone or daylight saving changes.
+function parseISODate(s){
+    var p=String(s).trim().split('-');
+    if(p.length!==3) return null;
+    var dt=new Date(Date.UTC(+p[0], +p[1]-1, +p[2]));
+    return isNaN(dt.getTime()) ? null : dt;
+}
+function fmtISODate(dt){
+    return dt.getUTCFullYear()+'-'+pad2(dt.getUTCMonth()+1)+'-'+pad2(dt.getUTCDate());
+}
+function addDaysUTC(dt,n){
+    var r=new Date(dt.getTime());
+    r.setUTCDate(r.getUTCDate()+n);
+    return r;
+}
+function startOfWeekUTC(dt, weekStartsOn){
+    var day=dt.getUTCDay(); // 0=Sun..6=Sat
+    var diff=(day - weekStartsOn + 7) % 7;
+    return addDaysUTC(dt, -diff);
+}
+
+function fiscalYearLength(fy){
+    return 52 + (FISCAL_CONFIG.leapWeekFiscalYears[fy] ? 1 : 0);
+}
+
+// Given an integer count of weeks relative to the anchor week, walk
+// year-by-year (accounting for any 53-week years) to find which fiscal
+// year the target week falls in, and its 0-based week index within it.
+function locateFiscalYearWeek(weeksOffset){
+    var fy=FISCAL_CONFIG.anchorFiscalYear;
+    var remaining=weeksOffset;
+    if(remaining>=0){
+        while(remaining>=fiscalYearLength(fy)){ remaining-=fiscalYearLength(fy); fy++; }
+    } else {
+        while(remaining<0){ fy--; remaining+=fiscalYearLength(fy); }
+    }
+    return {fiscalYear:fy, weekIndex:remaining};
+}
+
+// Maps a 0-based week-within-fiscal-year to a fiscal period (month),
+// using monthWeekPattern (with the leap week added in, if applicable).
+function locatePeriod(fiscalYear, weekIndex){
+    var pattern=FISCAL_CONFIG.monthWeekPattern.slice();
+    var leapPeriod=FISCAL_CONFIG.leapWeekFiscalYears[fiscalYear];
+    if(leapPeriod){ pattern[leapPeriod-1]+=1; }
+    var cum=0;
+    for(var i=0;i<pattern.length;i++){
+        if(weekIndex<cum+pattern[i]) return {period:i+1};
+        cum+=pattern[i];
+    }
+    return {period:pattern.length};
+}
+
+// Buckets a yyyy-mm-dd string into a day / week / fiscal-month label.
+function computeDateBucket(dateStr, granularity){
+    if(!dateStr) return '';
+    var dt=parseISODate(dateStr);
+    if(!dt) return dateStr; // unparseable — show the raw text rather than crash
+
+    if(granularity==='day') return fmtISODate(dt);
+
+    var ws=startOfWeekUTC(dt, FISCAL_CONFIG.weekStartsOn);
+    if(granularity==='week') return 'Week of '+fmtISODate(ws);
+
+    // month → 5-4-4 fiscal period
+    var anchorStart=startOfWeekUTC(parseISODate(FISCAL_CONFIG.fiscalYearAnchor), FISCAL_CONFIG.weekStartsOn);
+    var weeksOffset=Math.round((ws.getTime()-anchorStart.getTime())/(7*86400000));
+    var loc=locateFiscalYearWeek(weeksOffset);
+    var per=locatePeriod(loc.fiscalYear, loc.weekIndex);
+    return 'FY'+loc.fiscalYear+' P'+pad2(per.period);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -262,17 +446,6 @@ function parseAndRender(){
     rawRows=result.rows;
     missingCols=result.missing;
 
-    var meta=document.getElementById('dataMeta');
-    meta.textContent = rawRows.length ? (rawRows.length+' row'+(rawRows.length===1?'':'s')+' parsed') : 'No data pasted yet';
-
-    var warn=document.getElementById('tsWarning');
-    if(rawRows.length && missingCols.length){
-        warn.textContent='Column(s) not found in the pasted data (values default to blank/0): '+missingCols.join(', ');
-        warn.classList.add('show');
-    } else {
-        warn.classList.remove('show');
-    }
-
     renderPickers();
     renderReport();
 }
@@ -280,8 +453,6 @@ function parseAndRender(){
 function clearData(){
     document.getElementById('tsInput').value='';
     rawRows=[]; missingCols=[];
-    document.getElementById('dataMeta').textContent='No data pasted yet';
-    document.getElementById('tsWarning').classList.remove('show');
     renderPickers();
     renderReport();
 }
@@ -294,10 +465,27 @@ function colAvailable(key){
     return !missingCols.includes(def.label);
 }
 
+function dimIndex(key){
+    return selectedDims.findIndex(function(s){ return s.key===key; });
+}
+
 function toggleDim(key){
     if(!colAvailable(key)) return;
-    var i=selectedDims.indexOf(key);
-    if(i===-1) selectedDims.push(key); else selectedDims.splice(i,1);
+    var i=dimIndex(key);
+    if(i===-1){
+        var def=DIM_DEFS.find(function(d){return d.key===key;});
+        selectedDims.push({key:key, granularity: def.type==='date' ? 'day' : undefined});
+    } else {
+        selectedDims.splice(i,1);
+    }
+    renderPickers();
+    renderReport();
+}
+
+function setDimGranularity(key, gran){
+    var i=dimIndex(key);
+    if(i===-1) return;
+    selectedDims[i].granularity=gran;
     renderPickers();
     renderReport();
 }
@@ -311,27 +499,67 @@ function toggleVal(key){
 }
 
 function renderPickers(){
+    var GRANS=['day','week','month'];
     var dimEl=document.getElementById('dimPicker');
     dimEl.innerHTML=DIM_DEFS.map(function(d){
-        var checked=selectedDims.indexOf(d.key)!==-1;
-        var order=selectedDims.indexOf(d.key)+1;
+        var idx=dimIndex(d.key);
+        var checked=idx!==-1;
+        var order=idx+1;
         var avail=colAvailable(d.key);
-        return '<div class="picker-item'+(checked?' checked':'')+(avail?'':' missing')+'" onclick="toggleDim(\''+d.key+'\')">'+
-            '<input type="checkbox"'+(checked?' checked':'')+'>'+
-            '<span class="picker-label">'+escH(d.label)+(avail?'':' (not found in data)')+'</span>'+
-            (checked?'<span class="picker-badge">'+order+'</span>':'')+
+        var granRow='';
+        if(d.type==='date' && checked){
+            var gran=selectedDims[idx].granularity||'day';
+            granRow='<div class="gran-toggle">'+GRANS.map(function(g){
+                return '<button type="button" class="gran-btn'+(gran===g?' active':'')+'" onclick="event.stopPropagation();setDimGranularity(\''+d.key+'\',\''+g+'\')">'+g.charAt(0).toUpperCase()+g.slice(1)+'</button>';
+            }).join('')+'</div>';
+        }
+        return '<div class="picker-item'+(checked?' checked':'')+(avail?'':' missing')+'">'+
+            '<div class="picker-row" onclick="toggleDim(\''+d.key+'\')">'+
+                '<input type="checkbox"'+(checked?' checked':'')+'>'+
+                '<span class="picker-label">'+escH(d.label)+(avail?'':' (not found in data)')+'</span>'+
+                (checked?'<span class="picker-badge">'+order+'</span>':'')+
+            '</div>'+
+            granRow+
             '</div>';
     }).join('');
 
     var valEl=document.getElementById('valPicker');
     valEl.innerHTML=VAL_DEFS.map(function(v){
         var checked=selectedVals.indexOf(v.key)!==-1;
+        var order=selectedVals.indexOf(v.key)+1;
         var avail=colAvailable(v.key);
-        return '<div class="picker-item'+(checked?' checked':'')+(avail?'':' missing')+'" onclick="toggleVal(\''+v.key+'\')">'+
-            '<input type="checkbox"'+(checked?' checked':'')+'>'+
-            '<span class="picker-label">'+escH(v.label)+(avail?'':' (not found in data)')+'</span>'+
+        return '<div class="picker-item'+(checked?' checked':'')+(avail?'':' missing')+'">'+
+            '<div class="picker-row" onclick="toggleVal(\''+v.key+'\')">'+
+                '<input type="checkbox"'+(checked?' checked':'')+'>'+
+                '<span class="picker-label">'+escH(v.label)+(avail?'':' (not found in data)')+'</span>'+
+                (checked?'<span class="picker-badge">'+order+'</span>':'')+
+            '</div>'+
             '</div>';
     }).join('');
+
+    updateDropdownLabel('dim', DIM_DEFS, selectedDims, 'Select dimensions…');
+    updateDropdownLabel('val', VAL_DEFS, selectedVals, 'Select values…');
+}
+
+function updateDropdownLabel(which, defs, selected, placeholder){
+    var el=document.getElementById(which+'ToggleLabel');
+    if(!selected.length){
+        el.textContent=placeholder;
+        el.classList.add('placeholder');
+        return;
+    }
+    el.classList.remove('placeholder');
+    var labels=selected.map(function(s){
+        var key=(typeof s==='string') ? s : s.key;
+        var def=defs.find(function(d){return d.key===key;});
+        var label=def.label;
+        if(def.type==='date'){
+            var gran=s.granularity||'day';
+            label+=' ('+gran.charAt(0).toUpperCase()+gran.slice(1)+')';
+        }
+        return label;
+    });
+    el.textContent=labels.join(', ');
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -339,27 +567,28 @@ function renderPickers(){
 // ═══════════════════════════════════════════════════════════════
 function renderReport(){
     var wrap=document.getElementById('reportWrap');
-    var meta=document.getElementById('reportMeta');
 
     if(!rawRows.length){
         wrap.innerHTML='<div class="ts-empty">Paste data above, then select at least one dimension and one value to build the report.</div>';
-        meta.textContent='';
         return;
     }
     if(!selectedDims.length || !selectedVals.length){
         wrap.innerHTML='<div class="ts-empty">Select at least one dimension and one value column to build the report.</div>';
-        meta.textContent='';
         return;
     }
 
-    var dimDefs=selectedDims.map(function(k){ return DIM_DEFS.find(function(d){return d.key===k;}); });
+    var dimDefs=selectedDims.map(function(s){ return DIM_DEFS.find(function(d){return d.key===s.key;}); });
     var valDefs=selectedVals.map(function(k){ return VAL_DEFS.find(function(v){return v.key===k;}); });
 
     // group + sum
     var groups={};
     var order=[];
     rawRows.forEach(function(row){
-        var keyParts=dimDefs.map(function(d){ return row[d.key]||''; });
+        var keyParts=selectedDims.map(function(s,i){
+            var def=dimDefs[i];
+            if(def.type==='date') return computeDateBucket(row[def.key], s.granularity||'day');
+            return row[def.key]||'';
+        });
         var key=keyParts.join('\u0001');
         if(!groups[key]){
             groups[key]={dims:keyParts, sums:valDefs.map(function(){return 0;})};
@@ -368,27 +597,47 @@ function renderReport(){
         valDefs.forEach(function(v,vi){ groups[key].sums[vi]+=row[v.key]||0; });
     });
 
-    order.sort(function(a,b){
-        var ga=groups[a].dims.join('\u0001'), gb=groups[b].dims.join('\u0001');
-        return ga.localeCompare(gb);
-    });
-
     var grandTotals=valDefs.map(function(){return 0;});
     order.forEach(function(key){
         groups[key].sums.forEach(function(s,vi){ grandTotals[vi]+=s; });
     });
 
-    meta.textContent=order.length+' row'+(order.length===1?'':'s');
+    // hide rows where every selected value column is zero
+    var visibleOrder=order.filter(function(key){
+        return groups[key].sums.some(function(s){ return s!==0; });
+    });
+
+    visibleOrder.sort(function(a,b){
+        var ga=groups[a].dims.join('\u0001'), gb=groups[b].dims.join('\u0001');
+        return ga.localeCompare(gb);
+    });
+
+    if(!visibleOrder.length){
+        wrap.innerHTML='<div class="ts-empty">No rows to display — every combination totals to zero across the selected values.</div>';
+        return;
+    }
+
+    var colgroup='<colgroup>'+
+        dimDefs.map(function(){ return '<col>'; }).join('')+
+        valDefs.map(function(){ return '<col style="width:130px">'; }).join('')+
+        '</colgroup>';
 
     var thead='<tr>'+
-        dimDefs.map(function(d){ return '<th>'+escH(d.label)+'</th>'; }).join('')+
+        dimDefs.map(function(d,i){
+            var label=d.label;
+            if(d.type==='date'){
+                var gran=selectedDims[i].granularity||'day';
+                label+=' ('+gran.charAt(0).toUpperCase()+gran.slice(1)+')';
+            }
+            return '<th>'+escH(label)+'</th>';
+        }).join('')+
         valDefs.map(function(v){ return '<th class="rpt-val">'+escH(v.label)+'</th>'; }).join('')+
         '</tr>';
 
-    var tbody=order.map(function(key){
+    var tbody=visibleOrder.map(function(key){
         var g=groups[key];
         return '<tr>'+
-            g.dims.map(function(d){ return '<td>'+(d?escH(d):'<span style="color:var(--border)">—</span>')+'</td>'; }).join('')+
+            g.dims.map(function(d){ return '<td title="'+escA(d)+'">'+(d?escH(d):'<span style="color:var(--border)">—</span>')+'</td>'; }).join('')+
             g.sums.map(function(s){ return '<td class="rpt-val">'+fmtNum(s)+'</td>'; }).join('')+
             '</tr>';
     }).join('');
@@ -398,13 +647,13 @@ function renderReport(){
         grandTotals.map(function(s){ return '<td>'+fmtNum(s)+'</td>'; }).join('')+
         '</tr>';
 
-    wrap.innerHTML='<table class="rpt-table"><thead>'+thead+'</thead><tbody>'+tbody+'</tbody><tfoot>'+tfoot+'</tfoot></table>';
+    wrap.innerHTML='<table class="rpt-table">'+colgroup+'<thead>'+thead+'</thead><tbody>'+tbody+'</tbody><tfoot>'+tfoot+'</tfoot></table>';
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  INIT
 // ═══════════════════════════════════════════════════════════════
-renderPickers();
-renderReport();
+document.getElementById('tsInput').value = SAMPLE_TSV.trim();
+parseAndRender();
 </script>
 {% endblock %}

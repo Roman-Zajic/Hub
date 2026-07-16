@@ -4,6 +4,10 @@
 {% block extra_css %}
 <style>
     .msg-root { display: flex; flex-direction: column; height: 100%; gap: 12px; }
+    .msg-addr-row { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+    .msg-addr-row label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+    #peerAddr { flex: 1; max-width: 260px; }
+    #wsStatus { font-size: 0.75rem; color: var(--text-muted); }
     #sharedText {
         flex: 1; resize: none; width: 100%;
         font-family: var(--font); font-size: 0.9375rem;
@@ -14,52 +18,58 @@
     }
     #sharedText:hover { border-color: var(--teal-700); }
     #sharedText:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
-    .msg-actions { display: flex; gap: 10px; flex-shrink: 0; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="msg-root">
-    <textarea id="sharedText" placeholder="Type here… Submit sends it to the other device."></textarea>
-    <div class="msg-actions">
-        <button class="btn btn-primary" onclick="submitText()">Submit</button>
-        <button class="btn btn-outline" onclick="refreshText()">Refresh</button>
+    <div class="msg-addr-row">
+        <label for="peerAddr">Peer address</label>
+        <input type="text" id="peerAddr" class="input">
+        <button class="btn btn-outline btn-sm" onclick="connect()">Connect</button>
+        <span id="wsStatus">—</span>
     </div>
+
+    <textarea id="sharedText" placeholder="Type here… Submit sends it to the other device."></textarea>
+    <button class="btn btn-primary" onclick="submitText()">Submit</button>
 </div>
 
 <script>
-const el = document.getElementById('sharedText');
+const el       = document.getElementById('sharedText');
+const addrEl   = document.getElementById('peerAddr');
+const statusEl = document.getElementById('wsStatus');
+
+// Default target: the typical Windows Mobile Hotspot gateway address.
+// Editable and remembered per-browser via localStorage.
+addrEl.value = localStorage.getItem('msgPeerAddr') || '192.168.137.1:5001';
+
 let ws = null;
 
 function connect() {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(proto + '//' + location.host + '/messages/ws');
+    const addr = addrEl.value.trim();
+    localStorage.setItem('msgPeerAddr', addr);
+
+    if (ws) { ws.onclose = null; ws.close(); }
+
+    statusEl.textContent = 'connecting…';
+    ws = new WebSocket('ws://' + addr + '/messages/ws');
+
+    ws.onopen    = function () { statusEl.textContent = 'connected'; };
+    ws.onclose   = function () { statusEl.textContent = 'disconnected'; };
+    ws.onerror   = function () { statusEl.textContent = 'error'; };
     ws.onmessage = function (evt) {
         if (document.activeElement !== el) el.value = evt.data; // don't clobber an in-progress edit
     };
-    ws.onclose = function () { setTimeout(connect, 3000); };
 }
-connect();
 
 function submitText() {
-    const text = el.value;
     if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(text);
+        ws.send(el.value);
     } else {
-        fetch('/messages/api/text', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text: text })
-        });
+        statusEl.textContent = 'not connected';
     }
 }
 
-function refreshText() {
-    fetch('/messages/api/text')
-        .then(r => r.json())
-        .then(data => { el.value = data.text; });
-}
-
-refreshText();
+connect();
 </script>
 {% endblock %}

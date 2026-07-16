@@ -4,10 +4,13 @@
 {% block extra_css %}
 <style>
     .msg-root { display: flex; flex-direction: column; height: 100%; gap: 12px; }
-    .msg-addr-row { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
-    .msg-addr-row label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
-    #peerAddr { flex: 1; max-width: 260px; }
-    #wsStatus { font-size: 0.75rem; color: var(--text-muted); }
+
+    .msg-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+    .msg-toolbar label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+    #peerAddr { max-width: 220px; }
+    #wsStatus { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
+    .msg-toolbar-spacer { flex: 1; }
+
     #sharedText {
         flex: 1; resize: none; width: 100%;
         font-family: var(--font); font-size: 0.9375rem;
@@ -18,29 +21,49 @@
     }
     #sharedText:hover { border-color: var(--teal-700); }
     #sharedText:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+    .drop-zone {
+        flex-shrink: 0;
+        border: 2px dashed var(--teal-400); border-radius: var(--r);
+        padding: 16px; text-align: center; color: var(--text-muted);
+        font-size: 0.8125rem; cursor: pointer; background: var(--surface-in);
+        transition: border-color 130ms, background 130ms;
+    }
+    .drop-zone.dragover { border-color: var(--teal-700); background: var(--teal-100); color: var(--ink); }
+
+    #receivedFile { flex-shrink: 0; font-size: 0.8125rem; color: var(--text-muted); min-height: 1.2em; }
+    #receivedFile a { color: var(--teal-700); font-weight: 600; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="msg-root">
-    <div class="msg-addr-row">
+    <div class="msg-toolbar">
         <label for="peerAddr">Peer address</label>
         <input type="text" id="peerAddr" class="input">
         <button class="btn btn-outline btn-sm" onclick="connect()">Connect</button>
         <span id="wsStatus">—</span>
+        <div class="msg-toolbar-spacer"></div>
+        <button class="btn btn-primary btn-sm" onclick="submitText()">Submit</button>
     </div>
 
     <textarea id="sharedText" placeholder="Type here… Submit sends it to the other device."></textarea>
-    <button class="btn btn-primary" onclick="submitText()">Submit</button>
+
+    <div class="drop-zone" id="dropZone" onclick="fileInput.click()">
+        Drag &amp; drop a file here to send (or click to choose)
+    </div>
+    <div id="receivedFile"></div>
+    <input type="file" id="fileInput" style="display:none">
 </div>
 
 <script>
-const el       = document.getElementById('sharedText');
-const addrEl   = document.getElementById('peerAddr');
-const statusEl = document.getElementById('wsStatus');
+const el         = document.getElementById('sharedText');
+const addrEl     = document.getElementById('peerAddr');
+const statusEl   = document.getElementById('wsStatus');
+const dropZone   = document.getElementById('dropZone');
+const fileInput  = document.getElementById('fileInput');
+const receivedEl = document.getElementById('receivedFile');
 
-// Default target: the typical Windows Mobile Hotspot gateway address.
-// Editable and remembered per-browser via localStorage.
 addrEl.value = localStorage.getItem('msgPeerAddr') || '192.168.137.1:5001';
 
 let ws = null;
@@ -48,27 +71,51 @@ let ws = null;
 function connect() {
     const addr = addrEl.value.trim();
     localStorage.setItem('msgPeerAddr', addr);
-
     if (ws) { ws.onclose = null; ws.close(); }
 
     statusEl.textContent = 'connecting…';
     ws = new WebSocket('ws://' + addr + '/messages/ws');
 
-    ws.onopen    = function () { statusEl.textContent = 'connected'; };
-    ws.onclose   = function () { statusEl.textContent = 'disconnected'; };
-    ws.onerror   = function () { statusEl.textContent = 'error'; };
+    ws.onopen  = function () { statusEl.textContent = 'connected'; };
+    ws.onclose = function () { statusEl.textContent = 'disconnected'; };
+    ws.onerror = function () { statusEl.textContent = 'error'; };
     ws.onmessage = function (evt) {
-        if (document.activeElement !== el) el.value = evt.data; // don't clobber an in-progress edit
+        let msg;
+        try { msg = JSON.parse(evt.data); } catch (e) { return; }
+        if (msg.type === 'text') {
+            if (document.activeElement !== el) el.value = msg.text;
+        } else if (msg.type === 'file') {
+            receivedEl.innerHTML = 'Received: <a href="' + msg.data + '" download="' + msg.name + '">' + msg.name + '</a>';
+        }
     };
 }
 
 function submitText() {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(el.value);
-    } else {
-        statusEl.textContent = 'not connected';
-    }
+    if (!(ws && ws.readyState === WebSocket.OPEN)) { statusEl.textContent = 'not connected'; return; }
+    ws.send(JSON.stringify({ type: 'text', text: el.value }));
 }
+
+function sendFile(file) {
+    if (!(ws && ws.readyState === WebSocket.OPEN)) { statusEl.textContent = 'not connected'; return; }
+    const reader = new FileReader();
+    reader.onload = function () {
+        ws.send(JSON.stringify({ type: 'file', name: file.name, data: reader.result }));
+    };
+    reader.readAsDataURL(file);  // whole file, base64-encoded — fine for small/medium files
+}
+
+dropZone.addEventListener('dragover', function (e) { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', function () { dropZone.classList.remove('dragover'); });
+dropZone.addEventListener('drop', function (e) {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file) sendFile(file);
+});
+fileInput.addEventListener('change', function () {
+    if (fileInput.files[0]) sendFile(fileInput.files[0]);
+    fileInput.value = '';
+});
 
 connect();
 </script>

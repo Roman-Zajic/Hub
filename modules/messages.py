@@ -1,7 +1,8 @@
 """
-Messages module — a single shared text box, synced live between devices on
-the same network over a WebSocket. No history, no storage: just whatever
-was last submitted, held in memory.
+Messages module — a single shared text box plus simple file drop, synced
+live between devices on the same network over a WebSocket. Nothing is
+stored server-side: text is kept only as "the last value" in memory, and
+files are relayed straight through without ever touching disk.
 
 Drop into modules/ to install; rename with a leading underscore to remove.
 
@@ -10,6 +11,8 @@ Requires app.py's app.run(...) to include threaded=True (a websocket stays
 open for as long as the tab is loaded, which would otherwise stall the rest
 of the app on a single-threaded dev server).
 """
+import json
+
 from flask import Blueprint, render_template
 from flask_sock import Sock
 
@@ -26,7 +29,7 @@ def _attach_sock(state):
     sock.init_app(state.app)
 
 
-_text = ''        # the one shared value — nothing else is stored
+_text = ''        # the one shared text value — nothing else is stored
 _clients = set()   # connected websockets
 
 
@@ -39,19 +42,27 @@ def messages_view():
 def messages_ws(ws):
     global _text
     _clients.add(ws)
-    ws.send(_text)  # push current value right away on connect
+    ws.send(json.dumps({'type': 'text', 'text': _text}))  # sync current value on connect
     try:
         while True:
             raw = ws.receive()
             if raw is None:
                 break
-            _text = raw
+            try:
+                msg = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+
+            if msg.get('type') == 'text':
+                _text = msg.get('text', '')
+            # 'file' messages are relayed only, never stored
+
             dead = []
             for peer in _clients:
                 if peer is ws:
                     continue
                 try:
-                    peer.send(_text)
+                    peer.send(raw)
                 except Exception:
                     dead.append(peer)
             for peer in dead:

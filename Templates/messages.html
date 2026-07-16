@@ -4,284 +4,62 @@
 {% block extra_css %}
 <style>
     .msg-root { display: flex; flex-direction: column; height: 100%; gap: 12px; }
-
-    /* ── Toolbar ──────────────────────────────────────────── */
-    .msg-toolbar {
-        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-        background: var(--surface-card); border: 1px solid var(--border);
-        border-radius: var(--r); box-shadow: var(--shadow); padding: 10px 14px;
-        flex-shrink: 0;
-    }
-    .msg-name-field { display: flex; align-items: center; gap: 8px; }
-    .msg-name-field label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
-    #nameInput { width: 150px; }
-
-    .status-pill {
-        display: inline-flex; align-items: center; gap: 6px;
-        font-size: 0.75rem; font-weight: 600; padding: 5px 11px 5px 9px;
-        border-radius: 20px; background: var(--surface-in); color: var(--text-muted);
-        white-space: nowrap;
-    }
-    .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); flex-shrink: 0; }
-    .status-pill.connected .status-dot { background: #1FA971; }
-    .status-pill.connected { color: #0E7A50; background: #E4F7EE; }
-    .status-pill.connecting .status-dot { background: var(--amber); animation: pulse 1s infinite; }
-    .status-pill.connecting { color: #96690F; background: #FCF1DC; }
-    .status-pill.offline .status-dot { background: var(--red); }
-    .status-pill.offline { color: var(--red); background: #FCE8EB; }
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
-
-    .msg-toolbar-spacer { flex: 1; }
-
-    /* ── Message log ──────────────────────────────────────── */
-    .msg-log-wrap {
-        flex: 1; min-height: 0;
-        background: var(--surface-card); border: 1px solid var(--border);
-        border-radius: var(--r); box-shadow: var(--shadow);
-        display: flex; flex-direction: column; overflow: hidden;
-    }
-    .msg-log {
-        flex: 1; overflow-y: auto; padding: 16px;
-        display: flex; flex-direction: column; gap: 10px;
-    }
-    .msg-empty { margin: auto; color: var(--text-muted); font-size: 0.875rem; text-align: center; }
-
-    .bubble-row { display: flex; }
-    .bubble-row.mine { justify-content: flex-end; }
-    .bubble-row.theirs { justify-content: flex-start; }
-
-    .bubble-wrap { max-width: 72%; display: flex; flex-direction: column; gap: 3px; }
-    .bubble-row.mine .bubble-wrap { align-items: flex-end; }
-    .bubble-row.theirs .bubble-wrap { align-items: flex-start; }
-
-    .bubble-meta { font-size: 0.6875rem; color: var(--text-muted); padding: 0 4px; }
-    .bubble {
-        padding: 9px 13px; border-radius: 14px; font-size: 0.875rem;
-        line-height: 1.5; white-space: pre-wrap; word-break: break-word;
-        box-shadow: var(--shadow);
-    }
-    .bubble-row.mine .bubble { background: var(--teal-900); color: #fff; border-bottom-right-radius: 4px; }
-    .bubble-row.theirs .bubble { background: var(--surface-in); color: var(--text); border: 1px solid var(--border); border-bottom-left-radius: 4px; }
-
-    /* ── Composer ─────────────────────────────────────────── */
-    .msg-composer {
-        display: flex; gap: 10px; align-items: flex-end;
-        background: var(--surface-card); border: 1px solid var(--border);
-        border-radius: var(--r); box-shadow: var(--shadow); padding: 12px 14px;
-        flex-shrink: 0;
-    }
-    #composeText {
-        flex: 1; resize: none; height: 60px;
+    #sharedText {
+        flex: 1; resize: none; width: 100%;
         font-family: var(--font); font-size: 0.9375rem;
-        border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
-        color: var(--text); outline: none; line-height: 1.5;
+        border: 1px solid var(--border); border-radius: var(--r); padding: 14px;
+        color: var(--text); outline: none; line-height: 1.6;
+        background: var(--surface-card); box-shadow: var(--shadow);
         transition: border-color 130ms, box-shadow 130ms;
     }
-    #composeText:hover { border-color: var(--teal-700); }
-    #composeText:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
-    .composer-hint { font-size: 0.6875rem; color: var(--text-muted); margin-top: 4px; }
+    #sharedText:hover { border-color: var(--teal-700); }
+    #sharedText:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+    .msg-actions { display: flex; gap: 10px; flex-shrink: 0; }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="msg-root">
-
-    <div class="msg-toolbar">
-        <span class="status-pill offline" id="statusPill">
-            <span class="status-dot"></span><span id="statusText">Connecting…</span>
-        </span>
-        <div class="msg-name-field">
-            <label for="nameInput">Your name</label>
-            <input type="text" id="nameInput" class="input" placeholder="e.g. Company laptop" maxlength="40">
-        </div>
-        <div class="msg-toolbar-spacer"></div>
-        <button class="btn btn-outline btn-sm" onclick="refreshHistory()">Refresh</button>
-        <button class="btn btn-danger btn-sm" onclick="clearHistory()">Clear</button>
+    <textarea id="sharedText" placeholder="Type here… Submit sends it to the other device."></textarea>
+    <div class="msg-actions">
+        <button class="btn btn-primary" onclick="submitText()">Submit</button>
+        <button class="btn btn-outline" onclick="refreshText()">Refresh</button>
     </div>
-
-    <div class="msg-log-wrap">
-        <div class="msg-log" id="msgLog">
-            <div class="msg-empty">No messages yet — say hello below.</div>
-        </div>
-    </div>
-
-    <div class="msg-composer">
-        <div style="flex:1">
-            <textarea id="composeText" placeholder="Type a message… (Enter to send, Shift+Enter for a new line)"></textarea>
-            <div class="composer-hint">Sends over the network this app is running on — make sure both devices are on the same hotspot.</div>
-        </div>
-        <button class="btn btn-primary" onclick="sendMessage()">Send</button>
-    </div>
-
 </div>
 
 <script>
-// ═══════════════════════════════════════════════════════════════
-//  IDENTITY — a stable per-browser id (to tell "mine" from "theirs"),
-//  plus an editable display name, both kept in localStorage.
-// ═══════════════════════════════════════════════════════════════
-function makeClientId() {
-    if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
-    return 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
-}
-let clientId = localStorage.getItem('msgClientId');
-if (!clientId) { clientId = makeClientId(); localStorage.setItem('msgClientId', clientId); }
-
-const nameInput = document.getElementById('nameInput');
-nameInput.value = localStorage.getItem('msgName') || '';
-nameInput.addEventListener('input', function () {
-    localStorage.setItem('msgName', nameInput.value);
-});
-function currentName() { return nameInput.value.trim() || 'Unknown'; }
-
-// ═══════════════════════════════════════════════════════════════
-//  RENDER
-// ═══════════════════════════════════════════════════════════════
-const logEl = document.getElementById('msgLog');
-const seenIds = new Set();
-
-function escH(s) {
-    const d = document.createElement('div');
-    d.textContent = s;
-    return d.innerHTML;
-}
-function fmtTime(ts) {
-    return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-function isNearBottom() {
-    return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 60;
-}
-
-function appendMessage(msg) {
-    if (seenIds.has(msg.id)) return;
-    seenIds.add(msg.id);
-
-    const empty = logEl.querySelector('.msg-empty');
-    if (empty) empty.remove();
-
-    const mine = msg.clientId === clientId;
-    const row = document.createElement('div');
-    row.className = 'bubble-row ' + (mine ? 'mine' : 'theirs');
-
-    const wasNearBottom = isNearBottom();
-
-    row.innerHTML =
-        '<div class="bubble-wrap">' +
-            '<div class="bubble-meta">' + (mine ? 'You' : escH(msg.sender)) + ' · ' + fmtTime(msg.ts) + '</div>' +
-            '<div class="bubble">' + escH(msg.text) + '</div>' +
-        '</div>';
-    logEl.appendChild(row);
-
-    if (wasNearBottom) logEl.scrollTop = logEl.scrollHeight;
-}
-
-function renderAll(messages) {
-    logEl.innerHTML = '';
-    seenIds.clear();
-    if (!messages.length) {
-        logEl.innerHTML = '<div class="msg-empty">No messages yet — say hello below.</div>';
-        return;
-    }
-    messages.forEach(appendMessage);
-    logEl.scrollTop = logEl.scrollHeight;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  STATUS PILL
-// ═══════════════════════════════════════════════════════════════
-const statusPill = document.getElementById('statusPill');
-const statusText = document.getElementById('statusText');
-function setStatus(state) {
-    statusPill.className = 'status-pill ' + state;
-    statusText.textContent = state === 'connected' ? 'Live'
-        : state === 'connecting' ? 'Connecting…'
-        : 'Offline — retrying';
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  WEBSOCKET — live push. Sending itself goes over REST (see below),
-//  so this only needs to receive.
-// ═══════════════════════════════════════════════════════════════
+const el = document.getElementById('sharedText');
 let ws = null;
-let reconnectTimer = null;
 
-function connectWS() {
-    setStatus('connecting');
+function connect() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(proto + '//' + location.host + '/messages/ws');
-
-    ws.onopen = function () { setStatus('connected'); };
-
     ws.onmessage = function (evt) {
-        let payload;
-        try { payload = JSON.parse(evt.data); } catch (e) { return; }
-        if (payload.type === 'message') appendMessage(payload.message);
-        else if (payload.type === 'clear') renderAll([]);
+        if (document.activeElement !== el) el.value = evt.data; // don't clobber an in-progress edit
     };
-
-    ws.onclose = function () {
-        setStatus('offline');
-        reconnectTimer = setTimeout(connectWS, 3000);
-    };
-
-    ws.onerror = function () { ws.close(); };
+    ws.onclose = function () { setTimeout(connect, 3000); };
 }
+connect();
 
-connectWS();
-window.addEventListener('beforeunload', function () {
-    if (reconnectTimer) clearTimeout(reconnectTimer);
-    if (ws) ws.onclose = null; // don't reconnect on our own way out
-});
-
-// ═══════════════════════════════════════════════════════════════
-//  SEND (REST — works even if the websocket above is down) / REFRESH / CLEAR
-// ═══════════════════════════════════════════════════════════════
-const composeText = document.getElementById('composeText');
-
-function sendMessage() {
-    const text = composeText.value.trim();
-    if (!text) return;
-    composeText.value = '';
-
-    fetch('/messages/api/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: text, sender: currentName(), clientId: clientId })
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-        if (data.status === 'ok') appendMessage(data.message); // show immediately even if our own ws is offline
-    })
-    .catch(function () {
-        alert('Could not send — check that both devices are still on the same network.');
-    });
-}
-
-composeText.addEventListener('keydown', function (e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        sendMessage();
-    }
-});
-
-function refreshHistory() {
-    fetch('/messages/api/history')
-        .then(function (r) { return r.json(); })
-        .then(renderAll)
-        .catch(function () {
-            alert('Could not reach the server to refresh.');
+function submitText() {
+    const text = el.value;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(text);
+    } else {
+        fetch('/messages/api/text', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text })
         });
+    }
 }
 
-function clearHistory() {
-    if (!confirm('Clear the message history on both devices?')) return;
-    fetch('/messages/api/clear', { method: 'POST' })
-        .then(function () { renderAll([]); });
+function refreshText() {
+    fetch('/messages/api/text')
+        .then(r => r.json())
+        .then(data => { el.value = data.text; });
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  INIT
-// ═══════════════════════════════════════════════════════════════
-refreshHistory();
+refreshText();
 </script>
 {% endblock %}

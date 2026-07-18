@@ -63,6 +63,37 @@ def delete_note():
     return jsonify({'status': 'ok'})
 
 
+@bp.route('/notes/search')
+def search_notes():
+    """Simple case-insensitive substring search across note filenames and
+    file content. Returns the list of matching note paths — highlighting
+    and scroll-to-match are handled client-side once a note is loaded."""
+    query = request.args.get('q', '').strip().lower()
+    if not query:
+        return jsonify({'matches': []})
+
+    matches = []
+    for root, _dirs, filenames in os.walk(NOTES_FOLDER):
+        for filename in filenames:
+            if not filename.endswith('.md'):
+                continue
+            full_path = os.path.join(root, filename)
+            rel = os.path.relpath(full_path, NOTES_FOLDER).replace('\\', '/')
+
+            if query in rel.lower():
+                matches.append(rel)
+                continue
+
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    if query in f.read().lower():
+                        matches.append(rel)
+            except Exception:
+                pass
+
+    return jsonify({'matches': sorted(matches)})
+
+
 def _convert_wiki_link(match):
     """[[Note Name]] or [[Note Name|Display Text]] -> [Display Text](note:Note Name)"""
     inner = match.group(1).strip()

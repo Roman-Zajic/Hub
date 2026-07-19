@@ -1,0 +1,471 @@
+{% extends 'layout.html' %}
+{% block module_name %}Audio Notes{% endblock %}
+
+{% block extra_css %}
+<style>
+    .an-root {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        height: 100%;
+        min-height: 0;
+    }
+
+    /* ── Toolbar ──────────────────────────────────────────── */
+    .an-toolbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        background: var(--surface-card);
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+        box-shadow: var(--shadow);
+        padding: 12px;
+        flex-shrink: 0;
+        flex-wrap: wrap;
+    }
+
+    .btn-toggle {
+        display: inline-flex; align-items: center; gap: 8px;
+        /* Text buttons get their height from the font's line-height (1x
+           font-size here); an icon-only button has no text content to
+           establish that same line box, so without an explicit floor it
+           renders a couple pixels shorter than its siblings. min-height
+           matches the .btn base: font-size (0.875rem) + 9px top/bottom
+           padding on each side. */
+        min-height: calc(0.875rem + 18px);
+    }
+    .an-dot {
+        width: 9px; height: 9px; border-radius: 50%;
+        background: var(--border);
+        flex-shrink: 0;
+        transition: background 130ms;
+    }
+    .btn-toggle.active {
+        background: var(--red);
+        border-color: var(--red);
+        color: #fff;
+    }
+    .btn-toggle.active:hover { background: #A01830; border-color: #A01830; }
+    .btn-toggle.active .an-dot {
+        background: #fff;
+        animation: an-pulse 1.4s ease-in-out infinite;
+    }
+    @keyframes an-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+    /* Icon-only toggle (just the status dot, no text label) — used for
+       Daily Log so it reads as a quiet, always-there background indicator
+       rather than another primary action button. */
+    .an-icon-only {
+        padding: 9px 12px;
+        gap: 6px;
+    }
+    .btn-toggle.has-error .an-dot { background: var(--amber); }
+    .btn-toggle.has-error.active .an-dot { background: var(--amber); animation: none; }
+
+    /* Small spinner shown inline on a toggle button while its current
+       utterance is actively being transcribed. */
+    .an-spinner {
+        width: 12px; height: 12px;
+        border: 2px solid rgba(0,90,90,.25);
+        border-top-color: var(--teal-700);
+        border-radius: 50%;
+        display: none;
+        flex-shrink: 0;
+        animation: an-spin .8s linear infinite;
+    }
+    .btn-toggle.active .an-spinner {
+        border-color: rgba(255,255,255,.35);
+        border-top-color: #fff;
+    }
+    .btn-toggle.processing .an-spinner { display: inline-block; }
+    @keyframes an-spin { to { transform: rotate(360deg); } }
+
+    .an-queue-badge {
+        font-size: 0.6875rem;
+        opacity: .85;
+        white-space: nowrap;
+    }
+
+    .an-rec-time {
+        font-variant-numeric: tabular-nums;
+        font-size: 0.8125rem;
+        white-space: nowrap;
+    }
+
+    /* Drag-over highlight on the textarea itself */
+    .an-textarea.drag-over {
+        border-color: var(--teal-700);
+        box-shadow: 0 0 0 3px rgba(0,130,130,.25);
+        background: var(--surface-in);
+    }
+
+    .an-upload-status {
+        font-size: 0.75rem; color: var(--amber); font-weight: 600;
+        display: none; align-items: center; gap: 6px; white-space: nowrap;
+    }
+    .an-upload-status.show { display: inline-flex; }
+    .an-upload-status .an-spinner { display: inline-block; border-color: rgba(225,160,30,.3); border-top-color: var(--amber); }
+
+    .an-model-picker { display: flex; align-items: center; gap: 8px; }
+    .an-model-picker label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+    .an-model-select {
+        font-family: var(--font); font-size: 0.8125rem; color: var(--text);
+        background: var(--surface-card); border: 1px solid var(--border);
+        border-radius: 6px; padding: 7px 10px; outline: none; cursor: pointer;
+        transition: border-color 130ms;
+        /* Sized to fit the longest option label in full (currently the
+           Distil Large v3 entry, ~62 characters) so the select never
+           truncates whichever model is selected. +4ch buffer covers the
+           built-in dropdown arrow and proportional-font width variance
+           that a plain ch-based estimate doesn't fully account for. */
+        width: 66ch;
+    }
+    .an-model-select:hover { border-color: var(--teal-700); }
+    .an-model-select:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+    .an-model-loading {
+        font-size: 0.75rem; color: var(--amber); font-weight: 600;
+        display: none; align-items: center; gap: 6px; white-space: nowrap;
+    }
+    .an-model-loading.show { display: inline-flex; }
+    .an-model-loading .an-spinner { display: inline-block; border-color: rgba(225,160,30,.3); border-top-color: var(--amber); }
+
+    .an-spacer { flex: 1; }
+    .an-status {
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        min-width: 50px;
+        text-align: right;
+    }
+
+    /* ── Textarea ─────────────────────────────────────────── */
+    .an-textarea-wrap { flex: 1; min-height: 0; display: flex; }
+    .an-textarea {
+        flex: 1;
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+        padding: 18px;
+        font-family: var(--font);
+        font-size: 0.9375rem;
+        color: var(--text);
+        background: var(--surface-card);
+        outline: none;
+        resize: none;
+        line-height: 1.7;
+        box-shadow: var(--shadow);
+        transition: border-color 130ms, box-shadow 130ms;
+    }
+    .an-textarea:hover { border-color: var(--teal-700); }
+    .an-textarea:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+    .an-textarea::placeholder { color: #7A9E9E; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="an-root">
+
+    <div class="an-toolbar">
+        <button class="btn btn-outline btn-toggle{{ ' active' if mic_active else '' }}" id="micBtn" onclick="toggleMic()">
+            <span class="an-dot"></span> Mic
+            <span class="an-spinner" aria-hidden="true"></span>
+            <span class="an-queue-badge" id="micQueue"></span>
+        </button>
+        <button class="btn btn-outline btn-toggle{{ ' active' if system_active else '' }}" id="sysBtn" onclick="toggleSystem()">
+            <span class="an-dot"></span> System Audio
+            <span class="an-spinner" aria-hidden="true"></span>
+            <span class="an-queue-badge" id="sysQueue"></span>
+        </button>
+        <button class="btn btn-outline btn-toggle{{ ' active' if recording_active else '' }}" id="recordBtn" onclick="toggleRecord()" title="Records mic + system audio together into one WAV file">
+            <span class="an-dot"></span> Record
+            <span class="an-rec-time" id="recTime"></span>
+        </button>
+
+        <div class="an-model-picker">
+            <label for="modelSelect">Model</label>
+            <select class="an-model-select" id="modelSelect" onchange="changeModel()">
+                {% for value, label in available_models %}
+                <option value="{{ value }}"{{ ' selected' if value == current_model else '' }}>{{ label }}</option>
+                {% endfor %}
+            </select>
+            <span class="an-model-loading" id="modelLoading">
+                <span class="an-spinner" aria-hidden="true"></span> Loading model&hellip;
+            </span>
+        </div>
+
+        <div class="an-spacer"></div>
+
+        <span class="an-upload-status" id="uploadStatus">
+            <span class="an-spinner" aria-hidden="true"></span> Transcribing file&hellip;
+        </span>
+        <span class="an-status" id="saveStatus"></span>
+        <button class="btn btn-outline" onclick="triggerUpload()">Upload File</button>
+        <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none" onchange="handleFileInput(event)">
+        <button class="btn btn-outline" onclick="copyNotes(this)">Copy</button>
+        <button class="btn btn-danger" onclick="clearNotes()">Clear</button>
+        <button class="btn btn-outline btn-toggle an-icon-only{{ ' active' if daily_active else '' }}" id="dailyBtn" onclick="toggleDaily()" title="Daily Log — always-on background mic + system-audio journal, transcribes your whole day to Audio Notes Data/Daily Notes/, tagged Mic/Sys and timestamped">
+            <span class="an-dot"></span>
+            <span class="an-spinner" aria-hidden="true"></span>
+            <span class="an-queue-badge" id="dailyQueue"></span>
+        </button>
+    </div>
+
+    <div class="an-textarea-wrap">
+        <textarea
+            class="an-textarea"
+            id="notesArea"
+            placeholder="Transcribed audio will appear here as you capture it. This box is also a free sandbox — type or edit anything you like; it's saved automatically and kept across restarts. You can also drag an audio or video file in here to transcribe it."
+            oninput="scheduleSave()"
+        >{{ content }}</textarea>
+    </div>
+
+</div>
+
+<script>
+    var ta = document.getElementById('notesArea');
+    var micBtn = document.getElementById('micBtn');
+    var sysBtn = document.getElementById('sysBtn');
+    var micQueueEl = document.getElementById('micQueue');
+    var sysQueueEl = document.getElementById('sysQueue');
+    var recordBtn = document.getElementById('recordBtn');
+    var recTimeEl = document.getElementById('recTime');
+    var dailyBtn = document.getElementById('dailyBtn');
+    var dailyQueueEl = document.getElementById('dailyQueue');
+    var statusEl = document.getElementById('saveStatus');
+    var modelSelect = document.getElementById('modelSelect');
+    var modelLoadingEl = document.getElementById('modelLoading');
+    var uploadStatusEl = document.getElementById('uploadStatus');
+    var fileInput = document.getElementById('fileInput');
+    var saveTimer = null;
+    var recordingStartedAt = null;   // epoch ms from the server, or null
+
+    // ── Model switching ──────────────────────────────────────
+    // Just tells the server which model to use next; the (possibly slow,
+    // first-download) load happens lazily on the server the next time a
+    // capture thread needs to transcribe something, and is reflected via
+    // the "model_loading" flag picked up by pollTranscript() below.
+    function changeModel() {
+        var model = modelSelect.value;
+        modelSelect.disabled = true;
+        fetch('/api/audio_notes/model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: model })
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.status === 'error') alert(d.message || 'Could not switch model.');
+            })
+            .finally(function () { modelSelect.disabled = false; });
+    }
+
+    // ── Save (debounced autosave + explicit save after append/clear) ──
+    function scheduleSave() {
+        statusEl.textContent = 'Saving\u2026';
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveNotes, 800);
+    }
+
+    function saveNotes() {
+        clearTimeout(saveTimer);
+        fetch('/api/audio_notes/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ content: ta.value })
+        }).then(function () {
+            statusEl.textContent = 'Saved';
+            setTimeout(function () { statusEl.textContent = ''; }, 1500);
+        }).catch(function () {
+            statusEl.textContent = 'Save failed';
+        });
+    }
+
+    // ── Toggle buttons ──────────────────────────────────────
+    function setToggleState(btn, active) {
+        btn.classList.toggle('active', active);
+    }
+
+    function toggleMic() {
+        micBtn.disabled = true;
+        fetch('/api/audio_notes/mic/toggle', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                setToggleState(micBtn, d.active);
+                if (d.status === 'error') alert(d.message || 'Could not toggle microphone capture.');
+            })
+            .finally(function () { micBtn.disabled = false; });
+    }
+
+    function toggleSystem() {
+        sysBtn.disabled = true;
+        fetch('/api/audio_notes/system/toggle', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                setToggleState(sysBtn, d.active);
+                if (d.status === 'error') alert(d.message || 'Could not toggle system audio capture.');
+            })
+            .finally(function () { sysBtn.disabled = false; });
+    }
+
+    // ── Recording (mic + system audio -> single WAV file) ──
+    function toggleRecord() {
+        recordBtn.disabled = true;
+        fetch('/api/audio_notes/record/toggle', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                setToggleState(recordBtn, d.active);
+                if (d.status === 'error') alert(d.message || 'Could not toggle recording.');
+            })
+            .finally(function () { recordBtn.disabled = false; });
+    }
+
+    function updateRecordingTimer() {
+        if (recordingStartedAt == null) {
+            recTimeEl.textContent = '';
+            return;
+        }
+        var secs = Math.max(0, Math.floor((Date.now() - recordingStartedAt) / 1000));
+        var m = Math.floor(secs / 60), s = secs % 60;
+        recTimeEl.textContent = m + ':' + (s < 10 ? '0' : '') + s;
+    }
+    setInterval(updateRecordingTimer, 500);
+
+    // ── Daily Log (always-on background mic + system journal) ──
+    // On by default (started automatically on the server at app startup);
+    // this just lets you pause/resume it. Writes straight to
+    // Audio Notes Data/Daily Notes/YYYY-MM-DD.txt — it never touches the
+    // textarea above.
+    function toggleDaily() {
+        dailyBtn.disabled = true;
+        fetch('/api/audio_notes/daily/toggle', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                setToggleState(dailyBtn, d.active);
+                if (d.status === 'error') alert(d.message || 'Could not toggle the Daily Log.');
+            })
+            .finally(function () { dailyBtn.disabled = false; });
+    }
+
+    // ── Upload / drag-and-drop file transcription ───────────
+    function triggerUpload() { fileInput.click(); }
+
+    function handleFileInput(e) {
+        var files = e.target.files;
+        if (files && files.length) uploadFile(files[0]);
+        fileInput.value = '';  // allow re-selecting the same file next time
+    }
+
+    function uploadFile(file) {
+        uploadStatusEl.classList.add('show');
+        var form = new FormData();
+        form.append('file', file);
+        fetch('/api/audio_notes/transcribe_file', { method: 'POST', body: form })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.status === 'error') {
+                    alert(d.message || 'Could not transcribe that file.');
+                    return;
+                }
+                var atBottom = (ta.scrollTop + ta.clientHeight) >= (ta.scrollHeight - 4);
+                var sep = (ta.value && !/\s$/.test(ta.value)) ? '\n' : '';
+                ta.value += sep + d.text;
+                if (atBottom) ta.scrollTop = ta.scrollHeight;
+                saveNotes();
+            })
+            .catch(function () {
+                alert('Upload failed — check your connection and try again.');
+            })
+            .finally(function () {
+                uploadStatusEl.classList.remove('show');
+            });
+    }
+
+    ta.addEventListener('dragover', function (e) {
+        e.preventDefault();
+        ta.classList.add('drag-over');
+    });
+    ta.addEventListener('dragleave', function () {
+        ta.classList.remove('drag-over');
+    });
+    ta.addEventListener('drop', function (e) {
+        e.preventDefault();
+        ta.classList.remove('drag-over');
+        if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+            uploadFile(e.dataTransfer.files[0]);
+        }
+    });
+
+    // ── Clear / Copy ────────────────────────────────────────
+    function clearNotes() {
+        if (!confirm('Clear all captured/typed text? This cannot be undone.')) return;
+        ta.value = '';
+        saveNotes();
+    }
+
+    function copyNotes(btn) {
+        var text = ta.value;
+        var flash = function () {
+            var original = btn.textContent;
+            btn.textContent = 'Copied!';
+            setTimeout(function () { btn.textContent = original; }, 1500);
+        };
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(flash).catch(function () { fallbackCopy(text); flash(); });
+        } else {
+            fallbackCopy(text);
+            flash();
+        }
+    }
+
+    function fallbackCopy(text) {
+        var el = document.createElement('textarea');
+        el.value = text;
+        el.style.position = 'fixed';
+        el.style.opacity = '0';
+        document.body.appendChild(el);
+        el.select();
+        try { document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(el);
+    }
+
+    // ── Poll for newly-transcribed text + status ─────────────
+    // Appends at the end only, so it never disturbs whatever the user is
+    // editing elsewhere in the textarea. Auto-scrolls only if the view was
+    // already scrolled to the bottom. Also drives the toggle buttons' active
+    // state, their "currently transcribing" spinners, and the model-loading
+    // indicator, so the UI always reflects what the server is actually doing.
+    function pollTranscript() {
+        fetch('/api/audio_notes/poll')
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.pending) {
+                    var atBottom = (ta.scrollTop + ta.clientHeight) >= (ta.scrollHeight - 4);
+                    var sep = (ta.value && !/\s$/.test(ta.value)) ? ' ' : '';
+                    ta.value += sep + d.pending;
+                    if (atBottom) ta.scrollTop = ta.scrollHeight;
+                    saveNotes();
+                }
+                setToggleState(micBtn, d.mic_active);
+                setToggleState(sysBtn, d.system_active);
+                micBtn.classList.toggle('processing', !!d.mic_processing);
+                sysBtn.classList.toggle('processing', !!d.system_processing);
+                micQueueEl.textContent = d.mic_queue_depth > 0 ? '(' + d.mic_queue_depth + ' queued)' : '';
+                sysQueueEl.textContent = d.system_queue_depth > 0 ? '(' + d.system_queue_depth + ' queued)' : '';
+                modelLoadingEl.classList.toggle('show', !!d.model_loading);
+
+                setToggleState(recordBtn, d.recording_active);
+                recordingStartedAt = d.recording_active ? d.recording_started_at : null;
+                if (!d.recording_active) recTimeEl.textContent = '';
+
+                setToggleState(dailyBtn, d.daily_active);
+                dailyBtn.classList.toggle('processing', !!d.daily_processing);
+                dailyQueueEl.textContent = d.daily_queue_depth > 0 ? '(' + d.daily_queue_depth + ' queued)' : '';
+                dailyBtn.classList.toggle('has-error', !!d.daily_error);
+                dailyBtn.title = d.daily_error
+                    ? 'Daily Log error: ' + d.daily_error
+                    : 'Daily Log — always-on background mic + system-audio journal, transcribes your whole day to Audio Notes Data/Daily Notes/, tagged Mic/Sys and timestamped';
+            });
+    }
+
+    setInterval(pollTranscript, 1000);
+</script>
+{% endblock %}

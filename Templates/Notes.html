@@ -8,11 +8,7 @@
 
     /* ── File Tree ─────────────────────────────────────────── */
     .file-panel { background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
-    .search-box { padding: 10px 10px 0; flex-shrink: 0; }
-    .search-box .input { width: 100%; font-size: 0.8125rem; padding: 7px 10px; }
     .file-list { flex: 1; overflow-y: auto; padding: 12px; }
-    .search-empty { color: var(--text-muted); font-size: 0.8125rem; padding: 10px 4px; }
-    mark { background: var(--amber); color: var(--ink); border-radius: 2px; padding: 0 1px; }
     .new-note-btn { margin: 10px; padding: 8px; border: 1px dashed var(--teal-700); background: none; color: var(--text-muted); cursor: pointer; border-radius: 4px; font-size: 0.75rem; font-family: var(--font); transition: background 130ms, color 130ms; }
     .new-note-btn:hover { background: var(--surface-in); color: var(--text); }
 
@@ -66,28 +62,8 @@
     .preview-area h1 { font-size: 1.75rem; }
     .preview-area h2 { font-size: 1.375rem; }
     .preview-area h3 { font-size: 1.125rem; }
-
-    /* Collapsible H1 sections — expanded by default */
-    .h1-section + .h1-section { margin-top: 12px; }
-    .h1-header { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
-    .h1-header h1 { flex: 1; margin: 0; }
-    .h1-chevron { width: 20px; height: 20px; flex-shrink: 0; color: var(--teal-400); transition: transform 200ms ease; }
-    .h1-section:not(.expanded) .h1-chevron { transform: rotate(-90deg); }
-    .h1-section:not(.expanded) .h1-body { display: none; }
     .preview-area ul, .preview-area ol { margin: 0; padding-left: 2em; }
     .preview-area li { margin: 0.25em 0; }
-    .preview-area ul:not(:has(input[type="checkbox"])) { list-style: none; padding-left: 1.4em; }
-    .preview-area ul:not(:has(input[type="checkbox"])) > li { position: relative; }
-    .preview-area ul:not(:has(input[type="checkbox"])) > li::before {
-        content: '';
-        position: absolute;
-        left: -1.15em;
-        top: 0.55em;
-        width: 8px;
-        height: 8px;
-        border-radius: 2px;
-        background: var(--teal-700);
-    }
     .preview-area hr { border: none; height: 2px; background: var(--border); margin: 0; border-radius: 2px; }
     .preview-area blockquote { margin: 0; padding-left: 16px; border-left: 4px solid var(--amber); font-style: italic; color: var(--text-muted); }
     .preview-area .toc { background: var(--surface-in); border: 1px solid var(--border); border-radius: var(--r); padding: 16px; margin: 0; display: inline-block; min-width: 240px; }
@@ -112,8 +88,8 @@
     .preview-area li:has(input[type="checkbox"]) { list-style: none; display: flex; align-items: flex-start; gap: 8px; }
     .preview-area input[type="checkbox"] { margin-top: 5px; pointer-events: none; }
 
-    .preview-area table { width: fit-content; max-width: 100%; margin: 0; font-size: 0.875rem; background: var(--surface-card); border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: 0; box-shadow: var(--shadow); }
-    .preview-area th { background: var(--teal-900); color: #fff; font-weight: 600; text-align: left; padding: 10px 16px; border-right: 1px solid var(--teal-700); border-bottom: 2px solid var(--teal-900); font-size: 0.8125rem; }
+    .preview-area table { width: fit-content; max-width: 100%; margin: 0; font-size: 0.875rem; background: var(--surface-card); border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; box-shadow: var(--shadow); }
+    .preview-area th { background: var(--surface-in); color: var(--text); font-weight: 600; text-align: left; padding: 10px 16px; border-right: 1px solid var(--border); border-bottom: 2px solid var(--border); font-size: 0.8125rem; }
     .preview-area td { padding: 10px 16px; color: var(--text); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
     .preview-area th:last-child, .preview-area td:last-child { border-right: none; }
     .preview-area tr:last-child td { border-bottom: none; }
@@ -135,9 +111,6 @@
 {% block content %}
 <div class="notes-layout">
     <div class="file-panel">
-        <div class="search-box">
-            <input type="text" id="noteSearch" class="input" placeholder="Search notes…" oninput="onSearchInput()">
-        </div>
         <div class="file-list" id="treeRoot">
             <div class="folder-header expanded" id="rootHeader">Notes</div>
             <div class="folder-content expanded" id="rootFiles"></div>
@@ -169,10 +142,6 @@
     let isPreview = true;
     let isNew = false;
 
-    let searchQuery = '';
-    let matchingFiles = null; // null = no active search filter; otherwise a Set of paths
-    let searchDebounce = null;
-
     const elContent = document.getElementById('noteContent');
     const elPreview = document.getElementById('previewArea');
     const elTitle = document.getElementById('noteTitle');
@@ -187,34 +156,25 @@
         root.innerHTML = '';
         const folders = {};
         const loose = [];
-        const visibleFiles = matchingFiles ? files.filter(f => matchingFiles.has(f)) : files;
-        visibleFiles.forEach(path => {
+        files.forEach(path => {
             const parts = path.split('/');
             const label = parts.at(-1).replace('.md', '');
             if (parts.length > 1) { (folders[parts[0]] ??= []).push({ path, label }); }
             else { loose.push({ path, label }); }
         });
-        // While a search is active, force every folder open so matches are
-        // visible without the user needing to expand them manually.
-        const forceOpen = !!matchingFiles;
         Object.keys(folders).sort().forEach(name => {
             const group = document.createElement('div');
-            const cls = forceOpen ? ' expanded' : '';
-            group.innerHTML = `<div class="folder-header${cls}" onclick="toggleFolder(this,'${name}')">${name}</div><div class="folder-content${cls}" id="f-${name}"></div>`;
+            group.innerHTML = `<div class="folder-header" onclick="toggleFolder(this,'${name}')">${name}</div><div class="folder-content" id="f-${name}"></div>`;
             root.appendChild(group);
             folders[name].forEach(f => appendFileEl(document.getElementById(`f-${name}`), f.path, f.label));
         });
         loose.forEach(f => appendFileEl(root, f.path, f.label));
-
-        if (matchingFiles && !visibleFiles.length) {
-            root.insertAdjacentHTML('beforeend', '<div class="search-empty">No matching notes</div>');
-        }
     }
 
     function appendFileEl(parent, path, label) {
         const el = document.createElement('div');
         el.className = 'file-item';
-        el.innerHTML = matchingFiles ? highlightText(label, searchQuery) : escapeHtml(label);
+        el.textContent = label;
         el.title = label;
         el.dataset.path = path;
         if (path === originalPath) el.classList.add('active');
@@ -227,98 +187,7 @@
         document.getElementById(`f-${name}`).classList.toggle('expanded');
     }
 
-    // ── Search ────────────────────────────────────────────
-    function escapeHtml(s) {
-        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    }
-
-    function escapeRegExp(s) {
-        return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    }
-
-    // Wraps matches of `query` inside `text` with <mark> for the file-tree labels.
-    function highlightText(text, query) {
-        const escaped = escapeHtml(text);
-        if (!query) return escaped;
-        const re = new RegExp('(' + escapeRegExp(escapeHtml(query)) + ')', 'ig');
-        return escaped.replace(re, '<mark>$1</mark>');
-    }
-
-    // Walks the rendered note preview and wraps every occurrence of `query`
-    // in a <mark class="search-hit">, returning the first mark found (or
-    // null). This runs against the live DOM so it works regardless of the
-    // markdown structure (headings, lists, tables, code, etc).
-    function highlightMatches(root, query) {
-        if (!query) return null;
-        const q = query.toLowerCase();
-        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-        const textNodes = [];
-        let node;
-        while ((node = walker.nextNode())) {
-            if (node.nodeValue && node.nodeValue.toLowerCase().includes(q)) textNodes.push(node);
-        }
-
-        let firstMark = null;
-        textNodes.forEach(node => {
-            const text = node.nodeValue;
-            const lower = text.toLowerCase();
-            const frag = document.createDocumentFragment();
-            let lastIndex = 0, idx;
-            while ((idx = lower.indexOf(q, lastIndex)) !== -1) {
-                if (idx > lastIndex) frag.appendChild(document.createTextNode(text.slice(lastIndex, idx)));
-                const mark = document.createElement('mark');
-                mark.className = 'search-hit';
-                mark.textContent = text.slice(idx, idx + query.length);
-                frag.appendChild(mark);
-                if (!firstMark) firstMark = mark;
-                lastIndex = idx + query.length;
-            }
-            if (lastIndex < text.length) frag.appendChild(document.createTextNode(text.slice(lastIndex)));
-            node.parentNode.replaceChild(frag, node);
-        });
-        return firstMark;
-    }
-
-    function clearHighlights(root) {
-        root.querySelectorAll('mark.search-hit').forEach(m => {
-            m.replaceWith(document.createTextNode(m.textContent));
-        });
-        root.normalize();
-    }
-
-    // Re-applies highlighting to whatever note is currently on screen,
-    // without re-fetching it or scrolling — used while the user is still typing.
-    function refreshPreviewHighlight() {
-        if (!isPreview) return;
-        clearHighlights(elPreview);
-        if (searchQuery) highlightMatches(elPreview, searchQuery);
-    }
-
-    function onSearchInput() {
-        const val = document.getElementById('noteSearch').value.trim();
-        clearTimeout(searchDebounce);
-        searchDebounce = setTimeout(() => runSearch(val), 200);
-    }
-
-    function runSearch(query) {
-        searchQuery = query;
-        if (!query) {
-            matchingFiles = null;
-            buildTree();
-            refreshPreviewHighlight();
-            return;
-        }
-        fetch('/notes/search?q=' + encodeURIComponent(query))
-            .then(r => r.json())
-            .then(({ matches }) => {
-                matchingFiles = new Set(matches);
-                buildTree();
-                refreshPreviewHighlight();
-            });
-    }
-
-    function setMode(mode, opts) {
-        opts = opts || {};
+    function setMode(mode) {
         isPreview = mode === 'preview';
         if (isPreview) {
             fetch('/notes/preview', {
@@ -329,15 +198,8 @@
             .then(r => r.json())
             .then(({ html }) => {
                 elPreview.innerHTML = html;
-                attachH1Sections();
                 attachCopyButtons();
                 attachNoteLinks();
-                if (searchQuery) {
-                    const firstMatch = highlightMatches(elPreview, searchQuery);
-                    if (opts.scrollToMatch && firstMatch) {
-                        firstMatch.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    }
-                }
                 elContent.style.display = 'none';
                 elPreview.style.display = 'block';
                 elToggleBtn.textContent = 'Edit';
@@ -351,51 +213,6 @@
     }
 
     function toggleMode() { setMode(isPreview ? 'edit' : 'preview'); }
-
-    function attachH1Sections() {
-        // Groups everything between one <h1> and the next (or the end of the
-        // note) into a collapsible section, expanded by default.
-        const nodes = Array.from(elPreview.childNodes);
-        const frag = document.createDocumentFragment();
-        let body = null;
-
-        nodes.forEach(node => {
-            if (node.nodeType === 1 && node.tagName === 'H1') {
-                const section = document.createElement('div');
-                section.className = 'h1-section expanded';
-
-                const header = document.createElement('div');
-                header.className = 'h1-header';
-
-                const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-                chevron.setAttribute('class', 'h1-chevron');
-                chevron.setAttribute('viewBox', '0 0 18 18');
-                chevron.setAttribute('fill', 'none');
-                chevron.setAttribute('stroke', 'currentColor');
-                chevron.setAttribute('stroke-width', '2');
-                chevron.setAttribute('stroke-linecap', 'round');
-                chevron.innerHTML = '<polyline points="4 7 9 12 14 7"></polyline>';
-
-                header.appendChild(chevron);
-                header.appendChild(node); // moves the existing <h1> node
-                header.onclick = () => section.classList.toggle('expanded');
-
-                body = document.createElement('div');
-                body.className = 'h1-body';
-
-                section.appendChild(header);
-                section.appendChild(body);
-                frag.appendChild(section);
-            } else if (body) {
-                body.appendChild(node);
-            } else {
-                frag.appendChild(node);
-            }
-        });
-
-        elPreview.innerHTML = '';
-        elPreview.appendChild(frag);
-    }
 
     function attachCopyButtons() {
         elPreview.querySelectorAll('pre:not(:has(.copy-code-btn))').forEach(pre => {
@@ -465,7 +282,7 @@
                 elPath.textContent = (activeFolder || 'Notes') + ' /';
                 elStatus.textContent = '';
                 elDelBtn.style.display = 'flex';
-                setMode('preview', { scrollToMatch: true });
+                setMode('preview');
             });
     }
 

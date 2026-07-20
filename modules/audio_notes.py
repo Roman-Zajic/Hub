@@ -24,6 +24,7 @@ freeze the rest of the app (including this module's own live polling) for
 the duration of that request. Add threaded=True to the app.run(...) call
 in app.py to avoid that.
 """
+import ctypes
 import os
 import queue
 import threading
@@ -61,17 +62,6 @@ WHISPER_DEVICE = 'cpu'
 WHISPER_COMPUTE_TYPE = 'int8'
 FILE_TRANSCRIBE_BEAM_SIZE = 5     # uploaded files are offline/batch, so it's worth spending more compute for quality
 
-# The Daily Log (always-on background mic + system-audio journal) always
-# uses this specific lightweight model, regardless of whatever the user has picked in the
-# dropdown for interactive Mic/System capture — it needs to stay cheap since
-# it's meant to run continuously, all day, in the background. It also uses a
-# much shorter max-utterance length than interactive capture: smaller chunks
-# mean each transcription job finishes faster and the file gets written to
-# more often, so it behaves like a continuous stream instead of large,
-# occasional, slow-to-process blocks.
-DAILY_LOG_MODEL = 'distil-small.en'
-DAILY_MAX_UTTERANCE_SECONDS = 8
-
 # Models selectable from the dropdown in the UI. distil-* and *.en models are
 # English-only. Roughly fastest/roughest -> slowest/most-accurate on CPU.
 AVAILABLE_MODELS = [
@@ -107,7 +97,24 @@ _state_lock = threading.Lock()    # guards thread/flag bookkeeping below
 # Live capture: a persistent queue per stream decouples audio reading from
 # transcription (see _capture_loop / _worker_loop below) — this is the fix
 # for audio being dropped while a chunk is transcribing.
-_mic_active = False
+#
+# Mic defaults to ON (auto-started in on_load() below) — this also drives
+# the Daily Log file: rather than a separate dedicated capture pipeline,
+# the daily file is just an extra output of this exact same interactive
+# capture path (see _emit_transcript below).
+#
+# System Audio defaults to OFF and must be started with a manual click.
+# This is deliberate: auto-starting WASAPI loopback from a background
+# thread at app boot has twice caused a hard process crash (an
+# unrecoverable native access violation, exit code -1073741819 /
+# 0xC0000005 — no Python traceback, since it's not a catchable exception)
+# — once via a dedicated daily system-audio thread, and again when System
+# was simply auto-started the same way Mic is here. Mic-only auto-start has
+# never triggered this. A manual click (which runs from a Flask request
+# thread, not at startup) has been reliably fine, same as Record already
+# works. If you want System Audio running continuously, just click it once
+# after the app starts.
+_mic_active = True
 _mic_capture_thread = None
 _mic_worker_thread = None
 _mic_stop_event = None
@@ -121,20 +128,6 @@ _system_queue = queue.Queue()
 
 _mic_processing = False       # True while a mic utterance is actively being transcribed
 _system_processing = False    # True while a system-audio utterance is actively being transcribed
-
-# Daily Log: an always-on (by default) background mic + system-audio
-# journal, independent of the interactive Mic/System buttons above — it
-# uses its own fixed lightweight model (DAILY_LOG_MODEL) and writes
-# straight to Daily Notes/YYYY-MM-DD.txt instead of the on-screen sandbox
-# textarea. Both sources feed the same queue/worker/file, tagged so each
-# line shows whether it came from the mic or from system audio.
-_daily_active = True   # on by default — started automatically in on_load()
-_daily_mic_capture_thread = None
-_daily_system_capture_thread = None
-_daily_worker_thread = None
-_daily_stop_event = None
-_daily_queue = queue.Queue()
-_daily_processing = False
 
 # Mic -> WAV recording (independent of live transcription capture above)
 _recording_active = False
@@ -156,9 +149,10 @@ def on_load():
     _content = _load_content()
     _cleanup_stale_content_tmp()
     _cleanup_stale_uploads()
-    # Daily Log defaults to on, capturing the whole day in the background —
-    # start it immediately rather than waiting for the user to toggle it.
-    _start_daily_log()
+    # Only Mic auto-starts here. System Audio deliberately does NOT — see
+    # the comment on _system_active above for why (it's the confirmed
+    # trigger for a hard process crash when auto-started this way).
+    _start_mic()
 
 
 # ── Error logging (never let a logging failure crash the caller) ─────
@@ -169,6 +163,33 @@ def _log_error(context):
             f.write(f'--- {time_module.strftime("%Y-%m-%d %H:%M:%S")} [{context}] ---\n')
             f.write(traceback.format_exc())
             f.write('\n')
+    except Exception:
+        pass
+
+
+# ── COM initialization for WASAPI threads ─────────────────────────────
+# pyaudiowpatch's WASAPI backend (used for both mic and, especially, system-
+# audio loopback) relies on COM internally. COM is initialized automatically
+# on a process's main thread in many contexts, but NOT on a plain
+# threading.Thread — calling into WASAPI from such a thread without first
+# initializing COM there can crash the ENTIRE PYTHON PROCESS outright (an
+# unrecoverable native access violation — no traceback, no exception to
+# catch, just the process disappearing) rather than raising anything
+# Python-level. Every thread that opens a pyaudiowpatch stream must call
+# _com_thread_init() first and _com_thread_uninit() when it's done.
+_COINIT_MULTITHREADED = 0x0
+
+
+def _com_thread_init():
+    try:
+        ctypes.windll.ole32.CoInitializeEx(None, _COINIT_MULTITHREADED)
+    except Exception:
+        _log_error('COM init')
+
+
+def _com_thread_uninit():
+    try:
+        ctypes.windll.ole32.CoUninitialize()
     except Exception:
         pass
 
@@ -224,10 +245,13 @@ def _save_content(text):
                 pass
 
 
-def _emit_transcript(text):
+def _emit_transcript(text, start_dt, end_dt, is_system):
     """Append newly-transcribed text to the authoritative content, persist
     it, and queue it so the next frontend poll can append it to the
-    on-screen textarea too."""
+    on-screen textarea too. Also appends the same text, timestamped and
+    tagged by source, to the day's Daily Log file — this is the entire
+    "Daily Log" now: not a separate capture pipeline, just an extra output
+    of this same, already-proven Mic/System capture path."""
     global _content
     if not text:
         return
@@ -236,6 +260,7 @@ def _emit_transcript(text):
         _content += sep + text
         _pending_chunks.append(text)
         _save_content(_content)
+    _append_daily_log(start_dt, end_dt, text, is_system)
 
 
 # ── Whisper model (lazy — (re)loaded on demand, one instance shared) ──
@@ -270,48 +295,6 @@ def _model_is_english_only(name):
     return 'distil' in name or name.endswith('.en')
 
 
-# The Daily Log always uses DAILY_LOG_MODEL, completely independent of
-# whatever the user picks in the dropdown for interactive Mic/System capture.
-_daily_model = None
-_daily_model_lock = threading.Lock()
-_daily_model_error = None        # last load-failure message, or None if healthy
-_daily_model_error_at = 0        # monotonic time of that failure, for the cooldown below
-_DAILY_MODEL_RETRY_COOLDOWN = 30  # seconds — avoid hammering a broken/slow load on every queued item
-
-
-def _get_daily_model():
-    """Loads DAILY_LOG_MODEL once and caches it. If loading fails (missing
-    dependency, no network to fetch the model, etc.), that failure is cached
-    too — for _DAILY_MODEL_RETRY_COOLDOWN seconds we raise immediately
-    instead of re-attempting a possibly-slow load for every single queued
-    utterance, which previously made a broken setup look like a stuck queue
-    that only trickled through one item at a time."""
-    global _daily_model, _daily_model_error, _daily_model_error_at
-    if _daily_model is not None:
-        return _daily_model
-
-    if _daily_model_error is not None:
-        if (time_module.monotonic() - _daily_model_error_at) < _DAILY_MODEL_RETRY_COOLDOWN:
-            raise RuntimeError(_daily_model_error)
-
-    with _daily_model_lock:
-        if _daily_model is not None:
-            return _daily_model
-        try:
-            from faster_whisper import WhisperModel
-            _daily_model = WhisperModel(
-                DAILY_LOG_MODEL,
-                device=WHISPER_DEVICE,
-                compute_type=WHISPER_COMPUTE_TYPE,
-            )
-            _daily_model_error = None
-        except Exception as exc:
-            _daily_model_error = f'{type(exc).__name__}: {exc}'
-            _daily_model_error_at = time_module.monotonic()
-            raise
-    return _daily_model
-
-
 # ── Audio helpers (numpy imported lazily so it's optional for the rest
 #    of the app if this module's dependencies aren't installed yet) ───
 
@@ -326,7 +309,7 @@ def _resample_linear(samples, orig_sr, target_sr):
     return np.interp(target_idx, orig_idx, samples).astype(np.float32)
 
 
-def _process_and_emit(label, raw_bytes, channels, rate):
+def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_system):
     """Transcribes one already-VAD-segmented utterance (live mic/system
     capture). Runs on a worker thread, never on the audio-reading thread —
     see _capture_loop / _worker_loop."""
@@ -345,7 +328,11 @@ def _process_and_emit(label, raw_bytes, channels, rate):
         # distil-* checkpoints, to stop them fixating on earlier chunk text.
         # vad_filter=True is a second, finer-grained pass inside Whisper
         # itself — belt-and-braces on top of the utterance-level VAD in
-        # _capture_loop, which is what stops silence from reaching here at all.
+        # _capture_loop, which is what stops silence from reaching here at
+        # all (and, for mic audio specifically, catches the ambient-noise
+        # false-triggers that would otherwise get hallucinated into short
+        # filler words like "Okay." / "Yeah." instead of correctly
+        # producing nothing).
         segments, _ = model.transcribe(
             samples,
             language=lang,
@@ -355,7 +342,7 @@ def _process_and_emit(label, raw_bytes, channels, rate):
         )
         text = ' '.join(seg.text.strip() for seg in segments).strip()
         if text:
-            _emit_transcript(text)
+            _emit_transcript(text, start_dt, end_dt, is_system)
     except Exception:
         _log_error(f'{label}: transcribe')
 
@@ -381,44 +368,6 @@ def _append_daily_log(start_dt, end_dt, text, is_system):
             f.write(line)
     except Exception:
         _log_error('daily log: append')
-
-
-def _daily_process_and_emit(raw_bytes, channels, rate, start_dt, end_dt, is_system):
-    """Like _process_and_emit, but always uses the fixed DAILY_LOG_MODEL and
-    writes straight to the day's Daily Notes file instead of the sandbox
-    textarea."""
-    global _daily_model_error, _daily_model_error_at
-    try:
-        import numpy as np
-        samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-        if channels > 1:
-            samples = samples.reshape(-1, channels).mean(axis=1)
-        samples = _resample_linear(samples, rate, 16000)
-
-        model = _get_daily_model()
-        # vad_filter=True matters here specifically for mic audio: mic picks
-        # up far more ambient room noise (hum, breathing, keyboard, HVAC)
-        # than a clean system-audio loopback does, and our own upstream
-        # RMS-threshold VAD in _capture_loop occasionally false-triggers on
-        # that noise. Whisper's own internal VAD is what recognizes "this
-        # buffer is actually just noise" and returns no segments — without
-        # it, those buffers get hallucinated into short filler words
-        # ("Okay.", "Yeah.", "Thank you.") instead of correctly producing
-        # nothing. This was previously turned off as a speed optimization
-        # based on a misdiagnosis (the real slowdown was a crashed worker
-        # thread, fixed separately) — it's worth the extra compute to not
-        # log hallucinated garbage.
-        segments, _ = model.transcribe(
-            samples,
-            language='en',
-            beam_size=1,
-            vad_filter=True,
-            condition_on_previous_text=False,
-        )
-        text = ' '.join(seg.text.strip() for seg in segments).strip()
-        _append_daily_log(start_dt, end_dt, text, is_system)
-    except Exception:
-        _log_error('daily: transcribe')
 
 
 def _load_wav_as_samples(path):
@@ -494,11 +443,13 @@ def _set_processing(label, value):
 # overflowing — a lagging transcript, never lost speech.
 
 def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds=VAD_MAX_UTTERANCE_SECONDS):
+    _com_thread_init()
     try:
         import pyaudiowpatch as pyaudio
         import numpy as np
     except ImportError:
         _log_error(f'{label}: pyaudiowpatch/numpy is not installed')
+        _com_thread_uninit()
         return
 
     p = None
@@ -617,6 +568,7 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
                 p.terminate()
         except Exception:
             pass
+        _com_thread_uninit()
 
 
 def _worker_loop(label, stop_event, in_queue):
@@ -626,7 +578,7 @@ def _worker_loop(label, stop_event, in_queue):
     finishes catching up on what's left, then exits."""
     while True:
         try:
-            raw, channels, rate, _start_dt, _end_dt, _is_system = in_queue.get(timeout=0.25)
+            raw, channels, rate, start_dt, end_dt, is_system = in_queue.get(timeout=0.25)
         except queue.Empty:
             if stop_event.is_set():
                 break
@@ -634,7 +586,7 @@ def _worker_loop(label, stop_event, in_queue):
 
         _set_processing(label, True)
         try:
-            _process_and_emit(label, raw, channels, rate)
+            _process_and_emit(label, raw, channels, rate, start_dt, end_dt, is_system)
         except Exception:
             _log_error(f'{label}: worker loop')
         finally:
@@ -642,38 +594,6 @@ def _worker_loop(label, stop_event, in_queue):
             in_queue.task_done()
 
     _set_processing(label, False)
-
-
-def _daily_worker_loop(stop_event, in_queue):
-    """Same drain-until-empty behavior as _worker_loop, but calls
-    _daily_process_and_emit (fixed model, writes to the day's log file) and
-    tracks its own _daily_processing flag. Drains a single shared queue fed
-    by both the mic and system-audio capture threads, so utterances from
-    either source get written in whatever order they actually finish in."""
-    global _daily_processing
-    while True:
-        try:
-            raw, channels, rate, start_dt, end_dt, is_system = in_queue.get(timeout=0.25)
-        except queue.Empty:
-            if stop_event.is_set():
-                break
-            continue
-
-        _daily_processing = True
-        try:
-            _daily_process_and_emit(raw, channels, rate, start_dt, end_dt, is_system)
-        except Exception:
-            # Belt-and-braces: _daily_process_and_emit already catches its
-            # own errors, but a worker thread that dies from one bad item
-            # (silently, since nothing was watching it) is exactly what
-            # caused the "queue stuck, nothing ever gets written" bug
-            # before — this guarantees the loop always continues.
-            _log_error('daily: worker loop')
-        finally:
-            _daily_processing = False
-            in_queue.task_done()
-
-    _daily_processing = False
 
 
 # ── Thread lifecycle: live mic / system capture ───────────────────────
@@ -722,36 +642,6 @@ def _stop_system():
         _system_capture_thread = None
 
 
-def _start_daily_log():
-    global _daily_mic_capture_thread, _daily_system_capture_thread, _daily_worker_thread, _daily_stop_event
-    with _state_lock:
-        if _daily_mic_capture_thread and _daily_mic_capture_thread.is_alive():
-            return
-        _daily_stop_event = threading.Event()
-        _daily_mic_capture_thread = threading.Thread(
-            target=_capture_loop,
-            args=('daily-mic', _daily_stop_event, False, _daily_queue, DAILY_MAX_UTTERANCE_SECONDS),
-            daemon=True)
-        _daily_system_capture_thread = threading.Thread(
-            target=_capture_loop,
-            args=('daily-system', _daily_stop_event, True, _daily_queue, DAILY_MAX_UTTERANCE_SECONDS),
-            daemon=True)
-        _daily_worker_thread = threading.Thread(
-            target=_daily_worker_loop, args=(_daily_stop_event, _daily_queue), daemon=True)
-        _daily_mic_capture_thread.start()
-        _daily_system_capture_thread.start()
-        _daily_worker_thread.start()
-
-
-def _stop_daily_log():
-    global _daily_mic_capture_thread, _daily_system_capture_thread
-    with _state_lock:
-        if _daily_stop_event:
-            _daily_stop_event.set()
-        _daily_mic_capture_thread = None
-        _daily_system_capture_thread = None
-
-
 # ── Mic -> WAV recording (independent of the live transcription above) ─
 
 def _next_recording_path():
@@ -785,11 +675,13 @@ RECORD_FRAME_SAMPLES = int(RECORD_MIX_RATE * RECORD_FRAME_SECONDS)
 def _record_reader_loop(label, stop_event, is_system, out_queue):
     """Continuously reads one device (mic or system loopback), resamples to
     RECORD_MIX_RATE mono, and pushes chunks to out_queue for the mixer."""
+    _com_thread_init()
     try:
         import pyaudiowpatch as pyaudio
         import numpy as np
     except ImportError:
         _log_error(f'{label}: pyaudiowpatch/numpy is not installed')
+        _com_thread_uninit()
         return
 
     p = None
@@ -849,6 +741,7 @@ def _record_reader_loop(label, stop_event, is_system, out_queue):
                 p.terminate()
         except Exception:
             pass
+        _com_thread_uninit()
 
 
 def _record_mixer_loop(stop_event, mic_queue, sys_queue, filepath):
@@ -987,7 +880,6 @@ def audio_notes_view():
         mic_active=_mic_active,
         system_active=_system_active,
         recording_active=_recording_active,
-        daily_active=_daily_active,
         available_models=AVAILABLE_MODELS,
         current_model=_selected_model_name,
     )
@@ -1014,10 +906,6 @@ def poll_route():
         'recording_active': _recording_active,
         'recording_started_at': (int(_recording_started_at * 1000) if _recording_active and _recording_started_at else None),
         'recording_file': (os.path.basename(_recording_path) if _recording_active and _recording_path else None),
-        'daily_active': _daily_active,
-        'daily_processing': _daily_processing,
-        'daily_queue_depth': _daily_queue.qsize(),
-        'daily_error': _daily_model_error,
     })
 
 
@@ -1064,31 +952,6 @@ def toggle_mic_route():
             'status': 'error',
             'active': False,
             'message': 'Could not start microphone capture. Make sure '
-                       'pyaudiowpatch and faster-whisper are installed and '
-                       'a microphone is available.',
-        })
-    return jsonify({'status': 'ok', 'active': active})
-
-
-@bp.route('/api/audio_notes/daily/toggle', methods=['POST'])
-def toggle_daily_route():
-    global _daily_active
-    with _state_lock:
-        _daily_active = not _daily_active
-        active = _daily_active
-    try:
-        if active:
-            _start_daily_log()
-        else:
-            _stop_daily_log()
-    except Exception:
-        _log_error('daily toggle')
-        with _state_lock:
-            _daily_active = False
-        return jsonify({
-            'status': 'error',
-            'active': False,
-            'message': 'Could not toggle the Daily Log. Make sure '
                        'pyaudiowpatch and faster-whisper are installed and '
                        'a microphone is available.',
         })

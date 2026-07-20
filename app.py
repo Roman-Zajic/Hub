@@ -80,4 +80,8 @@ def index():
 
 
 if __name__ == '__main__':
+    # threaded=True matters now: Audio Notes' file-upload transcription route
+    # can run for a while on a long video, and without this the dev server
+    # would freeze every other request (including this module's own live
+    # polling) until it finished.
     app.run(host='0.0.0.0', debug=True, port=5001, use_reloader=False, threaded=True)

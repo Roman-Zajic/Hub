@@ -7,6 +7,7 @@ app entirely — no changes to app.py or layout.html are needed either way.
 """
 import os
 import re
+from datetime import datetime
 
 import markdown
 from markdown_checklist.extension import ChecklistExtension
@@ -21,6 +22,35 @@ bp = Blueprint('notes', __name__)
 
 NOTES_FOLDER = os.path.join(os.getcwd(), 'Notes')
 os.makedirs(NOTES_FOLDER, exist_ok=True)
+
+# Daily notes live in their own dedicated folder inside Notes/, so they
+# show up in the tree like any other note but stay grouped together.
+DAILY_FOLDER_NAME = 'Daily'
+
+# ── Hidden metadata tag ──────────────────────────────────────────────
+# Every note gets a trailing HTML comment recording its creation and last
+# modification timestamps, e.g. <!--meta:created=...|modified=...-->.
+# It's added/updated here on the server only — load_note() strips it before
+# content ever reaches the editor, so it never shows up in the preview or
+# in the edit textarea. The only way to see or change it is to open the
+# .md file directly outside this app.
+_META_RE = re.compile(r'\n?<!--meta:created=(?P<created>[^|]*)\|modified=(?P<modified>.*?)-->\s*\Z', re.DOTALL)
+
+
+def _strip_meta(content):
+    return _META_RE.sub('', content)
+
+
+def _extract_meta(content):
+    m = _META_RE.search(content)
+    if m:
+        return m.group('created'), m.group('modified')
+    return None, None
+
+
+def _with_meta(content, created, modified):
+    stripped = _strip_meta(content).rstrip('\n')
+    return f'{stripped}\n\n<!--meta:created={created}|modified={modified}-->\n'
 
 
 # ── Page ─────────────────────────────────────────────────────────────
@@ -42,7 +72,8 @@ def notes_module():
 def load_note(filename):
     path = os.path.join(NOTES_FOLDER, filename)
     with open(path, 'r', encoding='utf-8') as f:
-        return jsonify({'content': f.read()})
+        content = f.read()
+    return jsonify({'content': _strip_meta(content)})
 
 
 @bp.route('/notes/save', methods=['POST'])
@@ -50,8 +81,21 @@ def save_note():
     data = request.json
     path = os.path.join(NOTES_FOLDER, data['filename'])
     os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    now = datetime.now().isoformat(timespec='seconds')
+    created = now
+    if os.path.exists(path):
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                existing_created, _ = _extract_meta(f.read())
+            if existing_created:
+                created = existing_created
+        except Exception:
+            pass
+
+    final_content = _with_meta(data['content'], created, now)
     with open(path, 'w', encoding='utf-8') as f:
-        f.write(data['content'])
+        f.write(final_content)
     return jsonify({'status': 'ok'})
 
 
@@ -63,13 +107,41 @@ def delete_note():
     return jsonify({'status': 'ok'})
 
 
+def _daily_template(date_str):
+    pretty = datetime.strptime(date_str, '%Y-%m-%d').strftime('%A, %d %B %Y')
+    return f'# {pretty}\n\n## Tasks\n- [ ] \n\n## Daily Notes\n\n'
+
+
+@bp.route('/notes/daily', methods=['POST'])
+def open_daily_note():
+    """Idempotent: returns today's daily note, creating it from a template
+    on first call each day and simply pointing to it on every later call."""
+    date_str = datetime.now().strftime('%Y-%m-%d')
+    rel_path = f'{DAILY_FOLDER_NAME}/{date_str}.md'
+    full_path = os.path.join(NOTES_FOLDER, DAILY_FOLDER_NAME, f'{date_str}.md')
+
+    created = False
+    if not os.path.exists(full_path):
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        now = datetime.now().isoformat(timespec='seconds')
+        content = _with_meta(_daily_template(date_str), now, now)
+        with open(full_path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        created = True
+
+    return jsonify({'path': rel_path, 'created': created})
+
+
 @bp.route('/notes/search')
 def search_notes():
-    """Simple case-insensitive substring search across note filenames and
-    file content. Returns the list of matching note paths — highlighting
-    and scroll-to-match are handled client-side once a note is loaded."""
+    """Case-insensitive substring search across note filenames and file
+    content, optionally narrowed to notes last modified within a date
+    range. Either a query, a date range, or both may be supplied."""
     query = request.args.get('q', '').strip().lower()
-    if not query:
+    date_from = request.args.get('from', '').strip()
+    date_to = request.args.get('to', '').strip()
+
+    if not query and not date_from and not date_to:
         return jsonify({'matches': []})
 
     matches = []
@@ -80,18 +152,50 @@ def search_notes():
             full_path = os.path.join(root, filename)
             rel = os.path.relpath(full_path, NOTES_FOLDER).replace('\\', '/')
 
-            if query in rel.lower():
-                matches.append(rel)
-                continue
-
             try:
                 with open(full_path, 'r', encoding='utf-8') as f:
-                    if query in f.read().lower():
-                        matches.append(rel)
+                    content = f.read()
             except Exception:
-                pass
+                continue
+
+            if date_from or date_to:
+                _, modified = _extract_meta(content)
+                mod_date = (modified or '')[:10]
+                if not mod_date:
+                    continue
+                if date_from and mod_date < date_from:
+                    continue
+                if date_to and mod_date > date_to:
+                    continue
+
+            if query:
+                if not (query in rel.lower() or query in _strip_meta(content).lower()):
+                    continue
+
+            matches.append(rel)
 
     return jsonify({'matches': sorted(matches)})
+
+
+@bp.route('/notes/meta')
+def notes_meta():
+    """Returns created/modified timestamps for every note — used by the
+    date-range calendar to show how many notes were touched on each day."""
+    result = []
+    for root, _dirs, filenames in os.walk(NOTES_FOLDER):
+        for filename in filenames:
+            if not filename.endswith('.md'):
+                continue
+            full_path = os.path.join(root, filename)
+            rel = os.path.relpath(full_path, NOTES_FOLDER).replace('\\', '/')
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            except Exception:
+                continue
+            created, modified = _extract_meta(content)
+            result.append({'path': rel, 'created': created, 'modified': modified})
+    return jsonify({'notes': result})
 
 
 def _convert_wiki_link(match):

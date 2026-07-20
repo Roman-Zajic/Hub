@@ -53,16 +53,6 @@
     }
     @keyframes an-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
 
-    /* Icon-only toggle (just the status dot, no text label) — used for
-       Daily Log so it reads as a quiet, always-there background indicator
-       rather than another primary action button. */
-    .an-icon-only {
-        padding: 9px 12px;
-        gap: 6px;
-    }
-    .btn-toggle.has-error .an-dot { background: var(--amber); }
-    .btn-toggle.has-error.active .an-dot { background: var(--amber); animation: none; }
-
     /* Small spinner shown inline on a toggle button while its current
        utterance is actively being transcribed. */
     .an-spinner {
@@ -165,12 +155,12 @@
 <div class="an-root">
 
     <div class="an-toolbar">
-        <button class="btn btn-outline btn-toggle{{ ' active' if mic_active else '' }}" id="micBtn" onclick="toggleMic()">
+        <button class="btn btn-outline btn-toggle{{ ' active' if mic_active else '' }}" id="micBtn" onclick="toggleMic()" title="On by default. Transcribes to the textarea below AND to Audio Notes Data/Daily Notes/YYYY-MM-DD.txt, tagged [Mic] and timestamped">
             <span class="an-dot"></span> Mic
             <span class="an-spinner" aria-hidden="true"></span>
             <span class="an-queue-badge" id="micQueue"></span>
         </button>
-        <button class="btn btn-outline btn-toggle{{ ' active' if system_active else '' }}" id="sysBtn" onclick="toggleSystem()">
+        <button class="btn btn-outline btn-toggle{{ ' active' if system_active else '' }}" id="sysBtn" onclick="toggleSystem()" title="Off by default — click to start. Transcribes to the textarea below AND to Audio Notes Data/Daily Notes/YYYY-MM-DD.txt, tagged [Sys] and timestamped">
             <span class="an-dot"></span> System Audio
             <span class="an-spinner" aria-hidden="true"></span>
             <span class="an-queue-badge" id="sysQueue"></span>
@@ -202,11 +192,6 @@
         <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none" onchange="handleFileInput(event)">
         <button class="btn btn-outline" onclick="copyNotes(this)">Copy</button>
         <button class="btn btn-danger" onclick="clearNotes()">Clear</button>
-        <button class="btn btn-outline btn-toggle an-icon-only{{ ' active' if daily_active else '' }}" id="dailyBtn" onclick="toggleDaily()" title="Daily Log — always-on background mic + system-audio journal, transcribes your whole day to Audio Notes Data/Daily Notes/, tagged Mic/Sys and timestamped">
-            <span class="an-dot"></span>
-            <span class="an-spinner" aria-hidden="true"></span>
-            <span class="an-queue-badge" id="dailyQueue"></span>
-        </button>
     </div>
 
     <div class="an-textarea-wrap">
@@ -228,8 +213,6 @@
     var sysQueueEl = document.getElementById('sysQueue');
     var recordBtn = document.getElementById('recordBtn');
     var recTimeEl = document.getElementById('recTime');
-    var dailyBtn = document.getElementById('dailyBtn');
-    var dailyQueueEl = document.getElementById('dailyQueue');
     var statusEl = document.getElementById('saveStatus');
     var modelSelect = document.getElementById('modelSelect');
     var modelLoadingEl = document.getElementById('modelLoading');
@@ -328,22 +311,6 @@
         recTimeEl.textContent = m + ':' + (s < 10 ? '0' : '') + s;
     }
     setInterval(updateRecordingTimer, 500);
-
-    // ── Daily Log (always-on background mic + system journal) ──
-    // On by default (started automatically on the server at app startup);
-    // this just lets you pause/resume it. Writes straight to
-    // Audio Notes Data/Daily Notes/YYYY-MM-DD.txt — it never touches the
-    // textarea above.
-    function toggleDaily() {
-        dailyBtn.disabled = true;
-        fetch('/api/audio_notes/daily/toggle', { method: 'POST' })
-            .then(function (r) { return r.json(); })
-            .then(function (d) {
-                setToggleState(dailyBtn, d.active);
-                if (d.status === 'error') alert(d.message || 'Could not toggle the Daily Log.');
-            })
-            .finally(function () { dailyBtn.disabled = false; });
-    }
 
     // ── Upload / drag-and-drop file transcription ───────────
     function triggerUpload() { fileInput.click(); }
@@ -455,14 +422,6 @@
                 setToggleState(recordBtn, d.recording_active);
                 recordingStartedAt = d.recording_active ? d.recording_started_at : null;
                 if (!d.recording_active) recTimeEl.textContent = '';
-
-                setToggleState(dailyBtn, d.daily_active);
-                dailyBtn.classList.toggle('processing', !!d.daily_processing);
-                dailyQueueEl.textContent = d.daily_queue_depth > 0 ? '(' + d.daily_queue_depth + ' queued)' : '';
-                dailyBtn.classList.toggle('has-error', !!d.daily_error);
-                dailyBtn.title = d.daily_error
-                    ? 'Daily Log error: ' + d.daily_error
-                    : 'Daily Log — always-on background mic + system-audio journal, transcribes your whole day to Audio Notes Data/Daily Notes/, tagged Mic/Sys and timestamped';
             });
     }
 

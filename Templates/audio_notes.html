@@ -71,6 +71,21 @@
     .btn-toggle.processing .an-spinner { display: inline-block; }
     @keyframes an-spin { to { transform: rotate(360deg); } }
 
+    /* Icon-only toggle (no label) — used for the Daily Log on/off button.
+       Square, sized to match the other toolbar buttons' height. */
+    .btn-icon {
+        width: calc(0.875rem + 18px);
+        min-height: calc(0.875rem + 18px);
+        padding: 0 !important;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+    }
+    .btn-icon svg { width: 16px; height: 16px; display: block; }
+    .btn-icon.active { background: var(--teal-700); border-color: var(--teal-700); color: #fff; }
+    .btn-icon.active:hover { background: var(--teal-900); border-color: var(--teal-900); }
+
     .an-queue-badge {
         font-size: 0.6875rem;
         opacity: .85;
@@ -169,6 +184,14 @@
             <span class="an-dot"></span> Record
             <span class="an-rec-time" id="recTime"></span>
         </button>
+        <button class="btn btn-outline btn-icon{{ ' active' if daily_log_enabled else '' }}" id="dailyLogBtn" onclick="toggleDailyLog()" title="Daily Notes log (Audio Notes Data/Daily Notes/YYYY-MM-DD.txt) — click to pause/resume. Live transcription above keeps working either way.">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M4 4h11l5 5v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
+                <polyline points="14 4 14 9 19 9"></polyline>
+                <line x1="8" y1="13" x2="16" y2="13"></line>
+                <line x1="8" y1="17" x2="13" y2="17"></line>
+            </svg>
+        </button>
 
         <div class="an-model-picker">
             <label for="modelSelect">Model</label>
@@ -213,6 +236,7 @@
     var sysQueueEl = document.getElementById('sysQueue');
     var recordBtn = document.getElementById('recordBtn');
     var recTimeEl = document.getElementById('recTime');
+    var dailyLogBtn = document.getElementById('dailyLogBtn');
     var statusEl = document.getElementById('saveStatus');
     var modelSelect = document.getElementById('modelSelect');
     var modelLoadingEl = document.getElementById('modelLoading');
@@ -287,6 +311,17 @@
                 if (d.status === 'error') alert(d.message || 'Could not toggle system audio capture.');
             })
             .finally(function () { sysBtn.disabled = false; });
+    }
+
+    // ── Daily Log on/off (independent of Mic/System live transcription) ──
+    function toggleDailyLog() {
+        dailyLogBtn.disabled = true;
+        fetch('/api/audio_notes/daily_log/toggle', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                setToggleState(dailyLogBtn, d.enabled);
+            })
+            .finally(function () { dailyLogBtn.disabled = false; });
     }
 
     // ── Recording (mic + system audio -> single WAV file) ──
@@ -422,6 +457,8 @@
                 setToggleState(recordBtn, d.recording_active);
                 recordingStartedAt = d.recording_active ? d.recording_started_at : null;
                 if (!d.recording_active) recTimeEl.textContent = '';
+
+                setToggleState(dailyLogBtn, d.daily_log_enabled);
             });
     }
 

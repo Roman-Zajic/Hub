@@ -65,16 +65,14 @@ FILE_TRANSCRIBE_BEAM_SIZE = 5     # uploaded files are offline/batch, so it's wo
 # Models selectable from the dropdown in the UI. distil-* and *.en models are
 # English-only. Roughly fastest/roughest -> slowest/most-accurate on CPU.
 AVAILABLE_MODELS = [
-    ('tiny.en', 'Tiny (English) — fastest, roughest'),
+    ('tiny.en', 'Tiny (English) — default, fastest, roughest'),
     ('base', 'Base — fast Whisper'),
     ('small', 'Small — balanced, multilingual'),
-    ('distil-small.en', 'Distil Small (English) — default, fast + better than base'),
+    ('distil-small.en', 'Distil Small (English) — fast + better than base'),
     ('distil-medium.en', 'Distil Medium (English) — balanced'),
     ('medium', 'Medium — slower, multilingual'),
-    ('distil-large-v3', 'Distil Large v3 (English) — near large-v3 accuracy, ~6x faster'),
-    ('large-v3', 'Large v3 — most accurate, slowest, multilingual'),
 ]
-DEFAULT_MODEL = 'distil-small.en'
+DEFAULT_MODEL = 'tiny.en'
 
 # ── File paths ───────────────────────────────────────────────────────
 DATA_FOLDER = os.path.join(os.getcwd(), 'Audio Notes Data')
@@ -128,6 +126,13 @@ _system_queue = queue.Queue()
 
 _mic_processing = False       # True while a mic utterance is actively being transcribed
 _system_processing = False    # True while a system-audio utterance is actively being transcribed
+
+# Daily Log (Audio Notes Data/Daily Notes/YYYY-MM-DD.txt) can be paused
+# independently of the Mic/System toggles above — turning this off still
+# lets live transcription keep flowing into the on-screen textarea, it just
+# stops appending timestamped blocks to the daily .txt file. See
+# _emit_transcript, which is the single place both destinations are fed.
+_daily_log_enabled = True
 
 # Mic -> WAV recording (independent of live transcription capture above)
 _recording_active = False
@@ -260,7 +265,8 @@ def _emit_transcript(text, start_dt, end_dt, is_system):
         _content += sep + text
         _pending_chunks.append(text)
         _save_content(_content)
-    _append_daily_log(start_dt, end_dt, text, is_system)
+    if _daily_log_enabled:
+        _append_daily_log(start_dt, end_dt, text, is_system)
 
 
 # ── Whisper model (lazy — (re)loaded on demand, one instance shared) ──
@@ -880,6 +886,7 @@ def audio_notes_view():
         mic_active=_mic_active,
         system_active=_system_active,
         recording_active=_recording_active,
+        daily_log_enabled=_daily_log_enabled,
         available_models=AVAILABLE_MODELS,
         current_model=_selected_model_name,
     )
@@ -903,6 +910,7 @@ def poll_route():
         'system_queue_depth': _system_queue.qsize(),
         'model_loading': _model_loading,
         'current_model': _selected_model_name,
+        'daily_log_enabled': _daily_log_enabled,
         'recording_active': _recording_active,
         'recording_started_at': (int(_recording_started_at * 1000) if _recording_active and _recording_started_at else None),
         'recording_file': (os.path.basename(_recording_path) if _recording_active and _recording_path else None),
@@ -921,6 +929,17 @@ def set_model_route():
     # transcribe.
     _selected_model_name = name
     return jsonify({'status': 'ok', 'model': name})
+
+
+@bp.route('/api/audio_notes/daily_log/toggle', methods=['POST'])
+def toggle_daily_log_route():
+    """Pauses/resumes appending to the Daily Notes .txt file only. Live
+    transcription into the textarea (Mic/System toggles) is unaffected."""
+    global _daily_log_enabled
+    with _state_lock:
+        _daily_log_enabled = not _daily_log_enabled
+        enabled = _daily_log_enabled
+    return jsonify({'status': 'ok', 'enabled': enabled})
 
 
 @bp.route('/api/audio_notes/save', methods=['POST'])

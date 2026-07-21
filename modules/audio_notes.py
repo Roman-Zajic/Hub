@@ -60,6 +60,21 @@ VAD_MIN_ABS_RMS = 0.006           # absolute floor, so a very quiet room's noise
 
 WHISPER_DEVICE = 'cpu'
 WHISPER_COMPUTE_TYPE = 'int8'
+# Explicit thread count instead of letting ctranslate2 auto-detect: on
+# weaker/older CPUs "auto" can pick more threads than the machine can
+# usefully run in parallel, and the extra context-switching costs more than
+# it gains. Leaving one core free for the audio capture thread(s) is a
+# better default on modest hardware. Override with the AUDIO_NOTES_CPU_THREADS
+# env var if you want to tune it for a specific machine.
+WHISPER_CPU_THREADS = int(os.environ.get(
+    'AUDIO_NOTES_CPU_THREADS', max(1, (os.cpu_count() or 4) - 1)
+))
+# Live mic/system audio is already segmented by our own VAD in _capture_loop
+# before it ever reaches Whisper (see _process_and_emit), so Whisper's own
+# internal VAD pass (vad_filter=True) is redundant work on that path — pure
+# overhead on audio that's already been filtered to voice-only. Uploaded
+# files (_transcribe_file) have no such pre-filtering, so they keep it on.
+LIVE_VAD_FILTER = False
 FILE_TRANSCRIBE_BEAM_SIZE = 5     # uploaded files are offline/batch, so it's worth spending more compute for quality
 
 # Models selectable from the dropdown in the UI. distil-* and *.en models are
@@ -96,13 +111,21 @@ _state_lock = threading.Lock()    # guards thread/flag bookkeeping below
 # transcription (see _capture_loop / _worker_loop below) — this is the fix
 # for audio being dropped while a chunk is transcribing.
 #
-# Mic defaults to ON (auto-started in on_load() below) — this also drives
-# the Daily Log file: rather than a separate dedicated capture pipeline,
-# the daily file is just an extra output of this exact same interactive
-# capture path (see _emit_transcript below).
+# Mic and System Audio each have their own capture pipeline, but two
+# different things can independently ask for either one to be running:
+#   - _mic_to_textarea / _system_to_textarea — the two toolbar buttons that
+#     decide whether that source's transcript streams into the on-screen
+#     textarea.
+#   - _daily_log_active — the single Daily Notes button, which always wants
+#     BOTH mic and system audio (and writes both to the daily .txt file,
+#     regardless of what the textarea buttons are doing).
+# A source's capture thread runs whenever EITHER consumer wants it — see
+# _sync_mic_capture() / _sync_system_capture(), called after every toggle.
+# Mic defaults to ON (streaming to the textarea, auto-started in on_load()
+# below). Daily Log and System-to-textarea default to OFF.
 #
-# System Audio defaults to OFF and must be started with a manual click.
-# This is deliberate: auto-starting WASAPI loopback from a background
+# System Audio must be started with a manual click (never auto-started at
+# boot). This is deliberate: auto-starting WASAPI loopback from a background
 # thread at app boot has twice caused a hard process crash (an
 # unrecoverable native access violation, exit code -1073741819 /
 # 0xC0000005 — no Python traceback, since it's not a catchable exception)
@@ -110,15 +133,16 @@ _state_lock = threading.Lock()    # guards thread/flag bookkeeping below
 # was simply auto-started the same way Mic is here. Mic-only auto-start has
 # never triggered this. A manual click (which runs from a Flask request
 # thread, not at startup) has been reliably fine, same as Record already
-# works. If you want System Audio running continuously, just click it once
-# after the app starts.
-_mic_active = True
+# works. This is also why Daily Log defaults to OFF: turning it on starts
+# System Audio capture too, and that must only ever happen from a request
+# thread, never from on_load().
+_mic_to_textarea = True
 _mic_capture_thread = None
 _mic_worker_thread = None
 _mic_stop_event = None
 _mic_queue = queue.Queue()
 
-_system_active = False
+_system_to_textarea = False
 _system_capture_thread = None
 _system_worker_thread = None
 _system_stop_event = None
@@ -127,12 +151,15 @@ _system_queue = queue.Queue()
 _mic_processing = False       # True while a mic utterance is actively being transcribed
 _system_processing = False    # True while a system-audio utterance is actively being transcribed
 
-# Daily Log (Audio Notes Data/Daily Notes/YYYY-MM-DD.txt) can be paused
-# independently of the Mic/System toggles above — turning this off still
-# lets live transcription keep flowing into the on-screen textarea, it just
-# stops appending timestamped blocks to the daily .txt file. See
-# _emit_transcript, which is the single place both destinations are fed.
-_daily_log_enabled = True
+# Daily Log (Audio Notes Data/Daily Notes/YYYY-MM-DD.txt). One button, on
+# when active it ensures BOTH mic and system-audio capture are running (see
+# _sync_mic_capture / _sync_system_capture) and writes every utterance from
+# either source to the day's file — independent of whichever sources the
+# textarea buttons above have chosen to stream on-screen. See
+# _emit_transcript, which is the single place both destinations are fed
+# from, using the exact same tagged "[HH:MM:SS] [Mic/Sys] text [HH:MM:SS]"
+# format in both places.
+_daily_log_active = False
 
 # Mic -> WAV recording (independent of live transcription capture above)
 _recording_active = False
@@ -148,16 +175,37 @@ _model_lock = threading.Lock()
 _model_loading = False                 # True while a (re)load is in progress
 
 
+def _warm_model():
+    """Loads the currently-selected model once, ahead of any real audio.
+    Run on a daemon thread from on_load() so app startup itself isn't
+    blocked — but the (possibly slow, especially on an old/first-run
+    machine) load cost is paid before the user ever starts talking, instead
+    of stalling the very first utterance. Unlike the mic/system audio
+    threads, this touches no WASAPI/COM state, so it's safe to start here
+    rather than needing a request-thread click."""
+    try:
+        _get_model()
+    except Exception:
+        _log_error('model warm-up')
+
+
 def on_load():
     """Called once by app.py when this module is registered at startup."""
     global _content
     _content = _load_content()
     _cleanup_stale_content_tmp()
     _cleanup_stale_uploads()
-    # Only Mic auto-starts here. System Audio deliberately does NOT — see
-    # the comment on _system_active above for why (it's the confirmed
-    # trigger for a hard process crash when auto-started this way).
-    _start_mic()
+    threading.Thread(target=_warm_model, daemon=True).start()
+    # Only Mic auto-starts here (via _sync_mic_capture, since
+    # _mic_to_textarea defaults True). System Audio deliberately does NOT —
+    # see the comment on _system_to_textarea/_daily_log_active above for why
+    # (it's the confirmed trigger for a hard process crash when auto-started
+    # this way). _daily_log_active also defaults False for the same reason:
+    # turning it on is what makes System Audio capture start, and that must
+    # only ever happen from a Flask request thread (a button click), never
+    # from here.
+    _sync_mic_capture()
+    _sync_system_capture()
 
 
 # ── Error logging (never let a logging failure crash the caller) ─────
@@ -250,23 +298,39 @@ def _save_content(text):
                 pass
 
 
+def _format_tagged_line(start_dt, end_dt, text, is_system):
+    """[HH:MM:SS] [Mic/Sys] transcribed text [HH:MM:SS] — the single format
+    shared by both the Daily Log file and the on-screen textarea, so a line
+    looks and reads identically wherever it ends up."""
+    tag = 'Sys' if is_system else 'Mic'
+    return f'[{start_dt.strftime("%H:%M:%S")}] [{tag}] {text} [{end_dt.strftime("%H:%M:%S")}]'
+
+
 def _emit_transcript(text, start_dt, end_dt, is_system):
-    """Append newly-transcribed text to the authoritative content, persist
-    it, and queue it so the next frontend poll can append it to the
-    on-screen textarea too. Also appends the same text, timestamped and
-    tagged by source, to the day's Daily Log file — this is the entire
-    "Daily Log" now: not a separate capture pipeline, just an extra output
-    of this same, already-proven Mic/System capture path."""
+    """Routes one finished utterance to whichever destination(s) currently
+    want that source, tagging it the same way in both places:
+      - the on-screen textarea, if this source's "stream to textarea"
+        button (_mic_to_textarea / _system_to_textarea) is on
+      - the day's Daily Log .txt file, if _daily_log_active is on (which
+        always wants both sources)
+    A given utterance is transcribed exactly once here regardless of how
+    many destinations want it — only the routing differs."""
     global _content
     if not text:
         return
-    with _lock:
-        sep = '' if (not _content or _content[-1:].isspace()) else ' '
-        _content += sep + text
-        _pending_chunks.append(text)
-        _save_content(_content)
-    if _daily_log_enabled:
-        _append_daily_log(start_dt, end_dt, text, is_system)
+
+    line = _format_tagged_line(start_dt, end_dt, text, is_system)
+    wants_textarea = _system_to_textarea if is_system else _mic_to_textarea
+
+    if wants_textarea:
+        with _lock:
+            sep = '' if (not _content or _content.endswith('\n')) else '\n'
+            _content += sep + line + '\n'
+            _pending_chunks.append(line + '\n')
+            _save_content(_content)
+
+    if _daily_log_active:
+        _append_daily_log(start_dt, line)
 
 
 # ── Whisper model (lazy — (re)loaded on demand, one instance shared) ──
@@ -290,6 +354,7 @@ def _get_model():
                 target,
                 device=WHISPER_DEVICE,
                 compute_type=WHISPER_COMPUTE_TYPE,
+                cpu_threads=WHISPER_CPU_THREADS,
             )
             _model_name = target
         finally:
@@ -332,18 +397,19 @@ def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_sys
 
         # condition_on_previous_text=False is the setting recommended for the
         # distil-* checkpoints, to stop them fixating on earlier chunk text.
-        # vad_filter=True is a second, finer-grained pass inside Whisper
-        # itself — belt-and-braces on top of the utterance-level VAD in
-        # _capture_loop, which is what stops silence from reaching here at
-        # all (and, for mic audio specifically, catches the ambient-noise
-        # false-triggers that would otherwise get hallucinated into short
-        # filler words like "Okay." / "Yeah." instead of correctly
-        # producing nothing).
+        # LIVE_VAD_FILTER is off by default: this audio has already been
+        # through the utterance-level VAD in _capture_loop, which is what
+        # actually stops silence and ambient-noise false-triggers (the
+        # "Okay." / "Yeah." hallucinations) from reaching here at all.
+        # Whisper's own internal VAD pass on top of that is redundant work —
+        # set LIVE_VAD_FILTER = True above if you ever want that extra,
+        # finer-grained pass back (e.g. while tuning the VAD_* constants),
+        # at the cost of some speed.
         segments, _ = model.transcribe(
             samples,
             language=lang,
             beam_size=1,
-            vad_filter=True,
+            vad_filter=LIVE_VAD_FILTER,
             condition_on_previous_text=False,
         )
         text = ' '.join(seg.text.strip() for seg in segments).strip()
@@ -357,21 +423,14 @@ def _daily_log_path_for(dt):
     return os.path.join(DAILY_NOTES_FOLDER, dt.strftime('%Y-%m-%d') + '.txt')
 
 
-def _append_daily_log(start_dt, end_dt, text, is_system):
-    """Appends one timestamp-bracketed block to the day's log file (the file
-    for the day the utterance STARTED in, so something spanning midnight
-    still lands under the day it began). Format:
-    [HH:MM:SS] [Mic/Sys] transcribed text [HH:MM:SS]
-    marking when that block of speech started and ended, and whether it
-    came from the microphone or from system audio."""
-    if not text:
-        return
+def _append_daily_log(start_dt, line):
+    """Appends one already-formatted tagged line (see _format_tagged_line)
+    to the day's log file — the file for the day the utterance STARTED in,
+    so something spanning midnight still lands under the day it began."""
     path = _daily_log_path_for(start_dt)
-    tag = 'Sys' if is_system else 'Mic'
-    line = f'[{start_dt.strftime("%H:%M:%S")}] [{tag}] {text} [{end_dt.strftime("%H:%M:%S")}]\n'
     try:
         with open(path, 'a', encoding='utf-8') as f:
-            f.write(line)
+            f.write(line + '\n')
     except Exception:
         _log_error('daily log: append')
 
@@ -648,6 +707,29 @@ def _stop_system():
         _system_capture_thread = None
 
 
+def _sync_mic_capture():
+    """Mic capture should be running whenever either consumer wants it:
+    the textarea button, or the Daily Log button (which always wants both
+    sources). Called after every change to _mic_to_textarea or
+    _daily_log_active so the thread state stays correct regardless of
+    which one flipped."""
+    if _mic_to_textarea or _daily_log_active:
+        _start_mic()
+    else:
+        _stop_mic()
+
+
+def _sync_system_capture():
+    """Same idea as _sync_mic_capture, for system audio. Note this is only
+    ever invoked from a Flask request thread (a button click) — see the
+    WASAPI crash-safety comment near _system_to_textarea above — never from
+    on_load()."""
+    if _system_to_textarea or _daily_log_active:
+        _start_system()
+    else:
+        _stop_system()
+
+
 # ── Mic -> WAV recording (independent of the live transcription above) ─
 
 def _next_recording_path():
@@ -883,10 +965,10 @@ def audio_notes_view():
     return render_template(
         'audio_notes.html',
         content=content,
-        mic_active=_mic_active,
-        system_active=_system_active,
+        mic_active=_mic_to_textarea,
+        system_active=_system_to_textarea,
         recording_active=_recording_active,
-        daily_log_enabled=_daily_log_enabled,
+        daily_log_enabled=_daily_log_active,
         available_models=AVAILABLE_MODELS,
         current_model=_selected_model_name,
     )
@@ -898,19 +980,19 @@ def audio_notes_view():
 def poll_route():
     global _pending_chunks
     with _lock:
-        pending = ' '.join(_pending_chunks)
+        pending = ''.join(_pending_chunks)
         _pending_chunks = []
     return jsonify({
         'pending': pending,
-        'mic_active': _mic_active,
-        'system_active': _system_active,
+        'mic_active': _mic_to_textarea,
+        'system_active': _system_to_textarea,
         'mic_processing': _mic_processing,
         'system_processing': _system_processing,
         'mic_queue_depth': _mic_queue.qsize(),
         'system_queue_depth': _system_queue.qsize(),
         'model_loading': _model_loading,
         'current_model': _selected_model_name,
-        'daily_log_enabled': _daily_log_enabled,
+        'daily_log_enabled': _daily_log_active,
         'recording_active': _recording_active,
         'recording_started_at': (int(_recording_started_at * 1000) if _recording_active and _recording_started_at else None),
         'recording_file': (os.path.basename(_recording_path) if _recording_active and _recording_path else None),
@@ -926,19 +1008,39 @@ def set_model_route():
         return jsonify({'status': 'error', 'message': 'Unknown model.'})
     # Just record the choice — the (possibly slow, first-download) load
     # happens lazily in _get_model(), the next time something needs to
-    # transcribe.
+    # transcribe. The same model is used for both destinations (textarea
+    # and Daily Log), since each utterance is only ever transcribed once.
     _selected_model_name = name
     return jsonify({'status': 'ok', 'model': name})
 
 
 @bp.route('/api/audio_notes/daily_log/toggle', methods=['POST'])
 def toggle_daily_log_route():
-    """Pauses/resumes appending to the Daily Notes .txt file only. Live
-    transcription into the textarea (Mic/System toggles) is unaffected."""
-    global _daily_log_enabled
+    """Turns the Daily Log on/off. When on, this makes sure BOTH mic and
+    system-audio capture are running (starting whichever isn't already, on
+    top of whatever the textarea buttons have independently requested) and
+    writes every utterance from either source to the day's .txt file.
+    Turning it off only stops the file writes; it leaves the textarea's own
+    mic/system streaming exactly as it was."""
+    global _daily_log_active
     with _state_lock:
-        _daily_log_enabled = not _daily_log_enabled
-        enabled = _daily_log_enabled
+        _daily_log_active = not _daily_log_active
+        enabled = _daily_log_active
+    try:
+        _sync_mic_capture()
+        _sync_system_capture()
+    except Exception:
+        _log_error('daily log toggle')
+        with _state_lock:
+            _daily_log_active = False
+        return jsonify({
+            'status': 'error',
+            'enabled': False,
+            'message': 'Could not start capture for the Daily Notes log. '
+                       'Make sure pyaudiowpatch and faster-whisper are '
+                       'installed and both a microphone and a WASAPI '
+                       'output/loopback device are available.',
+        })
     return jsonify({'status': 'ok', 'enabled': enabled})
 
 
@@ -954,19 +1056,19 @@ def save_route():
 
 @bp.route('/api/audio_notes/mic/toggle', methods=['POST'])
 def toggle_mic_route():
-    global _mic_active
+    """Turns mic streaming into the textarea on/off. Mic capture itself
+    keeps running underneath if the Daily Log button still wants it — see
+    _sync_mic_capture."""
+    global _mic_to_textarea
     with _state_lock:
-        _mic_active = not _mic_active
-        active = _mic_active
+        _mic_to_textarea = not _mic_to_textarea
+        active = _mic_to_textarea
     try:
-        if active:
-            _start_mic()
-        else:
-            _stop_mic()
+        _sync_mic_capture()
     except Exception:
         _log_error('mic toggle')
         with _state_lock:
-            _mic_active = False
+            _mic_to_textarea = False
         return jsonify({
             'status': 'error',
             'active': False,
@@ -979,19 +1081,19 @@ def toggle_mic_route():
 
 @bp.route('/api/audio_notes/system/toggle', methods=['POST'])
 def toggle_system_route():
-    global _system_active
+    """Turns system-audio streaming into the textarea on/off. System
+    capture itself keeps running underneath if the Daily Log button still
+    wants it — see _sync_system_capture."""
+    global _system_to_textarea
     with _state_lock:
-        _system_active = not _system_active
-        active = _system_active
+        _system_to_textarea = not _system_to_textarea
+        active = _system_to_textarea
     try:
-        if active:
-            _start_system()
-        else:
-            _stop_system()
+        _sync_system_capture()
     except Exception:
         _log_error('system toggle')
         with _state_lock:
-            _system_active = False
+            _system_to_textarea = False
         return jsonify({
             'status': 'error',
             'active': False,

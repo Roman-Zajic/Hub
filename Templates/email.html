@@ -162,9 +162,11 @@ body {
 .reference summary::-webkit-details-marker { display: none; }
 .reference summary::before { content: '▸'; color: var(--text-muted); font-size: 0.75rem; transition: transform 150ms; }
 .reference[open] summary::before { transform: rotate(90deg); }
-.ref-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
-.ref-table th { text-align: left; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface-in); }
-.ref-table td { padding: 10px 16px; border-bottom: 1px solid var(--border); vertical-align: top; color: var(--text); }
+.ref-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8125rem; }
+.ref-table th { text-align: left; font-size: 0.8125rem; font-weight: 600; color: #fff; padding: 10px 16px; border-bottom: 2px solid var(--teal-900); border-right: 1px solid var(--teal-700); background: var(--teal-900); }
+.ref-table th:last-child { border-right: none; }
+.ref-table td { padding: 10px 16px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border); vertical-align: top; color: var(--text); }
+.ref-table td:last-child { border-right: none; }
 .ref-table tr:last-child td { border-bottom: none; }
 .ref-table code { font-family: var(--mono); font-size: 0.75rem; background: var(--surface-in); border: 1px solid var(--border); padding: 1px 6px; border-radius: 4px; color: var(--teal-900); white-space: nowrap; }
 .ref-table .desc { color: var(--text-muted); }

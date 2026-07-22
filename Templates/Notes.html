@@ -26,6 +26,56 @@
     .new-note-btn:hover { background: var(--surface-in); color: var(--text); }
     .panel-actions { display: flex; gap: 8px; margin: 10px; }
 
+    /* ── Graph panel (collapsed by default — just a trigger button) ── */
+    .graph-panel { border-top: 1px solid var(--border); padding: 10px; flex-shrink: 0; }
+    .graph-trigger-btn {
+        width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
+        padding: 8px; border: 1px dashed var(--teal-700); background: none;
+        color: var(--text-muted); cursor: pointer; border-radius: 6px;
+        font-size: 0.75rem; font-weight: 600; font-family: var(--font);
+        text-transform: uppercase; letter-spacing: 0.04em;
+        transition: background 130ms, color 130ms;
+    }
+    .graph-trigger-btn:hover { background: var(--surface-in); color: var(--teal-700); }
+    .graph-trigger-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+
+    .graph-canvas-wrap { position: relative; background: var(--surface-in); overflow: hidden; cursor: grab; }
+    .graph-canvas-wrap svg { width: 100%; height: 100%; display: block; }
+    .graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.8125rem; text-align: center; padding: 10px; }
+
+    /* Links and nodes are teal-only; intensity/shade is set inline per-element
+       based on connection count (see nodeColor()/linkColor() in the script). */
+    .graph-link { stroke-width: 1; }
+    .graph-link.dim { opacity: 0.1 !important; }
+    .graph-node-rect { stroke: var(--teal-900); stroke-width: 0.6; cursor: pointer; }
+    .graph-node-rect.dim { opacity: 0.2; }
+    .graph-node-rect:hover { stroke-width: 1.6; }
+    .graph-node-label {
+        font-family: var(--font); font-size: 3.4px; fill: var(--ink);
+        pointer-events: none; opacity: 0.85; transition: opacity 100ms, font-size 100ms;
+    }
+    .graph-node-label.dim { opacity: 0.2; }
+    .graph-node-label.show { opacity: 1; font-size: 4.2px; font-weight: 600; }
+
+    /* ── Expanded modal: graph + close button only, takes most of the screen ── */
+    .graph-modal-shell {
+        position: relative;
+        width: 94vw; height: 90vh;
+        background: var(--surface-card);
+        border-radius: 12px;
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow-md);
+        overflow: hidden;
+    }
+    .graph-modal-shell .graph-canvas-wrap { width: 100%; height: 100%; }
+    .graph-close-btn {
+        position: absolute; top: 14px; right: 14px; z-index: 5;
+        width: 34px; height: 34px; padding: 0 !important;
+        display: inline-flex; align-items: center; justify-content: center;
+        border-radius: 50%; background: var(--surface-card);
+        box-shadow: var(--shadow);
+    }
+
     /* ── Date-range calendar modal ────────────────────────── */
     .cal-overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(1,45,44,0.32); align-items: center; justify-content: center; }
     .cal-overlay.open { display: flex; }
@@ -222,6 +272,19 @@
             <button class="new-note-btn" onclick="newNote()">+ NEW NOTE</button>
             <button class="new-note-btn" onclick="openDailyNote()">DAILY NOTE</button>
         </div>
+        <div class="graph-panel">
+            <button type="button" class="graph-trigger-btn" onclick="openGraphModal()" title="Show notes graph">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="6" height="6" rx="1"></rect>
+                    <rect x="15" y="3" width="6" height="6" rx="1"></rect>
+                    <rect x="9" y="15" width="6" height="6" rx="1"></rect>
+                    <line x1="9" y1="6" x2="15" y2="6"></line>
+                    <line x1="6" y1="9" x2="10" y2="16"></line>
+                    <line x1="18" y1="9" x2="14" y2="16"></line>
+                </svg>
+                Graph View
+            </button>
+        </div>
     </div>
 
     <div class="editor-panel">
@@ -266,6 +329,13 @@
             <button class="btn btn-outline btn-sm" onclick="calClearRange()">Clear</button>
             <button class="btn btn-primary btn-sm" onclick="calApplyRange()">Apply</button>
         </div>
+    </div>
+</div>
+
+<div class="cal-overlay" id="graphOverlay" onclick="graphOverlayClick(event)">
+    <div class="graph-modal-shell">
+        <button class="btn btn-outline btn-sm graph-close-btn" onclick="closeGraphModal()">&#x2715;</button>
+        <div class="graph-canvas-wrap" id="graphModalWrap"></div>
     </div>
 </div>
 
@@ -812,6 +882,7 @@
                 location.reload();
             } else {
                 originalPath = newPath;
+                loadGraphData();
             }
         });
     }
@@ -854,5 +925,310 @@
     }
 
     buildTree();
+
+    // ═══════════════════════════════════════════════════════════
+    // GRAPH VIEW
+    //
+    // Layout approach mirrors how Obsidian's graph settles: it is NOT that
+    // high-degree notes are explicitly pinned to the middle. Instead:
+    //   - every node repels every other node (charge/many-body force)
+    //   - every link pulls its two endpoints together (spring force)
+    //   - a very weak global pull keeps the whole cluster near the canvas
+    //     center, just so it doesn't drift off-screen
+    // A hub note has many springs tugging it from many directions at once,
+    // which averages out near the centroid of its neighbors — usually the
+    // middle of a well-connected graph. A leaf note has exactly one spring,
+    // so repulsion is free to push it out toward the rim. The "hub in the
+    // center" look is an emergent result of that force balance, not a rule
+    // — so the global center-pull below is kept deliberately weak (centerK)
+    // relative to the link/repulsion forces, otherwise it would flatten
+    // that natural clustering.
+    // ═══════════════════════════════════════════════════════════
+    var GRAPH_W = 100, GRAPH_H = 100;
+    var GRAPH_PAD = 9; // keeps squares off the canvas edge
+    var GRAPH_NODE_SIZE = 2.4; // fixed square size for every note — only color varies
+    var graphNodes = [], graphLinks = [], graphNodeById = {};
+    var graphMaxDegree = 1;
+    var graphRAF = null, graphDragNode = null, graphDragSvg = null, graphHoverId = null;
+    var graphAlpha = 0, graphRendered = false;
+    var ALPHA_DECAY = 0.985, ALPHA_MIN = 0.01, ALPHA_REHEAT = 0.6;
+
+    function loadGraphData() {
+        fetch('/notes/graph').then(function (r) { return r.json(); })
+            .then(function (data) { initGraph(data.nodes, data.links); });
+    }
+
+    function initGraph(nodes, links) {
+        graphNodeById = {};
+        graphNodes = nodes.map(function (n, i) {
+            var angle = (i / Math.max(1, nodes.length)) * Math.PI * 2;
+            var node = {
+                id: n.id, label: n.label, folder: n.folder,
+                x: GRAPH_W / 2 + Math.cos(angle) * 25 + (Math.random() - 0.5) * 5,
+                y: GRAPH_H / 2 + Math.sin(angle) * 25 + (Math.random() - 0.5) * 5,
+                vx: 0, vy: 0, degree: 0
+            };
+            graphNodeById[n.id] = node;
+            return node;
+        });
+        graphLinks = links.map(function (l) {
+            var s = graphNodeById[l.source], t = graphNodeById[l.target];
+            if (s) s.degree++;
+            if (t) t.degree++;
+            return { source: s, target: t };
+        }).filter(function (l) { return l.source && l.target; });
+
+        graphMaxDegree = graphNodes.reduce(function (m, n) { return Math.max(m, n.degree); }, 1) || 1;
+        graphRendered = false; // (re)rendered lazily next time the modal opens
+    }
+
+    // ── Force simulation (lightweight, no external deps) ──────
+    // Forces are scaled by graphAlpha, which cools down each frame (like
+    // d3-force's alpha) so the layout settles instead of jittering forever;
+    // dragging a node reheats it briefly so the rest can react.
+    function stepGraphSimulation() {
+        var n = graphNodes.length;
+        if (!n || graphAlpha <= 0) return;
+        var repulsion = 80, springLen = 16, springK = 0.05, centerK = 0.0012, damping = 0.82;
+        var a2 = graphAlpha;
+
+        for (var i = 0; i < n; i++) {
+            var a = graphNodes[i], fx = 0, fy = 0;
+            for (var j = 0; j < n; j++) {
+                if (i === j) continue;
+                var b = graphNodes[j];
+                var dx = a.x - b.x, dy = a.y - b.y;
+                var d2 = dx * dx + dy * dy + 0.01, d = Math.sqrt(d2);
+                var force = (repulsion / d2) * a2;
+                fx += (dx / d) * force; fy += (dy / d) * force;
+            }
+            // Deliberately weak: just enough to stop the whole cluster
+            // drifting, not strong enough to override link-driven clustering.
+            fx += (GRAPH_W / 2 - a.x) * centerK * a2;
+            fy += (GRAPH_H / 2 - a.y) * centerK * a2;
+            a.fx = fx; a.fy = fy;
+        }
+
+        graphLinks.forEach(function (l) {
+            var dx = l.target.x - l.source.x, dy = l.target.y - l.source.y;
+            var d = Math.sqrt(dx * dx + dy * dy) || 0.01;
+            var stretch = (d - springLen) * springK * a2, ux = dx / d, uy = dy / d;
+            l.source.fx += ux * stretch; l.source.fy += uy * stretch;
+            l.target.fx -= ux * stretch; l.target.fy -= uy * stretch;
+        });
+
+        graphNodes.forEach(function (a) {
+            if (a === graphDragNode) { a.vx = 0; a.vy = 0; return; }
+            a.vx = (a.vx + a.fx) * damping; a.vy = (a.vy + a.fy) * damping;
+            a.x += a.vx; a.y += a.vy;
+            a.x = Math.max(GRAPH_PAD, Math.min(GRAPH_W - GRAPH_PAD, a.x));
+            a.y = Math.max(GRAPH_PAD, Math.min(GRAPH_H - GRAPH_PAD, a.y));
+        });
+
+        graphAlpha *= ALPHA_DECAY;
+        if (graphAlpha < ALPHA_MIN) graphAlpha = 0;
+    }
+
+    function startGraphSimulation() {
+        graphAlpha = ALPHA_REHEAT;
+        if (graphRAF) return;
+        (function loop() {
+            stepGraphSimulation();
+            updateGraphPositions();
+            if (graphAlpha > 0 || graphDragNode) {
+                graphRAF = requestAnimationFrame(loop);
+            } else {
+                graphRAF = null; // settled — stop spending CPU until reheated
+            }
+        })();
+    }
+
+    function reheatGraphSimulation(amount) {
+        graphAlpha = Math.max(graphAlpha, amount);
+        if (!graphRAF) startGraphSimulation();
+    }
+
+    function stopGraphSimulation() {
+        if (graphRAF) { cancelAnimationFrame(graphRAF); graphRAF = null; }
+    }
+
+    // ── Teal-only coloring — shade encodes connection count ────
+    // Sparse notes render as a light teal, heavily-linked hub notes render
+    // as the deepest teal; sqrt spreads the low end out so a handful of
+    // very-connected notes don't wash out every low-degree note to the
+    // exact same pale shade.
+    var TEAL_LIGHT = [149, 223, 219]; // --teal-100
+    var TEAL_DARK  = [0, 90, 90];     // --teal-900
+
+    function degreeT(degree) {
+        return graphMaxDegree > 0 ? Math.sqrt(degree / graphMaxDegree) : 0;
+    }
+    function tealShade(t) {
+        var rgb = TEAL_LIGHT.map(function (c, i) { return Math.round(c + (TEAL_DARK[i] - c) * t); });
+        return 'rgb(' + rgb.join(',') + ')';
+    }
+    function nodeColor(node) { return tealShade(degreeT(node.degree)); }
+    function linkStyle(l) {
+        var t = degreeT(Math.max(l.source.degree, l.target.degree));
+        return { color: tealShade(t), opacity: 0.3 + t * 0.45 };
+    }
+
+    // ── Rendering ────────────────────────────────────────────
+    function renderGraphInto(wrapId) {
+        var wrap = document.getElementById(wrapId);
+        if (!wrap) return;
+        if (!graphNodes.length) {
+            wrap.innerHTML = '<div class="graph-empty">No notes yet — link them with [[double brackets]] to see the graph.</div>';
+            return;
+        }
+        var ns = 'http://www.w3.org/2000/svg';
+        var svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 ' + GRAPH_W + ' ' + GRAPH_H);
+
+        var linkGroup = document.createElementNS(ns, 'g');
+        var nodeGroup = document.createElementNS(ns, 'g');
+        nodeGroup.setAttribute('class', 'graph-nodes-group');
+        svg.appendChild(linkGroup); svg.appendChild(nodeGroup);
+
+        graphLinks.forEach(function (l) {
+            var line = document.createElementNS(ns, 'line');
+            line.setAttribute('class', 'graph-link');
+            line.dataset.source = l.source.id; line.dataset.target = l.target.id;
+            var style = linkStyle(l);
+            line.style.stroke = style.color;
+            line.dataset.opacity = style.opacity;
+            line.style.opacity = style.opacity;
+            linkGroup.appendChild(line);
+        });
+
+        graphNodes.forEach(function (node) {
+            var g = document.createElementNS(ns, 'g');
+            g.dataset.id = node.id;
+            // Square "logo" marker — same fixed size for every note; only
+            // the teal shade (nodeColor) encodes connection count.
+            var size = GRAPH_NODE_SIZE;
+            var rect = document.createElementNS(ns, 'rect');
+            rect.setAttribute('class', 'graph-node-rect');
+            rect.setAttribute('width', size); rect.setAttribute('height', size);
+            rect.setAttribute('rx', Math.max(0.5, size * 0.22));
+            rect.style.fill = nodeColor(node);
+            rect.dataset.size = size;
+
+            var label = document.createElementNS(ns, 'text');
+            label.setAttribute('class', 'graph-node-label');
+            label.textContent = node.label;
+            label.setAttribute('text-anchor', 'middle');
+
+            g.appendChild(rect); g.appendChild(label);
+            nodeGroup.appendChild(g);
+
+            g.addEventListener('mouseenter', function () { graphHoverId = node.id; updateGraphPositions(); });
+            g.addEventListener('mouseleave', function () { graphHoverId = null; updateGraphPositions(); });
+            g.addEventListener('pointerdown', function (e) { startGraphDrag(e, node, svg); });
+            g.addEventListener('click', function () {
+                if (g.dataset.dragged === '1') { g.dataset.dragged = '0'; return; }
+                var match = files.find(function (f) { return f === node.id; });
+                if (match) {
+                    var el = document.querySelector('.file-item[data-path="' + CSS.escape(match) + '"]');
+                    loadNote(match, el);
+                    closeGraphModal();
+                }
+            });
+        });
+
+        wrap.innerHTML = '';
+        wrap.appendChild(svg);
+        updateGraphPositions();
+    }
+
+    function isNeighbor(id, hoverId) {
+        return graphLinks.some(function (l) {
+            return (l.source.id === id && l.target.id === hoverId) || (l.target.id === id && l.source.id === hoverId);
+        });
+    }
+
+    function updateGraphPositions() {
+        var wrap = document.getElementById('graphModalWrap');
+        var svg = wrap && wrap.querySelector('svg');
+        if (!svg) return;
+
+        svg.querySelectorAll('.graph-link').forEach(function (line) {
+            var s = graphNodeById[line.dataset.source], t = graphNodeById[line.dataset.target];
+            if (!s || !t) return;
+            line.setAttribute('x1', s.x); line.setAttribute('y1', s.y);
+            line.setAttribute('x2', t.x); line.setAttribute('y2', t.y);
+            var dim = !!(graphHoverId && s.id !== graphHoverId && t.id !== graphHoverId);
+            line.classList.toggle('dim', dim);
+            line.style.opacity = dim ? '' : line.dataset.opacity;
+        });
+
+        svg.querySelectorAll('.graph-nodes-group > g').forEach(function (g) {
+            var node = graphNodeById[g.dataset.id];
+            if (!node) return;
+            var rect = g.querySelector('rect'), size = parseFloat(rect.dataset.size);
+            rect.setAttribute('x', node.x - size / 2);
+            rect.setAttribute('y', node.y - size / 2);
+            var label = g.querySelector('text');
+            label.setAttribute('x', node.x);
+            label.setAttribute('y', node.y - size / 2 - 1.4);
+
+            var isHover = graphHoverId === node.id;
+            var isDimmed = !!(graphHoverId && !isHover && !isNeighbor(node.id, graphHoverId));
+            rect.classList.toggle('dim', isDimmed);
+            label.classList.toggle('dim', isDimmed);
+            label.classList.toggle('show', isHover);
+        });
+    }
+
+    // ── Drag ────────────────────────────────────────────────
+    function svgPoint(svg, evt) {
+        var pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
+        var ctm = svg.getScreenCTM();
+        return ctm ? pt.matrixTransform(ctm.inverse()) : { x: 0, y: 0 };
+    }
+    function startGraphDrag(e, node, svg) {
+        e.preventDefault();
+        graphDragNode = node; graphDragSvg = svg;
+        svg.setPointerCapture(e.pointerId);
+        svg.addEventListener('pointermove', onGraphDragMove);
+        svg.addEventListener('pointerup', onGraphDragEnd);
+        svg.addEventListener('pointercancel', onGraphDragEnd);
+        reheatGraphSimulation(ALPHA_REHEAT);
+    }
+    function onGraphDragMove(e) {
+        if (!graphDragNode) return;
+        var p = svgPoint(graphDragSvg, e);
+        graphDragNode.x = Math.max(GRAPH_PAD, Math.min(GRAPH_W - GRAPH_PAD, p.x));
+        graphDragNode.y = Math.max(GRAPH_PAD, Math.min(GRAPH_H - GRAPH_PAD, p.y));
+        graphDragNode.vx = 0; graphDragNode.vy = 0;
+        reheatGraphSimulation(0.3);
+        var g = graphDragSvg.querySelector('.graph-nodes-group > g[data-id="' + CSS.escape(graphDragNode.id) + '"]');
+        if (g) g.dataset.dragged = '1';
+    }
+    function onGraphDragEnd() {
+        if (graphDragSvg) {
+            graphDragSvg.removeEventListener('pointermove', onGraphDragMove);
+            graphDragSvg.removeEventListener('pointerup', onGraphDragEnd);
+            graphDragSvg.removeEventListener('pointercancel', onGraphDragEnd);
+        }
+        graphDragNode = null; graphDragSvg = null;
+    }
+
+    // ── Modal — graph is hidden until opened; render + simulate lazily ──
+    function openGraphModal() {
+        document.getElementById('graphOverlay').classList.add('open');
+        if (!graphRendered) {
+            renderGraphInto('graphModalWrap');
+            graphRendered = true;
+        }
+        startGraphSimulation();
+    }
+    function closeGraphModal() {
+        document.getElementById('graphOverlay').classList.remove('open');
+        stopGraphSimulation(); // nothing to look at — stop spending CPU
+    }
+    function graphOverlayClick(e) { if (e.target === document.getElementById('graphOverlay')) closeGraphModal(); }
+
+    loadGraphData();
 </script>
 {% endblock %}

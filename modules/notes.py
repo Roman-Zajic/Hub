@@ -36,6 +36,30 @@ DAILY_FOLDER_NAME = 'Daily'
 # .md file directly outside this app.
 _META_RE = re.compile(r'\n?<!--meta:created=(?P<created>[^|]*)\|modified=(?P<modified>.*?)-->\s*\Z', re.DOTALL)
 
+# ── Graph view helpers ───────────────────────────────────────────────
+_WIKILINK_RE = re.compile(r'\[\[(.+?)\]\]')
+
+
+def _resolve_wikilink_target(raw_target, all_paths):
+    """Same resolution rules as the front-end's resolveNoteLink(): exact
+    path, case-insensitive path, then filename-only match."""
+    target = raw_target.split('|', 1)[0].strip()
+    if not target:
+        return None
+    candidate = target if target.endswith('.md') else target + '.md'
+
+    for f in all_paths:
+        if f == candidate:
+            return f
+    for f in all_paths:
+        if f.lower() == candidate.lower():
+            return f
+    base_target = candidate.split('/')[-1].lower()
+    for f in all_paths:
+        if f.split('/')[-1].lower() == base_target:
+            return f
+    return None
+
 
 def _strip_meta(content):
     return _META_RE.sub('', content)
@@ -196,6 +220,43 @@ def notes_meta():
             created, modified = _extract_meta(content)
             result.append({'path': rel, 'created': created, 'modified': modified})
     return jsonify({'notes': result})
+
+
+@bp.route('/notes/graph')
+def notes_graph():
+    """Every note as a node, plus one deduplicated edge per pair of notes
+    linked via [[wiki links]] — feeds the graph view."""
+    note_files = []
+    for root, dirs, files in os.walk(NOTES_FOLDER):
+        for file in files:
+            if file.endswith('.md'):
+                rel = os.path.relpath(os.path.join(root, file), NOTES_FOLDER).replace('\\', '/')
+                note_files.append(rel)
+    note_files = sorted(note_files)
+
+    nodes, links, seen = [], [], set()
+
+    for path in note_files:
+        full_path = os.path.join(NOTES_FOLDER, path)
+        try:
+            with open(full_path, 'r', encoding='utf-8') as f:
+                content = _strip_meta(f.read())
+        except Exception:
+            content = ''
+
+        folder = path.split('/')[0] if '/' in path else ''
+        label = path.split('/')[-1][:-3]  # strip .md
+        nodes.append({'id': path, 'label': label, 'folder': folder})
+
+        for m in _WIKILINK_RE.finditer(content):
+            target = _resolve_wikilink_target(m.group(1), note_files)
+            if target and target != path:
+                key = tuple(sorted((path, target)))
+                if key not in seen:
+                    seen.add(key)
+                    links.append({'source': key[0], 'target': key[1]})
+
+    return jsonify({'nodes': nodes, 'links': links})
 
 
 def _convert_wiki_link(match):

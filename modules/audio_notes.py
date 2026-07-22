@@ -58,6 +58,15 @@ VAD_MAX_UTTERANCE_SECONDS = 20    # force a flush even mid-speech, so long monol
 VAD_THRESHOLD_MULTIPLIER = 3.0    # how far above the tracked noise floor counts as "voice"
 VAD_MIN_ABS_RMS = 0.006           # absolute floor, so a very quiet room's noise floor can't drift to ~0
 
+# How often (in seconds of audio) a running capture stream re-checks whether
+# the OS's default mic / default playback (loopback) device has changed —
+# e.g. because the user switched to a different headset. A PyAudio stream is
+# bound to one specific device index at open time and does NOT automatically
+# follow a Windows default-device switch, so without this re-check, capture
+# would keep silently listening to whichever device was "default" at the
+# moment Mic/System was toggled on, even after you switch headsets.
+DEVICE_CHECK_SECONDS = 2.0
+
 WHISPER_DEVICE = 'cpu'
 WHISPER_COMPUTE_TYPE = 'int8'
 # Explicit thread count instead of letting ctranslate2 auto-detect: on
@@ -507,6 +516,27 @@ def _set_processing(label, value):
 # up rather than audio getting silently dropped by the OS-level stream buffer
 # overflowing — a lagging transcript, never lost speech.
 
+def _resolve_capture_device(p, pyaudio, is_system):
+    """Resolves whichever device Windows *currently* considers the default
+    (default input mic, or the loopback twin of the default playback device
+    for system audio). Called both when a stream is (re)opened and
+    periodically while it's running (see DEVICE_CHECK_SECONDS in
+    _capture_loop / _record_reader_loop) so a headset switch made mid-call
+    is picked up instead of the stream staying pinned to whatever was
+    default when it first opened."""
+    if is_system:
+        wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
+        device_info = p.get_device_info_by_index(wasapi_info['defaultOutputDevice'])
+        if not device_info.get('isLoopbackDevice'):
+            for loopback in p.get_loopback_device_info_generator():
+                if device_info['name'] in loopback['name']:
+                    device_info = loopback
+                    break
+    else:
+        device_info = p.get_default_input_device_info()
+    return device_info
+
+
 def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds=VAD_MAX_UTTERANCE_SECONDS):
     _com_thread_init()
     try:
@@ -518,40 +548,13 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
         return
 
     p = None
-    stream = None
     try:
         p = pyaudio.PyAudio()
 
-        if is_system:
-            wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
-            device_info = p.get_device_info_by_index(wasapi_info['defaultOutputDevice'])
-            if not device_info.get('isLoopbackDevice'):
-                for loopback in p.get_loopback_device_info_generator():
-                    if device_info['name'] in loopback['name']:
-                        device_info = loopback
-                        break
-        else:
-            device_info = p.get_default_input_device_info()
-
-        channels = max(1, int(device_info['maxInputChannels']))
-        rate = int(device_info['defaultSampleRate'])
-        frames_per_buffer = max(160, int(rate * FRAME_SECONDS))
-
-        stream = p.open(
-            format=pyaudio.paInt16,
-            channels=channels,
-            rate=rate,
-            input=True,
-            frames_per_buffer=frames_per_buffer,
-            input_device_index=device_info['index'],
-        )
-
-        # VAD state
-        frame_seconds_actual = frames_per_buffer / float(rate)
-        hangover_frames = max(1, int(VAD_HANGOVER_SECONDS / frame_seconds_actual))
-        max_utterance_frames = max(1, int(max_utterance_seconds / frame_seconds_actual))
-        min_utterance_frames = max(1, int(VAD_MIN_UTTERANCE_SECONDS / frame_seconds_actual))
-
+        # VAD state lives OUTSIDE the reconnect loop below, so switching the
+        # active headset mid-utterance doesn't reset the noise floor for no
+        # reason — only the underlying PyAudio stream gets torn down and
+        # reopened against whatever the new default device is.
         noise_floor = VAD_MIN_ABS_RMS
         voiced_run = 0
         silence_run = 0
@@ -559,58 +562,141 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
         utterance_buf = bytearray()
         utterance_frames = 0
         utterance_start_dt = None
+        channels = 1
+        rate = 16000
 
+        # ── Outer loop: (re)connect to the current default device ──────
+        # Each pass resolves the current default and opens a stream against
+        # it; the inner loop reads frames from that stream until either the
+        # capture is stopped, or a periodic check (every DEVICE_CHECK_SECONDS
+        # of audio) notices the OS default device has changed — e.g. because
+        # a second headset was switched to become the active mic/speaker.
+        # On a device change, the current stream is closed and we loop back
+        # around to reconnect to the new default, instead of silently
+        # continuing to listen to the old, no-longer-active device.
         while not stop_event.is_set():
             try:
-                data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                device_info = _resolve_capture_device(p, pyaudio, is_system)
             except Exception:
-                _log_error(f'{label}: stream read')
-                time_module.sleep(0.5)
+                _log_error(f'{label}: resolve device')
+                time_module.sleep(1.0)
                 continue
 
-            frame = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-            if channels > 1:
-                frame = frame.reshape(-1, channels).mean(axis=1)
-            rms = float(np.sqrt(np.mean(np.square(frame)))) if len(frame) else 0.0
+            device_index = device_info['index']
+            device_name = device_info['name']
+            channels = max(1, int(device_info['maxInputChannels']))
+            rate = int(device_info['defaultSampleRate'])
+            frames_per_buffer = max(160, int(rate * FRAME_SECONDS))
 
-            threshold = max(VAD_MIN_ABS_RMS, noise_floor * VAD_THRESHOLD_MULTIPLIER)
-            voiced_frame = rms > threshold
+            try:
+                stream = p.open(
+                    format=pyaudio.paInt16,
+                    channels=channels,
+                    rate=rate,
+                    input=True,
+                    frames_per_buffer=frames_per_buffer,
+                    input_device_index=device_index,
+                )
+            except Exception:
+                _log_error(f'{label}: open stream')
+                time_module.sleep(1.0)
+                continue
 
-            if voiced_frame:
-                voiced_run += 1
-                silence_run = 0
-            else:
-                silence_run += 1
+            frame_seconds_actual = frames_per_buffer / float(rate)
+            hangover_frames = max(1, int(VAD_HANGOVER_SECONDS / frame_seconds_actual))
+            max_utterance_frames = max(1, int(max_utterance_seconds / frame_seconds_actual))
+            min_utterance_frames = max(1, int(VAD_MIN_UTTERANCE_SECONDS / frame_seconds_actual))
+            device_check_every = max(1, int(DEVICE_CHECK_SECONDS / frame_seconds_actual))
+            frames_since_check = 0
+            device_changed = False
+
+            try:
+                while not stop_event.is_set():
+                    try:
+                        data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                    except Exception:
+                        _log_error(f'{label}: stream read')
+                        time_module.sleep(0.5)
+                        continue
+
+                    frame = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+                    if channels > 1:
+                        frame = frame.reshape(-1, channels).mean(axis=1)
+                    rms = float(np.sqrt(np.mean(np.square(frame)))) if len(frame) else 0.0
+
+                    threshold = max(VAD_MIN_ABS_RMS, noise_floor * VAD_THRESHOLD_MULTIPLIER)
+                    voiced_frame = rms > threshold
+
+                    if voiced_frame:
+                        voiced_run += 1
+                        silence_run = 0
+                    else:
+                        silence_run += 1
+                        voiced_run = 0
+                        # Only chase the noise floor while we're confident we're
+                        # NOT in speech, so a long utterance can't drag the floor
+                        # up and make the VAD deaf to quieter follow-on speech.
+                        if not in_speech:
+                            noise_floor = noise_floor * 0.98 + rms * 0.02
+
+                    if not in_speech and voiced_run >= VAD_ENTER_FRAMES:
+                        in_speech = True
+                        utterance_buf = bytearray()
+                        utterance_frames = 0
+                        utterance_start_dt = datetime.now()
+
+                    if in_speech:
+                        utterance_buf.extend(data)
+                        utterance_frames += 1
+
+                        closed_by_silence = silence_run >= hangover_frames
+                        closed_by_length = utterance_frames >= max_utterance_frames
+
+                        if closed_by_silence or closed_by_length:
+                            in_speech = False
+                            voiced_run = 0
+                            silence_run = 0
+                            if utterance_frames >= min_utterance_frames:
+                                out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system))
+                            utterance_buf = bytearray()
+                            utterance_frames = 0
+
+                    # Periodically confirm the device we're reading from is
+                    # still the OS default. This is a cheap enumeration call,
+                    # so it's throttled to once every DEVICE_CHECK_SECONDS
+                    # rather than every frame.
+                    frames_since_check += 1
+                    if frames_since_check >= device_check_every:
+                        frames_since_check = 0
+                        try:
+                            current = _resolve_capture_device(p, pyaudio, is_system)
+                            if current['index'] != device_index or current['name'] != device_name:
+                                device_changed = True
+                                break
+                        except Exception:
+                            _log_error(f'{label}: recheck device')
+            finally:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
+
+            if device_changed:
+                # A headset swap mid-sentence shouldn't just discard those
+                # words — flush whatever was buffered on the old device
+                # before reconnecting, exactly like a normal stop would.
+                if in_speech and utterance_frames >= min_utterance_frames:
+                    out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system))
+                in_speech = False
                 voiced_run = 0
-                # Only chase the noise floor while we're confident we're NOT
-                # in speech, so a long utterance can't drag the floor up and
-                # make the VAD deaf to quieter follow-on speech.
-                if not in_speech:
-                    noise_floor = noise_floor * 0.98 + rms * 0.02
-
-            if not in_speech and voiced_run >= VAD_ENTER_FRAMES:
-                in_speech = True
+                silence_run = 0
                 utterance_buf = bytearray()
                 utterance_frames = 0
-                utterance_start_dt = datetime.now()
+                # loop back around: outer while re-resolves and reopens
+                # against whatever is now the default device
 
-            if in_speech:
-                utterance_buf.extend(data)
-                utterance_frames += 1
-
-                closed_by_silence = silence_run >= hangover_frames
-                closed_by_length = utterance_frames >= max_utterance_frames
-
-                if closed_by_silence or closed_by_length:
-                    in_speech = False
-                    voiced_run = 0
-                    silence_run = 0
-                    if utterance_frames >= min_utterance_frames:
-                        out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system))
-                    utterance_buf = bytearray()
-                    utterance_frames = 0
-
-        # Streaming has stopped (the while loop above exits as soon as
+        # Streaming has stopped (the outer while loop exits as soon as
         # stop_event is set) — but if we were mid-utterance at that exact
         # moment, don't throw away what was already captured. "Turn off"
         # means stop listening for more speech, not discard what was
@@ -622,12 +708,6 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
     except Exception:
         _log_error(f'{label}: setup')
     finally:
-        try:
-            if stream is not None:
-                stream.stop_stream()
-                stream.close()
-        except Exception:
-            pass
         try:
             if p is not None:
                 p.terminate()
@@ -762,7 +842,11 @@ RECORD_FRAME_SAMPLES = int(RECORD_MIX_RATE * RECORD_FRAME_SECONDS)
 
 def _record_reader_loop(label, stop_event, is_system, out_queue):
     """Continuously reads one device (mic or system loopback), resamples to
-    RECORD_MIX_RATE mono, and pushes chunks to out_queue for the mixer."""
+    RECORD_MIX_RATE mono, and pushes chunks to out_queue for the mixer.
+    Same as _capture_loop, this re-checks the OS default device periodically
+    and reconnects if it changes (e.g. a headset switch mid-recording),
+    instead of staying pinned to whichever device was default when Record
+    was first clicked."""
     _com_thread_init()
     try:
         import pyaudiowpatch as pyaudio
@@ -773,57 +857,75 @@ def _record_reader_loop(label, stop_event, is_system, out_queue):
         return
 
     p = None
-    stream = None
     try:
         p = pyaudio.PyAudio()
 
-        if is_system:
-            wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
-            device_info = p.get_device_info_by_index(wasapi_info['defaultOutputDevice'])
-            if not device_info.get('isLoopbackDevice'):
-                for loopback in p.get_loopback_device_info_generator():
-                    if device_info['name'] in loopback['name']:
-                        device_info = loopback
-                        break
-        else:
-            device_info = p.get_default_input_device_info()
-
-        channels = max(1, int(device_info['maxInputChannels']))
-        rate = int(device_info['defaultSampleRate'])
-        frames_per_buffer = max(160, int(rate * RECORD_FRAME_SECONDS))
-
-        stream = p.open(
-            format=pyaudio.paInt16,
-            channels=channels,
-            rate=rate,
-            input=True,
-            frames_per_buffer=frames_per_buffer,
-            input_device_index=device_info['index'],
-        )
-
         while not stop_event.is_set():
             try:
-                data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                device_info = _resolve_capture_device(p, pyaudio, is_system)
             except Exception:
-                _log_error(f'{label}: stream read')
-                time_module.sleep(0.3)
+                _log_error(f'{label}: resolve device')
+                time_module.sleep(1.0)
                 continue
 
-            samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-            if channels > 1:
-                samples = samples.reshape(-1, channels).mean(axis=1)
-            samples = _resample_linear(samples, rate, RECORD_MIX_RATE)
-            out_queue.put(samples)
+            device_index = device_info['index']
+            device_name = device_info['name']
+            channels = max(1, int(device_info['maxInputChannels']))
+            rate = int(device_info['defaultSampleRate'])
+            frames_per_buffer = max(160, int(rate * RECORD_FRAME_SECONDS))
+
+            try:
+                stream = p.open(
+                    format=pyaudio.paInt16,
+                    channels=channels,
+                    rate=rate,
+                    input=True,
+                    frames_per_buffer=frames_per_buffer,
+                    input_device_index=device_index,
+                )
+            except Exception:
+                _log_error(f'{label}: open stream')
+                time_module.sleep(1.0)
+                continue
+
+            frame_seconds_actual = frames_per_buffer / float(rate)
+            device_check_every = max(1, int(DEVICE_CHECK_SECONDS / frame_seconds_actual))
+            frames_since_check = 0
+
+            try:
+                while not stop_event.is_set():
+                    try:
+                        data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                    except Exception:
+                        _log_error(f'{label}: stream read')
+                        time_module.sleep(0.3)
+                        continue
+
+                    samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+                    if channels > 1:
+                        samples = samples.reshape(-1, channels).mean(axis=1)
+                    samples = _resample_linear(samples, rate, RECORD_MIX_RATE)
+                    out_queue.put(samples)
+
+                    frames_since_check += 1
+                    if frames_since_check >= device_check_every:
+                        frames_since_check = 0
+                        try:
+                            current = _resolve_capture_device(p, pyaudio, is_system)
+                            if current['index'] != device_index or current['name'] != device_name:
+                                break  # device changed — reconnect to the new default
+                        except Exception:
+                            _log_error(f'{label}: recheck device')
+            finally:
+                try:
+                    stream.stop_stream()
+                    stream.close()
+                except Exception:
+                    pass
 
     except Exception:
         _log_error(f'{label}: setup')
     finally:
-        try:
-            if stream is not None:
-                stream.stop_stream()
-                stream.close()
-        except Exception:
-            pass
         try:
             if p is not None:
                 p.terminate()

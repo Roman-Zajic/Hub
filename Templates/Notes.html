@@ -47,15 +47,31 @@
        based on connection count (see nodeColor()/linkColor() in the script). */
     .graph-link { stroke-width: 1; }
     .graph-link.dim { opacity: 0.1 !important; }
+    .graph-link.highlight { stroke-width: 1.8; }
     .graph-node-rect { stroke: var(--teal-900); stroke-width: 0.6; cursor: pointer; }
     .graph-node-rect.dim { opacity: 0.2; }
     .graph-node-rect:hover { stroke-width: 1.6; }
+    .graph-node-rect.neighbor { stroke-width: 1.5; filter: drop-shadow(0 0 0.8px var(--teal-900)); }
     .graph-node-label {
-        font-family: var(--font); font-size: 3.4px; fill: var(--ink);
-        pointer-events: none; opacity: 0.85; transition: opacity 100ms, font-size 100ms;
+        font-family: var(--font); font-size: 2.3px; fill: var(--teal-400);
+        pointer-events: none; opacity: 0.75; transition: opacity 100ms, font-size 100ms, fill 100ms;
+        /* Halo behind the glyphs (same color as the canvas background) so
+           overlapping labels/links from neighboring notes don't turn the
+           text into an unreadable smudge — this "erases" whatever is behind
+           each letter instead of needing real collision avoidance. */
+        paint-order: stroke fill;
+        stroke: var(--surface-in);
+        stroke-width: 1.4px;
+        stroke-linejoin: round;
     }
-    .graph-node-label.dim { opacity: 0.2; }
-    .graph-node-label.show { opacity: 1; font-size: 4.2px; font-weight: 600; }
+    .graph-node-label.dim { opacity: 0.1; }
+    .graph-node-label.neighbor { opacity: 1; fill: var(--teal-700); font-weight: 600; }
+    .graph-node-label.show { opacity: 1; font-size: 3px; font-weight: 700; fill: var(--teal-900); }
+
+    /* Inside the full-screen modal the halo needs to match ITS background,
+       not the sidebar mini-panel's — otherwise labels get a visible teal
+       square around them instead of blending in. */
+    .graph-modal-shell .graph-node-label { stroke: var(--surface-in); }
 
     /* ── Expanded modal: graph + close button only, takes most of the screen ── */
     .graph-modal-shell {
@@ -947,6 +963,9 @@
     var GRAPH_W = 100, GRAPH_H = 100;
     var GRAPH_PAD = 9; // keeps squares off the canvas edge
     var GRAPH_NODE_SIZE = 2.4; // fixed square size for every note — only color varies
+    var LABEL_MAX_CHARS = 11;   // wrap width, in characters
+    var LABEL_MAX_LINES = 2;    // longer titles get truncated with an ellipsis
+    var LABEL_LINE_HEIGHT = 2.6; // svg user-units between wrapped lines
     var graphNodes = [], graphLinks = [], graphNodeById = {};
     var graphMaxDegree = 1;
     var graphRAF = null, graphDragNode = null, graphDragSvg = null, graphHoverId = null;
@@ -1073,6 +1092,36 @@
         return { color: tealShade(t), opacity: 0.3 + t * 0.45 };
     }
 
+    // Wraps a note title onto up to LABEL_MAX_LINES lines of roughly
+    // LABEL_MAX_CHARS characters each (word-wrapped, not mid-word), with an
+    // ellipsis if it still doesn't fit — SVG <text> has no native wrapping.
+    function wrapLabel(text, maxChars, maxLines) {
+        var words = String(text || '').split(/\s+/).filter(Boolean);
+        var lines = [];
+        var current = '';
+        words.forEach(function (w) {
+            var test = current ? current + ' ' + w : w;
+            if (test.length > maxChars && current) {
+                lines.push(current);
+                current = w;
+            } else {
+                current = test;
+            }
+        });
+        if (current) lines.push(current);
+
+        if (lines.length > maxLines) {
+            lines = lines.slice(0, maxLines);
+            var last = lines[maxLines - 1];
+            lines[maxLines - 1] = (last.length > maxChars - 1 ? last.slice(0, maxChars - 1) : last) + '\u2026';
+        } else {
+            lines = lines.map(function (l) {
+                return l.length > maxChars ? l.slice(0, maxChars - 1) + '\u2026' : l;
+            });
+        }
+        return lines.length ? lines : [''];
+    }
+
     // ── Rendering ────────────────────────────────────────────
     function renderGraphInto(wrapId) {
         var wrap = document.getElementById(wrapId);
@@ -1116,8 +1165,15 @@
 
             var label = document.createElementNS(ns, 'text');
             label.setAttribute('class', 'graph-node-label');
-            label.textContent = node.label;
             label.setAttribute('text-anchor', 'middle');
+            var lines = wrapLabel(node.label, LABEL_MAX_CHARS, LABEL_MAX_LINES);
+            label.dataset.lineCount = lines.length;
+            lines.forEach(function (line, li) {
+                var tspan = document.createElementNS(ns, 'tspan');
+                tspan.textContent = line;
+                if (li > 0) tspan.setAttribute('dy', LABEL_LINE_HEIGHT);
+                label.appendChild(tspan);
+            });
 
             g.appendChild(rect); g.appendChild(label);
             nodeGroup.appendChild(g);
@@ -1157,8 +1213,10 @@
             if (!s || !t) return;
             line.setAttribute('x1', s.x); line.setAttribute('y1', s.y);
             line.setAttribute('x2', t.x); line.setAttribute('y2', t.y);
-            var dim = !!(graphHoverId && s.id !== graphHoverId && t.id !== graphHoverId);
+            var touchesHover = !!graphHoverId && (s.id === graphHoverId || t.id === graphHoverId);
+            var dim = !!graphHoverId && !touchesHover;
             line.classList.toggle('dim', dim);
+            line.classList.toggle('highlight', touchesHover);
             line.style.opacity = dim ? '' : line.dataset.opacity;
         });
 
@@ -1168,14 +1226,24 @@
             var rect = g.querySelector('rect'), size = parseFloat(rect.dataset.size);
             rect.setAttribute('x', node.x - size / 2);
             rect.setAttribute('y', node.y - size / 2);
+
             var label = g.querySelector('text');
+            var lineCount = parseInt(label.dataset.lineCount, 10) || 1;
+            var stackHeight = (lineCount - 1) * LABEL_LINE_HEIGHT;
             label.setAttribute('x', node.x);
-            label.setAttribute('y', node.y - size / 2 - 1.4);
+            label.setAttribute('y', node.y - size / 2 - 1.3 - stackHeight);
+            Array.prototype.forEach.call(label.children, function (tspan) {
+                tspan.setAttribute('x', node.x);
+            });
 
             var isHover = graphHoverId === node.id;
-            var isDimmed = !!(graphHoverId && !isHover && !isNeighbor(node.id, graphHoverId));
+            var isNeighborNode = !!graphHoverId && !isHover && isNeighbor(node.id, graphHoverId);
+            var isDimmed = !!graphHoverId && !isHover && !isNeighborNode;
+
             rect.classList.toggle('dim', isDimmed);
+            rect.classList.toggle('neighbor', isNeighborNode);
             label.classList.toggle('dim', isDimmed);
+            label.classList.toggle('neighbor', isNeighborNode);
             label.classList.toggle('show', isHover);
         });
     }

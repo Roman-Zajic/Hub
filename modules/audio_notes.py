@@ -88,15 +88,25 @@ FILE_TRANSCRIBE_BEAM_SIZE = 5     # uploaded files are offline/batch, so it's wo
 
 # Models selectable from the dropdown in the UI. distil-* and *.en models are
 # English-only. Roughly fastest/roughest -> slowest/most-accurate on CPU.
+#
+# No official (or community) "small" distilled Polish/multilingual Whisper
+# model exists as of this writing — distil-whisper is English-only by
+# design; the only Polish "distil" checkpoint found anywhere is a
+# community distillation of large-v3 (much heavier than "small", a
+# different tier entirely), so it isn't listed here. Plain 'small' below
+# is the multilingual option to reach for instead when a call needs
+# non-English support — see the "model selected at queue time" fix in
+# _capture_loop/_process_and_emit for why switching to it mid-call is now
+# safe for anything already queued under the previous model.
 AVAILABLE_MODELS = [
-    ('tiny.en', 'Tiny (English) — default, fastest, roughest'),
+    ('tiny.en', 'Tiny (English) — fastest, roughest'),
     ('base', 'Base — fast Whisper'),
     ('small', 'Small — balanced, multilingual'),
-    ('distil-small.en', 'Distil Small (English) — fast + better than base'),
+    ('distil-small.en', 'Distil Small (English) — default, fast + better than base'),
     ('distil-medium.en', 'Distil Medium (English) — balanced'),
     ('medium', 'Medium — slower, multilingual'),
 ]
-DEFAULT_MODEL = 'tiny.en'
+DEFAULT_MODEL = 'distil-small.en'
 
 # ── File paths ───────────────────────────────────────────────────────
 DATA_FOLDER = os.path.join(os.getcwd(), 'Audio Notes Data')
@@ -156,8 +166,8 @@ def _pa_release():
             _pa_instance = None
 
 # Live capture: a persistent queue per stream decouples audio reading from
-# transcription (see _capture_loop / _worker_loop below) — this is the fix
-# for audio being dropped while a chunk is transcribing.
+# transcription (see _capture_loop / _merge_worker_loop below) — this is
+# the fix for audio being dropped while a chunk is transcribing.
 #
 # Mic and System Audio each have their own capture pipeline, but two
 # different things can independently ask for either one to be running:
@@ -165,37 +175,48 @@ def _pa_release():
 #     decide whether that source's transcript streams into the on-screen
 #     textarea.
 #   - _daily_log_active — the single Daily Notes button, which always wants
-#     BOTH mic and system audio (and writes both to the daily .txt file,
-#     regardless of what the textarea buttons are doing).
 # A source's capture thread runs whenever EITHER consumer wants it — see
 # _sync_mic_capture() / _sync_system_capture(), called after every toggle.
-# Mic defaults to ON (streaming to the textarea, auto-started in on_load()
-# below). Daily Log and System-to-textarea default to OFF.
+# Mic and System-to-textarea both default to OFF. Daily Log defaults to ON,
+# which — per _sync_mic_capture/_sync_system_capture — pulls BOTH mic and
+# system-audio capture on with it even though their own textarea buttons
+# stay off.
 #
-# System Audio must be started with a manual click (never auto-started at
-# boot). This is deliberate: auto-starting WASAPI loopback from a background
-# thread at app boot has twice caused a hard process crash (an
-# unrecoverable native access violation, exit code -1073741819 /
-# 0xC0000005 — no Python traceback, since it's not a catchable exception)
-# — once via a dedicated daily system-audio thread, and again when System
-# was simply auto-started the same way Mic is here. Mic-only auto-start has
-# never triggered this. A manual click (which runs from a Flask request
-# thread, not at startup) has been reliably fine, same as Record already
-# works. This is also why Daily Log defaults to OFF: turning it on starts
-# System Audio capture too, and that must only ever happen from a request
-# thread, never from on_load().
-_mic_to_textarea = True
+# System Audio must be started with a manual click / a real Flask request
+# thread — NEVER auto-started directly from on_load(). This is not
+# optional: auto-starting WASAPI loopback from a background thread at app
+# boot has twice caused a hard process crash (an unrecoverable native
+# access violation, exit code -1073741819 / 0xC0000005 — no Python
+# traceback, since it's not a catchable exception) — once via a dedicated
+# daily system-audio thread, and again when System was simply auto-started
+# the same way Mic used to be. A manual click, or any call made from
+# inside a Flask route handler (a real request thread), has been reliably
+# fine — same as Record already works.
+#
+# Since Daily Log now defaults to ON, satisfying that default still means
+# System Audio (and Mic) capture need to start automatically at some
+# point — just never inside on_load() itself. _ensure_boot_capture_started()
+# below does this exactly once, the first time any audio_notes route is hit
+# (i.e. the moment the page is opened in a browser, which is a real request
+# thread), rather than at process startup.
+_mic_to_textarea = False
 _mic_capture_thread = None
-_mic_worker_thread = None
 _mic_stop_event = None
 _mic_queue = queue.Queue()
 
 _system_to_textarea = False
 _system_capture_thread = None
-_system_worker_thread = None
 _system_stop_event = None
 _system_queue = queue.Queue()
 
+# Transcription itself is done by a SINGLE global worker thread (see
+# _merge_worker_loop below, started once from on_load()), not one worker
+# thread per source. Mic and System each still get their own independent
+# capture (VAD-segmenting) thread and queue — only the "consume +
+# transcribe" side is merged, so utterances from both sources get
+# transcribed in true chronological order (by when they started being
+# spoken) instead of in whichever order two concurrent worker threads
+# happen to finish.
 _mic_processing = False       # True while a mic utterance is actively being transcribed
 _system_processing = False    # True while a system-audio utterance is actively being transcribed
 
@@ -207,20 +228,51 @@ _system_processing = False    # True while a system-audio utterance is actively 
 # _emit_transcript, which is the single place both destinations are fed
 # from, using the exact same tagged "[HH:MM:SS] [Mic/Sys] text [HH:MM:SS]"
 # format in both places.
-_daily_log_active = False
+_daily_log_active = True
+
+# Count of utterances currently sitting in _mic_queue/_system_queue that
+# are actually destined for the Daily Log (i.e. utterance_wants_daily_log
+# was True at capture time — see _capture_loop) and haven't been
+# transcribed yet. Daily Log runs silently in the background — often with
+# the textarea buttons themselves toggled off — so qsize() on the raw
+# queues isn't enough to tell whether anything is piling up specifically
+# for the log file; this is what the "queued" badge next to the Daily Log
+# button (poll_route's 'daily_log_queue_depth') is driven by. Incremented
+# in _capture_loop right when such an utterance is queued, decremented in
+# _merge_worker_loop right when it's dequeued for transcription.
+_daily_log_queue_lock = threading.Lock()
+_daily_log_queue_depth = 0
+
+
+def _daily_log_queue_incr():
+    global _daily_log_queue_depth
+    with _daily_log_queue_lock:
+        _daily_log_queue_depth += 1
+
+
+def _daily_log_queue_decr():
+    global _daily_log_queue_depth
+    with _daily_log_queue_lock:
+        _daily_log_queue_depth = max(0, _daily_log_queue_depth - 1)
+
+# Guards _ensure_boot_capture_started() (see on_load()/audio_notes_view()/
+# poll_route() below) so the deferred boot-time sync described above runs
+# exactly once, and only from a request thread.
+_boot_capture_synced = False
 
 # Mic -> WAV recording (independent of live transcription capture above)
+
 _recording_active = False
 _recording_thread = None
 _recording_stop_event = None
 _recording_path = None
 _recording_started_at = None   # epoch seconds, for the frontend's elapsed timer
 
-_model = None                          # the currently loaded WhisperModel instance
-_model_name = None                     # name of the model that's actually loaded
-_selected_model_name = DEFAULT_MODEL   # name the user has chosen via the dropdown
-_model_lock = threading.Lock()
-_model_loading = False                 # True while a (re)load is in progress
+_selected_model_name = DEFAULT_MODEL   # name the user has currently chosen via the dropdown
+# NOTE: the actual loaded-model cache (_model_cache / _model_lock /
+# _model_loading / _model_loading_name) is defined further down, right
+# next to _get_model() — see the comment there for why it's a small keyed
+# cache rather than a single slot.
 
 
 def _warm_model():
@@ -232,7 +284,7 @@ def _warm_model():
     threads, this touches no WASAPI/COM state, so it's safe to start here
     rather than needing a request-thread click."""
     try:
-        _get_model()
+        _get_model(_selected_model_name)
     except Exception:
         _log_error('model warm-up')
 
@@ -244,16 +296,46 @@ def on_load():
     _cleanup_stale_content_tmp()
     _cleanup_stale_uploads()
     threading.Thread(target=_warm_model, daemon=True).start()
-    # Only Mic auto-starts here (via _sync_mic_capture, since
-    # _mic_to_textarea defaults True). System Audio deliberately does NOT —
-    # see the comment on _system_to_textarea/_daily_log_active above for why
-    # (it's the confirmed trigger for a hard process crash when auto-started
-    # this way). _daily_log_active also defaults False for the same reason:
-    # turning it on is what makes System Audio capture start, and that must
-    # only ever happen from a Flask request thread (a button click), never
-    # from here.
-    _sync_mic_capture()
-    _sync_system_capture()
+    # The single merge-transcription worker (see _merge_worker_loop) runs
+    # for the whole process lifetime, independent of Mic/System being
+    # toggled on/off. It touches no WASAPI/COM state — it only reads from
+    # the two queues that _capture_loop threads feed and calls Whisper —
+    # so, unlike starting capture itself, it's safe to launch directly
+    # from on_load()'s background thread.
+    threading.Thread(target=_merge_worker_loop, daemon=True).start()
+    # Deliberately does NOT call _sync_mic_capture()/_sync_system_capture()
+    # here. Daily Log defaults to ON (see _daily_log_active above), which
+    # means satisfying that default requires starting System Audio capture
+    # — and auto-starting WASAPI loopback from a background thread at app
+    # boot is a confirmed, repeatable hard-crash trigger (see the long
+    # comment on _mic_to_textarea above). Actually starting mic/system
+    # capture to match the defaults is instead deferred to
+    # _ensure_boot_capture_started(), called from audio_notes_view() and
+    # poll_route() below — both of which only ever run inside a real Flask
+    # request thread, never at process startup.
+
+
+def _ensure_boot_capture_started():
+    """Brings capture threads in line with the default toggle states
+    (Daily Log ON, which needs both Mic and System running) exactly once,
+    the first time any audio_notes route is hit. This exists purely so
+    that start happens from a genuine Flask request thread rather than
+    from on_load()'s background thread — see the crash-safety note on
+    _mic_to_textarea above for why that distinction matters. Safe to call
+    on every request after the first: it no-ops immediately once the
+    one-time sync has run."""
+    global _boot_capture_synced
+    if _boot_capture_synced:
+        return
+    with _state_lock:
+        if _boot_capture_synced:
+            return
+        _boot_capture_synced = True
+    try:
+        _sync_mic_capture()
+        _sync_system_capture()
+    except Exception:
+        _log_error('boot capture sync')
 
 
 # ── Error logging (never let a logging failure crash the caller) ─────
@@ -354,13 +436,17 @@ def _format_tagged_line(start_dt, end_dt, text, is_system):
     return f'[{start_dt.strftime("%H:%M:%S")}] [{tag}] {text} [{end_dt.strftime("%H:%M:%S")}]'
 
 
-def _emit_transcript(text, start_dt, end_dt, is_system):
-    """Routes one finished utterance to whichever destination(s) currently
-    want that source, tagging it the same way in both places:
-      - the on-screen textarea, if this source's "stream to textarea"
-        button (_mic_to_textarea / _system_to_textarea) is on
-      - the day's Daily Log .txt file, if _daily_log_active is on (which
-        always wants both sources)
+def _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_daily_log):
+    """Routes one finished utterance to whichever destination(s) wanted
+    that source AT THE MOMENT IT WAS CAPTURED (wants_textarea /
+    wants_daily_log, stamped by _capture_loop when the utterance opened —
+    see utterance_wants_textarea / utterance_wants_daily_log there), not
+    whichever toggle state happens to be current by the time transcription
+    actually finishes. Without this, toggling Mic/System-to-textarea or
+    Daily Log off while a backlog is still queued would silently drop
+    those already-spoken utterances from a destination they were actually
+    recorded for — turning it off is a "stop capturing new stuff for this
+    destination from now on", not "un-happen everything already queued".
     A given utterance is transcribed exactly once here regardless of how
     many destinations want it — only the routing differs."""
     global _content
@@ -368,7 +454,6 @@ def _emit_transcript(text, start_dt, end_dt, is_system):
         return
 
     line = _format_tagged_line(start_dt, end_dt, text, is_system)
-    wants_textarea = _system_to_textarea if is_system else _mic_to_textarea
 
     if wants_textarea:
         with _lock:
@@ -377,37 +462,76 @@ def _emit_transcript(text, start_dt, end_dt, is_system):
             _pending_chunks.append(line + '\n')
             _save_content(_content)
 
-    if _daily_log_active:
+    if wants_daily_log:
         _append_daily_log(start_dt, line)
 
 
-# ── Whisper model (lazy — (re)loaded on demand, one instance shared) ──
+# ── Whisper model (lazy — (re)loaded on demand, small keyed cache) ────
 # Switching the dropdown just updates _selected_model_name; the actual
-# (potentially slow, first-download) load happens here, the next time
-# something needs to transcribe.
+# (potentially slow, first-download) load happens in _get_model(), the
+# next time something needs to transcribe.
+#
+# This is a small cache keyed by model name, not a single slot, and
+# _get_model() takes an explicit `target` rather than reading
+# _selected_model_name itself. That's deliberate: each queued utterance is
+# stamped (in _capture_loop, at the moment it's queued) with whichever
+# model was selected right then, and is transcribed with THAT model in
+# _process_and_emit — not whatever the dropdown has since moved on to. In
+# a meeting where the language switches (e.g. English -> multilingual for
+# a Polish segment -> English again), a backlog of English-tagged
+# utterances that hasn't been drained yet stays correctly tagged English
+# even after the dropdown is flipped to multilingual and back, instead of
+# silently being re-transcribed with whatever model happens to be
+# "current" by the time the worker thread gets to them.
+#
+# Keeping a small cache (rather than reloading from scratch on every
+# single switch) means toggling between the same two models repeatedly
+# during one call doesn't pay the full load cost each time. Capped at
+# _MODEL_CACHE_MAX so memory doesn't grow unbounded if many different
+# models get selected over a long session — the least-recently-used
+# model is evicted first.
+_model_cache = {}          # model name -> loaded WhisperModel instance
+_model_cache_order = []    # model names, least-recently-used first
+_MODEL_CACHE_MAX = 2
+_model_lock = threading.Lock()
+_model_loading = False     # True while ANY (re)load is in progress
+_model_loading_name = None  # which model name is currently being loaded, if any
 
-def _get_model():
-    global _model, _model_name, _model_loading
-    target = _selected_model_name
-    if _model is not None and _model_name == target:
-        return _model
+
+def _touch_model_cache(name):
+    if name in _model_cache_order:
+        _model_cache_order.remove(name)
+    _model_cache_order.append(name)
+
+
+def _get_model(target):
+    """Returns the loaded WhisperModel for `target`, loading it (and
+    evicting the least-recently-used cached model if the cache is full)
+    if it isn't already resident."""
+    global _model_loading, _model_loading_name
     with _model_lock:
-        target = _selected_model_name  # re-read: may have changed while we waited for the lock
-        if _model is not None and _model_name == target:
-            return _model
+        if target in _model_cache:
+            _touch_model_cache(target)
+            return _model_cache[target]
         _model_loading = True
+        _model_loading_name = target
         try:
             from faster_whisper import WhisperModel
-            _model = WhisperModel(
+            model = WhisperModel(
                 target,
                 device=WHISPER_DEVICE,
                 compute_type=WHISPER_COMPUTE_TYPE,
                 cpu_threads=WHISPER_CPU_THREADS,
             )
-            _model_name = target
+            _model_cache[target] = model
+            _touch_model_cache(target)
+            while len(_model_cache_order) > _MODEL_CACHE_MAX:
+                oldest = _model_cache_order.pop(0)
+                _model_cache.pop(oldest, None)
+            return model
         finally:
             _model_loading = False
-    return _model
+            _model_loading_name = None
 
 
 def _model_is_english_only(name):
@@ -428,10 +552,11 @@ def _resample_linear(samples, orig_sr, target_sr):
     return np.interp(target_idx, orig_idx, samples).astype(np.float32)
 
 
-def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_system):
+def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_system, model_name,
+                       wants_textarea, wants_daily_log):
     """Transcribes one already-VAD-segmented utterance (live mic/system
-    capture). Runs on a worker thread, never on the audio-reading thread —
-    see _capture_loop / _worker_loop."""
+    capture). Runs on the single merge-worker thread, never on the
+    audio-reading thread — see _capture_loop / _merge_worker_loop."""
     try:
         import numpy as np
         samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
@@ -439,8 +564,14 @@ def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_sys
             samples = samples.reshape(-1, channels).mean(axis=1)
         samples = _resample_linear(samples, rate, 16000)
 
-        model_name = _selected_model_name
-        model = _get_model()
+        # model_name is the model that was SELECTED AT THE MOMENT this
+        # utterance was queued (stamped by _capture_loop) — not whatever
+        # _selected_model_name / the dropdown has since moved on to. This
+        # is what makes a backlog transcribe correctly with the language
+        # it was actually captured under, even if the dropdown changed
+        # (e.g. English -> multilingual -> English) before the worker
+        # thread got around to draining it.
+        model = _get_model(model_name)
         lang = 'en' if _model_is_english_only(model_name) else None
 
         # condition_on_previous_text=False is the setting recommended for the
@@ -462,7 +593,12 @@ def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_sys
         )
         text = ' '.join(seg.text.strip() for seg in segments).strip()
         if text:
-            _emit_transcript(text, start_dt, end_dt, is_system)
+            # wants_textarea / wants_daily_log are likewise stamped at
+            # capture time, not read fresh here — see _emit_transcript for
+            # why: toggling either off while this utterance was still
+            # queued must not make an already-spoken line vanish from a
+            # destination it was actually captured for.
+            _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_daily_log)
     except Exception:
         _log_error(f'{label}: transcribe')
 
@@ -520,7 +656,7 @@ def _transcribe_file(path):
     hood), which pulls the audio track out of a video container directly —
     but does require the "av" package to be installed."""
     model_name = _selected_model_name
-    model = _get_model()
+    model = _get_model(model_name)
     lang = 'en' if _model_is_english_only(model_name) else None
 
     if os.path.splitext(path)[1].lower() == '.wav':
@@ -550,10 +686,12 @@ def _set_processing(label, value):
 # _capture_loop's only job is reading the stream and segmenting it by voice
 # activity; it NEVER calls Whisper directly, so it can never be blocked by
 # a slow transcription. Finished utterances are handed to a queue instead;
-# a separate _worker_loop thread drains that queue and does the actual (slow)
-# transcription. If transcription temporarily falls behind, utterances queue
-# up rather than audio getting silently dropped by the OS-level stream buffer
-# overflowing — a lagging transcript, never lost speech.
+# the single _merge_worker_loop thread (shared across both mic and system
+# — see its docstring) drains both queues in chronological order and does
+# the actual (slow) transcription. If transcription temporarily falls
+# behind, utterances queue up rather than audio getting silently dropped by
+# the OS-level stream buffer overflowing — a lagging transcript, never
+# lost speech.
 
 def _resolve_capture_device(p, pyaudio, is_system):
     """Resolves whichever device Windows *currently* considers the default
@@ -601,6 +739,19 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
         utterance_buf = bytearray()
         utterance_frames = 0
         utterance_start_dt = None
+        # Stamped with _selected_model_name the moment an utterance opens
+        # (see below) and carried through to every out_queue.put() for
+        # that utterance, so it's transcribed with the model that was
+        # actually selected at capture time — even if the dropdown moves
+        # on to something else before a backlogged queue gets drained.
+        utterance_model_name = None
+        # Same idea, for routing: stamped with whether the textarea button
+        # and Daily Log were on AT THE MOMENT this utterance was captured,
+        # so toggling either off while a backlog is still queued doesn't
+        # retroactively make an already-spoken utterance vanish from a
+        # destination it was recorded for (see _emit_transcript).
+        utterance_wants_textarea = None
+        utterance_wants_daily_log = None
         channels = 1
         rate = 16000
 
@@ -695,6 +846,9 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
                         utterance_buf = bytearray()
                         utterance_frames = 0
                         utterance_start_dt = datetime.now()
+                        utterance_model_name = _selected_model_name
+                        utterance_wants_textarea = _system_to_textarea if is_system else _mic_to_textarea
+                        utterance_wants_daily_log = _daily_log_active
 
                     if in_speech:
                         utterance_buf.extend(data)
@@ -708,7 +862,9 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
                             voiced_run = 0
                             silence_run = 0
                             if utterance_frames >= min_utterance_frames:
-                                out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system))
+                                out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system, utterance_model_name, utterance_wants_textarea, utterance_wants_daily_log))
+                                if utterance_wants_daily_log:
+                                    _daily_log_queue_incr()
                             utterance_buf = bytearray()
                             utterance_frames = 0
 
@@ -738,7 +894,9 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
                 # words — flush whatever was buffered on the old device
                 # before reconnecting, exactly like a normal stop would.
                 if in_speech and utterance_frames >= min_utterance_frames:
-                    out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system))
+                    out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system, utterance_model_name, utterance_wants_textarea, utterance_wants_daily_log))
+                    if utterance_wants_daily_log:
+                        _daily_log_queue_incr()
                 in_speech = False
                 voiced_run = 0
                 silence_run = 0
@@ -754,7 +912,9 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
         # already heard, so flush whatever's buffered to the queue and let
         # the worker thread transcribe it like any other utterance.
         if in_speech and utterance_frames >= min_utterance_frames:
-            out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system))
+            out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system, utterance_model_name, utterance_wants_textarea, utterance_wants_daily_log))
+            if utterance_wants_daily_log:
+                _daily_log_queue_incr()
 
     except Exception:
         _log_error(f'{label}: setup')
@@ -764,45 +924,105 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
         _com_thread_uninit()
 
 
-def _worker_loop(label, stop_event, in_queue):
-    """Drains in_queue and transcribes each utterance in order. Keeps running
-    (even after stop_event is set) until the queue is empty, so toggling a
-    stream off never throws away audio that was already captured — it just
-    finishes catching up on what's left, then exits."""
+# ── Single global transcription worker (merges mic + system in order) ──
+# Mic and system audio are two independently-running VAD segmenters, so an
+# utterance that STARTED earlier is not guaranteed to be QUEUED first — a
+# short utterance on one source can finish and land in its queue well
+# before a long, still-in-progress utterance on the other source that
+# actually began speaking earlier. Two separate worker threads (the old
+# design) made this worse: even if queuing order were correct, whichever
+# thread's Whisper call happened to FINISH first would win the race to
+# append to the shared transcript, regardless of which utterance started
+# first.
+#
+# _merge_worker_loop fixes both problems by being the only thing that
+# transcribes: a single thread that looks at the oldest pending item from
+# each queue and only ever processes the one with the earlier start_dt.
+# If only one queue currently has something, that item is only "safe" to
+# process once it's older than _MAX_QUEUE_DELAY — the worst-case time an
+# utterance can sit being captured before _capture_loop is forced to flush
+# it (VAD_MAX_UTTERANCE_SECONDS + VAD_HANGOVER_SECONDS, plus a small
+# safety margin). Until then, the other source could still, in principle,
+# produce an utterance that started even earlier, so the lone item waits.
+# In normal back-and-forth conversation both queues have something to
+# compare almost all the time, so this rarely adds any real latency — the
+# worst case only shows up after one source goes completely silent for a
+# stretch.
+#
+# Runs for the whole lifetime of the process (started once, from
+# on_load(), like _warm_model) rather than being tied to Mic/System being
+# toggled on/off — it simply idles when both queues are empty, and keeps
+# draining whatever's left even after a source is switched off, so
+# nothing already captured is ever discarded.
+_MAX_QUEUE_DELAY = VAD_MAX_UTTERANCE_SECONDS + VAD_HANGOVER_SECONDS + 0.5
+
+
+def _dequeue_nowait(q):
+    try:
+        return q.get_nowait()
+    except queue.Empty:
+        return None
+
+
+def _merge_worker_loop():
+    mic_head = None  # a dequeued-but-not-yet-processed item from _mic_queue, or None
+    sys_head = None  # same, for _system_queue
+
     while True:
-        try:
-            raw, channels, rate, start_dt, end_dt, is_system = in_queue.get(timeout=0.25)
-        except queue.Empty:
-            if stop_event.is_set():
-                break
+        if mic_head is None:
+            mic_head = _dequeue_nowait(_mic_queue)
+        if sys_head is None:
+            sys_head = _dequeue_nowait(_system_queue)
+
+        if mic_head is not None and sys_head is not None:
+            # Both sides have something waiting — direct comparison is
+            # unambiguous, no need to wait.
+            if mic_head[3] <= sys_head[3]:   # index 3 = start_dt
+                item, mic_head = mic_head, None
+            else:
+                item, sys_head = sys_head, None
+        elif mic_head is not None or sys_head is not None:
+            head = mic_head if mic_head is not None else sys_head
+            age = (datetime.now() - head[3]).total_seconds()
+            if age >= _MAX_QUEUE_DELAY:
+                # Old enough that the other (currently empty) queue could
+                # not possibly still produce anything that started earlier.
+                item = head
+                if mic_head is not None:
+                    mic_head = None
+                else:
+                    sys_head = None
+            else:
+                time_module.sleep(0.15)
+                continue
+        else:
+            time_module.sleep(0.15)
             continue
 
+        raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_daily_log = item
+        if wants_daily_log:
+            _daily_log_queue_decr()
+        label = 'system' if is_system else 'mic'
         _set_processing(label, True)
         try:
-            _process_and_emit(label, raw, channels, rate, start_dt, end_dt, is_system)
+            _process_and_emit(label, raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_daily_log)
         except Exception:
-            _log_error(f'{label}: worker loop')
+            _log_error(f'{label}: merge worker')
         finally:
             _set_processing(label, False)
-            in_queue.task_done()
-
-    _set_processing(label, False)
 
 
 # ── Thread lifecycle: live mic / system capture ───────────────────────
 
 def _start_mic():
-    global _mic_capture_thread, _mic_worker_thread, _mic_stop_event
+    global _mic_capture_thread, _mic_stop_event
     with _state_lock:
         if _mic_capture_thread and _mic_capture_thread.is_alive():
             return
         _mic_stop_event = threading.Event()
         _mic_capture_thread = threading.Thread(
             target=_capture_loop, args=('mic', _mic_stop_event, False, _mic_queue), daemon=True)
-        _mic_worker_thread = threading.Thread(
-            target=_worker_loop, args=('mic', _mic_stop_event, _mic_queue), daemon=True)
         _mic_capture_thread.start()
-        _mic_worker_thread.start()
 
 
 def _stop_mic():
@@ -814,17 +1034,14 @@ def _stop_mic():
 
 
 def _start_system():
-    global _system_capture_thread, _system_worker_thread, _system_stop_event
+    global _system_capture_thread, _system_stop_event
     with _state_lock:
         if _system_capture_thread and _system_capture_thread.is_alive():
             return
         _system_stop_event = threading.Event()
         _system_capture_thread = threading.Thread(
             target=_capture_loop, args=('system', _system_stop_event, True, _system_queue), daemon=True)
-        _system_worker_thread = threading.Thread(
-            target=_worker_loop, args=('system', _system_stop_event, _system_queue), daemon=True)
         _system_capture_thread.start()
-        _system_worker_thread.start()
 
 
 def _stop_system():
@@ -1107,6 +1324,7 @@ def _stop_recording():
 
 @bp.route('/audio_notes')
 def audio_notes_view():
+    _ensure_boot_capture_started()
     with _lock:
         content = _content
     return render_template(
@@ -1126,6 +1344,7 @@ def audio_notes_view():
 @bp.route('/api/audio_notes/poll')
 def poll_route():
     global _pending_chunks
+    _ensure_boot_capture_started()
     with _lock:
         pending = ''.join(_pending_chunks)
         _pending_chunks = []
@@ -1140,6 +1359,7 @@ def poll_route():
         'model_loading': _model_loading,
         'current_model': _selected_model_name,
         'daily_log_enabled': _daily_log_active,
+        'daily_log_queue_depth': _daily_log_queue_depth,
         'recording_active': _recording_active,
         'recording_started_at': (int(_recording_started_at * 1000) if _recording_active and _recording_started_at else None),
         'recording_file': (os.path.basename(_recording_path) if _recording_active and _recording_path else None),

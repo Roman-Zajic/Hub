@@ -74,6 +74,7 @@
     /* Icon-only toggle (no label) — used for the Daily Log on/off button.
        Square, sized to match the other toolbar buttons' height. */
     .btn-icon {
+        position: relative;
         width: calc(0.875rem + 18px);
         min-height: calc(0.875rem + 18px);
         padding: 0 !important;
@@ -85,6 +86,28 @@
     .btn-icon svg { width: 16px; height: 16px; display: block; }
     .btn-icon.active { background: var(--teal-700); border-color: var(--teal-700); color: #fff; }
     .btn-icon.active:hover { background: var(--teal-900); border-color: var(--teal-900); }
+
+    /* Count of utterances captured for the Daily Log but not yet
+       transcribed — see daily_log_queue_depth in poll_route(). Hidden
+       whenever it's zero so the button looks unchanged the rest of the
+       time; only appears once something is actually backlogged. */
+    .an-daily-log-badge {
+        display: none;
+        position: absolute;
+        top: -6px;
+        right: -6px;
+        min-width: 16px;
+        height: 16px;
+        padding: 0 3px;
+        border-radius: 8px;
+        background: var(--amber);
+        color: var(--ink);
+        font-size: 0.625rem;
+        font-weight: 700;
+        line-height: 16px;
+        text-align: center;
+    }
+    .an-daily-log-badge.show { display: block; }
 
     .an-queue-badge {
         font-size: 0.6875rem;
@@ -191,6 +214,7 @@
                 <line x1="8" y1="13" x2="16" y2="13"></line>
                 <line x1="8" y1="17" x2="13" y2="17"></line>
             </svg>
+            <span class="an-daily-log-badge" id="dailyLogQueue" title="Utterances captured for the Daily Log but not yet transcribed"></span>
         </button>
 
         <div class="an-model-picker">
@@ -237,6 +261,7 @@
     var recordBtn = document.getElementById('recordBtn');
     var recTimeEl = document.getElementById('recTime');
     var dailyLogBtn = document.getElementById('dailyLogBtn');
+    var dailyLogQueueEl = document.getElementById('dailyLogQueue');
     var statusEl = document.getElementById('saveStatus');
     var modelSelect = document.getElementById('modelSelect');
     var modelLoadingEl = document.getElementById('modelLoading');
@@ -459,6 +484,9 @@
                 if (!d.recording_active) recTimeEl.textContent = '';
 
                 setToggleState(dailyLogBtn, d.daily_log_enabled);
+                var dailyLogQueued = d.daily_log_queue_depth || 0;
+                dailyLogQueueEl.textContent = dailyLogQueued > 9 ? '9+' : dailyLogQueued;
+                dailyLogQueueEl.classList.toggle('show', dailyLogQueued > 0);
             });
     }
 

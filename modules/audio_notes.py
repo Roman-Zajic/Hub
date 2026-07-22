@@ -116,6 +116,45 @@ _pending_chunks = []               # new transcript text waiting for the fronten
 
 _state_lock = threading.Lock()    # guards thread/flag bookkeeping below
 
+# ── Shared PyAudio instance ───────────────────────────────────────────
+# pyaudiowpatch/PortAudio does not tolerate multiple independent
+# PyAudio() instances existing at once in the same process: terminating
+# ANY one of them tears down shared WASAPI state for ALL of them. That is
+# what caused "OSError: [Errno -9988] Stream closed" on one stream (e.g.
+# mic) whenever another (system audio, or a Record toggle) was stopped
+# and its own PyAudio() instance got terminate()'d — which also explains
+# mic/system capture silently going down to "only one source working"
+# when both were toggled on. Fix: never create more than one PyAudio()
+# instance per process — every consumer (live mic, live system, and both
+# recording readers) acquires this same shared instance and releases it
+# when done; it's only actually terminate()'d once the last consumer
+# releases it.
+_pa_lock = threading.Lock()
+_pa_instance = None
+_pa_refcount = 0
+
+
+def _pa_acquire():
+    global _pa_instance, _pa_refcount
+    with _pa_lock:
+        if _pa_instance is None:
+            import pyaudiowpatch as pyaudio
+            _pa_instance = pyaudio.PyAudio()
+        _pa_refcount += 1
+        return _pa_instance
+
+
+def _pa_release():
+    global _pa_instance, _pa_refcount
+    with _pa_lock:
+        _pa_refcount = max(0, _pa_refcount - 1)
+        if _pa_refcount == 0 and _pa_instance is not None:
+            try:
+                _pa_instance.terminate()
+            except Exception:
+                _log_error('pyaudio terminate')
+            _pa_instance = None
+
 # Live capture: a persistent queue per stream decouples audio reading from
 # transcription (see _capture_loop / _worker_loop below) — this is the fix
 # for audio being dropped while a chunk is transcribing.
@@ -549,7 +588,7 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
 
     p = None
     try:
-        p = pyaudio.PyAudio()
+        p = _pa_acquire()
 
         # VAD state lives OUTSIDE the reconnect loop below, so switching the
         # active headset mid-utterance doesn't reset the noise floor for no
@@ -609,13 +648,25 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
             device_check_every = max(1, int(DEVICE_CHECK_SECONDS / frame_seconds_actual))
             frames_since_check = 0
             device_changed = False
+            # Counts consecutive failed stream.read() calls. A genuinely
+            # dead/closed stream handle (e.g. "OSError: [Errno -9988]
+            # Stream closed") would otherwise retry against the same dead
+            # handle forever, silently going deaf on that source. After
+            # enough consecutive failures, force a full reconnect via the
+            # same path already used for a headset switch.
+            consecutive_read_errors = 0
 
             try:
                 while not stop_event.is_set():
                     try:
                         data = stream.read(frames_per_buffer, exception_on_overflow=False)
+                        consecutive_read_errors = 0
                     except Exception:
                         _log_error(f'{label}: stream read')
+                        consecutive_read_errors += 1
+                        if consecutive_read_errors >= 20:
+                            device_changed = True  # reuse the reconnect path below
+                            break
                         time_module.sleep(0.5)
                         continue
 
@@ -708,11 +759,8 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
     except Exception:
         _log_error(f'{label}: setup')
     finally:
-        try:
-            if p is not None:
-                p.terminate()
-        except Exception:
-            pass
+        if p is not None:
+            _pa_release()
         _com_thread_uninit()
 
 
@@ -858,7 +906,7 @@ def _record_reader_loop(label, stop_event, is_system, out_queue):
 
     p = None
     try:
-        p = pyaudio.PyAudio()
+        p = _pa_acquire()
 
         while not stop_event.is_set():
             try:
@@ -926,11 +974,8 @@ def _record_reader_loop(label, stop_event, is_system, out_queue):
     except Exception:
         _log_error(f'{label}: setup')
     finally:
-        try:
-            if p is not None:
-                p.terminate()
-        except Exception:
-            pass
+        if p is not None:
+            _pa_release()
         _com_thread_uninit()
 
 

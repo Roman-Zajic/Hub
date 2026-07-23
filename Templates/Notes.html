@@ -9,7 +9,7 @@
     /* ── File Tree ─────────────────────────────────────────── */
     .file-panel { background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
     .search-box { display: flex; gap: 6px; padding: 10px 10px 0; flex-shrink: 0; }
-    .search-box .input { flex: 1; font-size: 0.8125rem; padding: 7px 10px; }
+    .search-box .input { flex: 1; font-size: 0.75rem; padding: 7px 10px; }
     .cal-icon-btn {
         width: 32px; height: 32px; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
@@ -20,9 +20,9 @@
     .cal-icon-btn:hover  { border-color: var(--teal-700); color: var(--teal-700); background: var(--surface-in); }
     .cal-icon-btn.active { border-color: var(--teal-700); color: var(--teal-700); background: var(--teal-100); }
     .file-list { flex: 1; overflow-y: auto; padding: 12px; }
-    .search-empty { color: var(--text-muted); font-size: 0.8125rem; padding: 10px 4px; }
+    .search-empty { color: var(--text-muted); font-size: 0.75rem; padding: 10px 4px; }
     mark { background: var(--amber); color: var(--ink); border-radius: 2px; padding: 0 1px; }
-    .new-note-btn { flex: 1; margin: 0; padding: 8px; border: 1px dashed var(--teal-700); background: none; color: var(--text-muted); cursor: pointer; border-radius: 4px; font-size: 0.75rem; font-family: var(--font); transition: background 130ms, color 130ms; }
+    .new-note-btn { flex: 1; margin: 0; padding: 8px; border: 1px dashed var(--teal-700); background: none; color: var(--text-muted); cursor: pointer; border-radius: 4px; font-size: 0.6875rem; font-family: var(--font); transition: background 130ms, color 130ms; }
     .new-note-btn:hover { background: var(--surface-in); color: var(--text); }
     .panel-actions { display: flex; gap: 8px; margin: 10px; }
 
@@ -32,7 +32,7 @@
         width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px;
         padding: 8px; border: 1px dashed var(--teal-700); background: none;
         color: var(--text-muted); cursor: pointer; border-radius: 6px;
-        font-size: 0.75rem; font-weight: 600; font-family: var(--font);
+        font-size: 0.6875rem; font-weight: 600; font-family: var(--font);
         text-transform: uppercase; letter-spacing: 0.04em;
         transition: background 130ms, color 130ms;
     }
@@ -41,19 +41,19 @@
 
     .graph-canvas-wrap { position: relative; background: var(--surface-in); overflow: hidden; cursor: grab; }
     .graph-canvas-wrap svg { width: 100%; height: 100%; display: block; }
-    .graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.8125rem; text-align: center; padding: 10px; }
+    .graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 10px; }
 
     /* Links and nodes are teal-only; intensity/shade is set inline per-element
        based on connection count (see nodeColor()/linkColor() in the script). */
     .graph-link { stroke-width: 1; }
     .graph-link.dim { opacity: 0.1 !important; }
     .graph-link.highlight { stroke-width: 1.8; }
-    .graph-node-rect { stroke: var(--teal-900); stroke-width: 0.6; cursor: pointer; }
+    .graph-node-rect { stroke: var(--teal-900); stroke-width: 0.3; cursor: pointer; }
     .graph-node-rect.dim { opacity: 0.2; }
-    .graph-node-rect:hover { stroke-width: 1.6; }
-    .graph-node-rect.neighbor { stroke-width: 1.5; filter: drop-shadow(0 0 0.8px var(--teal-900)); }
+    .graph-node-rect:hover { stroke-width: 0.8; }
+    .graph-node-rect.neighbor { stroke-width: 0.75; filter: drop-shadow(0 0 0.5px var(--teal-900)); }
     .graph-node-label {
-        font-family: var(--font); font-size: 2.3px; fill: var(--teal-400);
+        font-family: var(--font); font-size: 1.3px; fill: var(--teal-400);
         pointer-events: none; opacity: 0.75; transition: opacity 100ms, font-size 100ms, fill 100ms;
         /* Halo behind the glyphs (same color as the canvas background) so
            overlapping labels/links from neighboring notes don't turn the
@@ -61,12 +61,12 @@
            each letter instead of needing real collision avoidance. */
         paint-order: stroke fill;
         stroke: var(--surface-in);
-        stroke-width: 1.4px;
+        stroke-width: 0.8px;
         stroke-linejoin: round;
     }
     .graph-node-label.dim { opacity: 0.1; }
     .graph-node-label.neighbor { opacity: 1; fill: var(--teal-700); font-weight: 600; }
-    .graph-node-label.show { opacity: 1; font-size: 3px; font-weight: 700; fill: var(--teal-900); }
+    .graph-node-label.show { opacity: 1; font-size: 1.7px; font-weight: 700; fill: var(--teal-900); }
 
     /* Inside the full-screen modal the halo needs to match ITS background,
        not the sidebar mini-panel's — otherwise labels get a visible teal
@@ -97,17 +97,17 @@
     .cal-overlay.open { display: flex; }
     .cal-modal { background: var(--surface-card); border-radius: 12px; width: 300px; max-width: 92vw; box-shadow: var(--shadow-md); border: 1px solid var(--border); }
     .cal-modal .modal-head { display: flex; align-items: flex-start; padding: 14px 16px; border-bottom: 1px solid var(--border); gap: 10px; }
-    .cal-modal .modal-title { font-weight: 600; font-size: 0.875rem; color: var(--text); flex: 1; }
-    .cal-modal .modal-sub { font-size: 0.6875rem; color: var(--text-muted); margin-top: 2px; }
+    .cal-modal .modal-title { font-weight: 600; font-size: 0.8125rem; color: var(--text); flex: 1; }
+    .cal-modal .modal-sub { font-size: 0.625rem; color: var(--text-muted); margin-top: 2px; }
     .cal-modal .modal-body { padding: 14px 16px; }
     .cal-modal .modal-foot { padding: 10px 16px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
     .cal-nav { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
-    .cal-month-label { font-size: 0.8125rem; font-weight: 600; color: var(--text); }
+    .cal-month-label { font-size: 0.75rem; font-weight: 600; color: var(--text); }
     .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
-    .cal-dow { text-align: center; font-size: 0.625rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; padding-bottom: 4px; }
+    .cal-dow { text-align: center; font-size: 0.5625rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; padding-bottom: 4px; }
     .cal-day {
         position: relative; aspect-ratio: 1; display: flex; align-items: center; justify-content: center;
-        border-radius: 6px; font-size: 0.75rem; color: var(--text); cursor: pointer; user-select: none;
+        border-radius: 6px; font-size: 0.6875rem; color: var(--text); cursor: pointer; user-select: none;
         background: var(--surface-in); transition: background 130ms, color 130ms;
     }
     .cal-day:hover { background: var(--teal-100); }
@@ -118,13 +118,13 @@
     .cal-count {
         position: absolute; top: -4px; right: -4px; min-width: 14px; height: 14px; padding: 0 3px;
         border-radius: 7px; background: var(--amber); color: var(--ink);
-        font-size: 0.55rem; font-weight: 700; line-height: 1;
+        font-size: 0.5rem; font-weight: 700; line-height: 1;
         display: flex; align-items: center; justify-content: center;
     }
 
     .folder-header {
         padding: 6px 8px;
-        font-size: 0.8125rem;
+        font-size: 0.75rem;
         font-weight: 600;
         color: var(--text);
         cursor: pointer;
@@ -155,23 +155,23 @@
     .folder-content { margin-left: 16px; padding-left: 12px; border-left: 3px solid var(--border); display: none; }
     .folder-content.expanded { display: block; }
 
-    .file-item { padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8125rem; color: var(--text-muted); transition: background 130ms, color 130ms; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-item { padding: 5px 8px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; color: var(--text-muted); transition: background 130ms, color 130ms; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .file-item:hover { background: var(--surface-in); color: var(--text); }
     .file-item.active { background: var(--teal-100); color: var(--ink); font-weight: 600; }
 
     /* ── Editor Panel ──────────────────────────────────────── */
     .editor-panel { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
-    .editor-textarea { flex: 1; border: 1px solid var(--border); padding: 16px; border-radius: var(--r); font-size: 0.9375rem; font-family: monospace; color: var(--text); outline: none; background: var(--surface-card); overflow-y: auto; resize: none; line-height: 1.6; display: none; box-shadow: var(--shadow); transition: border-color 130ms, box-shadow 130ms; }
+    .editor-textarea { flex: 1; border: 1px solid var(--border); padding: 16px; border-radius: var(--r); font-size: 0.875rem; font-family: monospace; color: var(--text); outline: none; background: var(--surface-card); overflow-y: auto; resize: none; line-height: 1.6; display: none; box-shadow: var(--shadow); transition: border-color 130ms, box-shadow 130ms; }
     .editor-textarea:hover { border-color: var(--teal-700); }
     .editor-textarea:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
-    .preview-area { flex: 1; border: 1px solid var(--border); padding: 20px; margin: 0; border-radius: var(--r); font-size: 0.9375rem; background: var(--surface-card); box-shadow: var(--shadow); overflow-y: auto; line-height: 1.6; min-height: 1em; color: var(--text); }
+    .preview-area { flex: 1; border: 1px solid var(--border); padding: 20px; margin: 0; border-radius: var(--r); font-size: 0.875rem; background: var(--surface-card); box-shadow: var(--shadow); overflow-y: auto; line-height: 1.6; min-height: 1em; color: var(--text); }
 
     /* ── Markdown Preview Styles ───────────────────────────── */
     .preview-area p { margin: 0; min-height: 1em; }
     .preview-area h1, .preview-area h2, .preview-area h3 { color: var(--text); font-weight: 600; margin: 0; }
-    .preview-area h1 { font-size: 1.75rem; }
-    .preview-area h2 { font-size: 1.375rem; padding-bottom: 7px; border-bottom: 2px solid var(--teal-100); }
-    .preview-area h3 { font-size: 1.125rem; }
+    .preview-area h1 { font-size: 1.375rem; }
+    .preview-area h2 { font-size: 1.125rem; padding-bottom: 7px; border-bottom: 2px solid var(--teal-100); }
+    .preview-area h3 { font-size: 0.9375rem; }
 
     /* Collapsible H1 sections — expanded by default */
     .h1-section + .h1-section { margin-top: 22px; padding-top: 22px; border-top: 1px solid var(--border); }
@@ -198,7 +198,7 @@
     .preview-area hr { border: none; height: 2px; background: var(--border); margin: 0; border-radius: 2px; }
     .preview-area blockquote { margin: 0; padding: 10px 16px; border-left: 4px solid var(--amber); background: var(--surface-in); font-style: italic; color: var(--text-muted); }
     .preview-area .toc { background: var(--surface-in); border: 1px solid var(--border); border-left: 4px solid var(--teal-700); border-radius: var(--r); box-shadow: var(--shadow); padding: 16px; margin: 0; display: inline-block; min-width: 240px; }
-    .preview-area .toc .toctitle { display: block; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-size: 0.75rem; }
+    .preview-area .toc .toctitle { display: block; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-size: 0.6875rem; }
     .preview-area .toc ul { list-style: none; padding-left: 16px; margin: 0; }
     .preview-area .toc > ul { padding-left: 0; }
     .preview-area .toc a { text-decoration: none; color: var(--teal-700); }
@@ -209,7 +209,7 @@
     .preview-area a.note-link:hover { color: var(--teal-900); border-bottom-color: var(--teal-900); }
 
     .admonition { padding: 16px; margin: 0; border-radius: 0; border-left: 4px solid var(--teal-700); background: var(--surface-in); box-shadow: var(--shadow); }
-    .admonition-title { font-weight: 700; font-size: 0.8125rem; text-transform: uppercase; margin-bottom: 8px; display: block; color: var(--teal-700); }
+    .admonition-title { font-weight: 700; font-size: 0.75rem; text-transform: uppercase; margin-bottom: 8px; display: block; color: var(--teal-700); }
     .admonition.warning { border-left-color: #d97706; background: rgba(217, 119, 6, 0.05); }
     .admonition.warning .admonition-title { color: #d97706; }
     .admonition.danger, .admonition.error { border-left-color: #e53e3e; background: rgba(229, 62, 62, 0.05); }
@@ -246,23 +246,23 @@
     }
     .preview-area li:has(> input[type="checkbox"]:checked) { color: var(--text-muted); text-decoration: line-through; }
 
-    .preview-area table { width: fit-content; max-width: 100%; margin: 0; font-size: 0.875rem; background: var(--surface-card); border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: 0; box-shadow: var(--shadow); }
-    .preview-area th { background: var(--teal-900); color: #fff; font-weight: 600; text-align: left; padding: 10px 16px; border-right: 1px solid var(--teal-700); border-bottom: 2px solid var(--teal-900); font-size: 0.8125rem; }
+    .preview-area table { width: fit-content; max-width: 100%; margin: 0; font-size: 0.8125rem; background: var(--surface-card); border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: 0; box-shadow: var(--shadow); }
+    .preview-area th { background: var(--teal-900); color: #fff; font-weight: 600; text-align: left; padding: 10px 16px; border-right: 1px solid var(--teal-700); border-bottom: 2px solid var(--teal-900); font-size: 0.75rem; }
     .preview-area td { padding: 10px 16px; color: var(--text); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
     .preview-area th:last-child, .preview-area td:last-child { border-right: none; }
     .preview-area tr:last-child td { border-bottom: none; }
     .preview-area tbody tr:hover td { background: var(--surface-in); }
 
     .preview-area pre { position: relative; margin: 0; padding: 16px; background: var(--surface-in); border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; white-space: pre-wrap; }
-    .preview-area code { font-family: monospace; font-size: 0.875em; }
+    .preview-area code { font-family: monospace; font-size: 0.8em; }
     .preview-area pre code { background: none; padding: 0; }
 
-    .copy-code-btn { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); background: var(--surface-card); color: var(--text-muted); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.75rem; font-weight: 600; font-family: var(--font); transition: background 130ms, color 130ms, border-color 130ms; }
+    .copy-code-btn { position: absolute; top: 8px; right: 8px; border: 1px solid var(--border); background: var(--surface-card); color: var(--text-muted); padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 0.6875rem; font-weight: 600; font-family: var(--font); transition: background 130ms, color 130ms, border-color 130ms; }
     .copy-code-btn:hover { background: var(--surface-in); color: var(--text); border-color: var(--teal-700); }
 
     .editor-footer { display: flex; gap: 8px; align-items: center; padding-top: 4px; }
-    .path-display { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
-    .save-status { font-size: 0.6875rem; color: var(--teal-400); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-left: auto; }
+    .path-display { font-size: 0.6875rem; color: var(--text-muted); white-space: nowrap; }
+    .save-status { font-size: 0.625rem; color: var(--teal-400); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; margin-left: auto; }
 </style>
 {% endblock %}
 
@@ -962,10 +962,10 @@
     // ═══════════════════════════════════════════════════════════
     var GRAPH_W = 100, GRAPH_H = 100;
     var GRAPH_PAD = 9; // keeps squares off the canvas edge
-    var GRAPH_NODE_SIZE = 2.4; // fixed square size for every note — only color varies
+    var GRAPH_NODE_SIZE = 1.5; // fixed square size for every note — only color varies
     var LABEL_MAX_CHARS = 11;   // wrap width, in characters
     var LABEL_MAX_LINES = 2;    // longer titles get truncated with an ellipsis
-    var LABEL_LINE_HEIGHT = 2.6; // svg user-units between wrapped lines
+    var LABEL_LINE_HEIGHT = 1.5; // svg user-units between wrapped lines
     var graphNodes = [], graphLinks = [], graphNodeById = {};
     var graphMaxDegree = 1;
     var graphRAF = null, graphDragNode = null, graphDragSvg = null, graphHoverId = null;
@@ -1231,7 +1231,7 @@
             var lineCount = parseInt(label.dataset.lineCount, 10) || 1;
             var stackHeight = (lineCount - 1) * LABEL_LINE_HEIGHT;
             label.setAttribute('x', node.x);
-            label.setAttribute('y', node.y - size / 2 - 1.3 - stackHeight);
+            label.setAttribute('y', node.y - size / 2 - 0.8 - stackHeight);
             Array.prototype.forEach.call(label.children, function (tspan) {
                 tspan.setAttribute('x', node.x);
             });

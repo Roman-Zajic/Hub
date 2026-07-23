@@ -86,6 +86,24 @@ WHISPER_CPU_THREADS = int(os.environ.get(
 LIVE_VAD_FILTER = False
 FILE_TRANSCRIBE_BEAM_SIZE = 5     # uploaded files are offline/batch, so it's worth spending more compute for quality
 
+# Post-transcription hallucination filter (see _process_and_emit). Our own
+# energy-based VAD in _capture_loop segments on voice ENERGY, not on
+# whether the audio is actually speech, so breath sounds, room noise, or a
+# distant voice can still open an utterance and reach Whisper. Whisper
+# then tends to hallucinate a short stock filler phrase ("Okay.", "Yeah.",
+# "Thanks.", "So.") on that kind of audio. A segment is dropped only when
+# BOTH thresholds are crossed together — Whisper flagging it as likely
+# non-speech (no_speech_prob) AND having low confidence in the words it
+# actually produced (avg_logprob). Requiring both avoids discarding a
+# genuine short reply: a real "Okay" spoken clearly still has a low
+# no_speech_prob even though it's short. These specific values are a
+# commonly-used starting point for this kind of filter; raise
+# HALLUCINATION_NO_SPEECH_PROB or raise (make less negative)
+# HALLUCINATION_MAX_AVG_LOGPROB if genuine short utterances start getting
+# dropped, or lower them if hallucinated filler is still slipping through.
+HALLUCINATION_NO_SPEECH_PROB = 0.6
+HALLUCINATION_MAX_AVG_LOGPROB = -1.0
+
 # Models selectable from the dropdown in the UI. distil-* and *.en models are
 # English-only. Roughly fastest/roughest -> slowest/most-accurate on CPU.
 #
@@ -169,18 +187,21 @@ def _pa_release():
 # transcription (see _capture_loop / _merge_worker_loop below) — this is
 # the fix for audio being dropped while a chunk is transcribing.
 #
-# Mic and System Audio each have their own capture pipeline, but two
-# different things can independently ask for either one to be running:
-#   - _mic_to_textarea / _system_to_textarea — the two toolbar buttons that
-#     decide whether that source's transcript streams into the on-screen
-#     textarea.
-#   - _daily_log_active — the single Daily Notes button, which always wants
-# A source's capture thread runs whenever EITHER consumer wants it — see
-# _sync_mic_capture() / _sync_system_capture(), called after every toggle.
-# Mic and System-to-textarea both default to OFF. Daily Log defaults to ON,
-# which — per _sync_mic_capture/_sync_system_capture — pulls BOTH mic and
-# system-audio capture on with it even though their own textarea buttons
-# stay off.
+# Sources vs. destinations — two independent axes:
+#   - _mic_active / _system_active — whether each source is captured at
+#     all. A source's capture thread runs whenever its own flag is on; see
+#     _sync_mic_capture() / _sync_system_capture().
+#   - _output_textarea_active / _output_file_active — whether transcribed
+#     text (from EITHER source) is shown on-screen and/or appended to the
+#     day's file (Audio Notes Data/Daily Notes/YYYY-MM-DD.txt). These no
+#     longer drive capture themselves; they're purely a routing choice
+#     applied in _emit_transcript to whatever utterances the active
+#     sources produce. See utterance_wants_textarea/utterance_wants_file
+#     in _capture_loop for how each utterance is stamped with the
+#     destination choice in effect at the moment it was captured.
+#
+# Defaults: both sources ON (Mic + System), File output ON, Text Area
+# output OFF.
 #
 # System Audio must be started with a manual click / a real Flask request
 # thread — NEVER auto-started directly from on_load(). This is not
@@ -193,18 +214,18 @@ def _pa_release():
 # inside a Flask route handler (a real request thread), has been reliably
 # fine — same as Record already works.
 #
-# Since Daily Log now defaults to ON, satisfying that default still means
-# System Audio (and Mic) capture need to start automatically at some
-# point — just never inside on_load() itself. _ensure_boot_capture_started()
-# below does this exactly once, the first time any audio_notes route is hit
-# (i.e. the moment the page is opened in a browser, which is a real request
-# thread), rather than at process startup.
-_mic_to_textarea = False
+# Since System Audio defaults to ON, satisfying that default still means
+# it needs to start automatically at some point — just never inside
+# on_load() itself. _ensure_boot_capture_started() below does this exactly
+# once, the first time any audio_notes route is hit (i.e. the moment the
+# page is opened in a browser, which is a real request thread), rather
+# than at process startup.
+_mic_active = True
 _mic_capture_thread = None
 _mic_stop_event = None
 _mic_queue = queue.Queue()
 
-_system_to_textarea = False
+_system_active = True
 _system_capture_thread = None
 _system_stop_event = None
 _system_queue = queue.Queue()
@@ -220,40 +241,51 @@ _system_queue = queue.Queue()
 _mic_processing = False       # True while a mic utterance is actively being transcribed
 _system_processing = False    # True while a system-audio utterance is actively being transcribed
 
-# Daily Log (Audio Notes Data/Daily Notes/YYYY-MM-DD.txt). One button, on
-# when active it ensures BOTH mic and system-audio capture are running (see
-# _sync_mic_capture / _sync_system_capture) and writes every utterance from
-# either source to the day's file — independent of whichever sources the
-# textarea buttons above have chosen to stream on-screen. See
-# _emit_transcript, which is the single place both destinations are fed
-# from, using the exact same tagged "[HH:MM:SS] [Mic/Sys] text [HH:MM:SS]"
-# format in both places.
-_daily_log_active = True
+# Destination toggles (see the "Sources vs. destinations" note above).
+# _output_file_active writes to Audio Notes Data/Daily Notes/YYYY-MM-DD.txt
+# (see _append_output_file). Both apply to utterances from either source.
+_output_textarea_active = False
+_output_file_active = True
 
 # Count of utterances currently sitting in _mic_queue/_system_queue that
-# are actually destined for the Daily Log (i.e. utterance_wants_daily_log
-# was True at capture time — see _capture_loop) and haven't been
-# transcribed yet. Daily Log runs silently in the background — often with
-# the textarea buttons themselves toggled off — so qsize() on the raw
-# queues isn't enough to tell whether anything is piling up specifically
-# for the log file; this is what the "queued" badge next to the Daily Log
-# button (poll_route's 'daily_log_queue_depth') is driven by. Incremented
-# in _capture_loop right when such an utterance is queued, decremented in
-# _merge_worker_loop right when it's dequeued for transcription.
-_daily_log_queue_lock = threading.Lock()
-_daily_log_queue_depth = 0
+# are destined for a given output (i.e. utterance_wants_textarea /
+# utterance_wants_file was True at capture time — see _capture_loop) and
+# haven't been transcribed yet. Either output can run with its button
+# toggled on while the OTHER is off, so qsize() on the raw per-source
+# queues isn't enough on its own to tell whether anything is piling up
+# for a specific destination; this is what the "queued" badges next to
+# the Text Area / File buttons (poll_route's 'textarea_queue_depth' /
+# 'file_queue_depth') are driven by. Incremented in _capture_loop right
+# when such an utterance is queued, decremented in _merge_worker_loop
+# right when it's dequeued for transcription.
+_textarea_queue_lock = threading.Lock()
+_textarea_queue_depth = 0
+_file_queue_lock = threading.Lock()
+_file_queue_depth = 0
 
 
-def _daily_log_queue_incr():
-    global _daily_log_queue_depth
-    with _daily_log_queue_lock:
-        _daily_log_queue_depth += 1
+def _textarea_queue_incr():
+    global _textarea_queue_depth
+    with _textarea_queue_lock:
+        _textarea_queue_depth += 1
 
 
-def _daily_log_queue_decr():
-    global _daily_log_queue_depth
-    with _daily_log_queue_lock:
-        _daily_log_queue_depth = max(0, _daily_log_queue_depth - 1)
+def _textarea_queue_decr():
+    global _textarea_queue_depth
+    with _textarea_queue_lock:
+        _textarea_queue_depth = max(0, _textarea_queue_depth - 1)
+
+
+def _file_queue_incr():
+    global _file_queue_depth
+    with _file_queue_lock:
+        _file_queue_depth += 1
+
+
+def _file_queue_decr():
+    global _file_queue_depth
+    with _file_queue_lock:
+        _file_queue_depth = max(0, _file_queue_depth - 1)
 
 # Guards _ensure_boot_capture_started() (see on_load()/audio_notes_view()/
 # poll_route() below) so the deferred boot-time sync described above runs
@@ -304,11 +336,11 @@ def on_load():
     # from on_load()'s background thread.
     threading.Thread(target=_merge_worker_loop, daemon=True).start()
     # Deliberately does NOT call _sync_mic_capture()/_sync_system_capture()
-    # here. Daily Log defaults to ON (see _daily_log_active above), which
-    # means satisfying that default requires starting System Audio capture
-    # — and auto-starting WASAPI loopback from a background thread at app
-    # boot is a confirmed, repeatable hard-crash trigger (see the long
-    # comment on _mic_to_textarea above). Actually starting mic/system
+    # here. Both sources default to ON (see _mic_active/_system_active
+    # above), which means satisfying that default requires starting System
+    # Audio capture — and auto-starting WASAPI loopback from a background
+    # thread at app boot is a confirmed, repeatable hard-crash trigger (see
+    # the long comment on _mic_active above). Actually starting mic/system
     # capture to match the defaults is instead deferred to
     # _ensure_boot_capture_started(), called from audio_notes_view() and
     # poll_route() below — both of which only ever run inside a real Flask
@@ -316,14 +348,13 @@ def on_load():
 
 
 def _ensure_boot_capture_started():
-    """Brings capture threads in line with the default toggle states
-    (Daily Log ON, which needs both Mic and System running) exactly once,
-    the first time any audio_notes route is hit. This exists purely so
-    that start happens from a genuine Flask request thread rather than
-    from on_load()'s background thread — see the crash-safety note on
-    _mic_to_textarea above for why that distinction matters. Safe to call
-    on every request after the first: it no-ops immediately once the
-    one-time sync has run."""
+    """Brings capture threads in line with the default toggle states (Mic
+    + System both ON) exactly once, the first time any audio_notes route
+    is hit. This exists purely so that start happens from a genuine Flask
+    request thread rather than from on_load()'s background thread — see
+    the crash-safety note on _mic_active above for why that distinction
+    matters. Safe to call on every request after the first: it no-ops
+    immediately once the one-time sync has run."""
     global _boot_capture_synced
     if _boot_capture_synced:
         return
@@ -430,25 +461,27 @@ def _save_content(text):
 
 def _format_tagged_line(start_dt, end_dt, text, is_system):
     """[HH:MM:SS] [Mic/Sys] transcribed text [HH:MM:SS] — the single format
-    shared by both the Daily Log file and the on-screen textarea, so a line
-    looks and reads identically wherever it ends up."""
+    shared by both the File output and the on-screen Text Area output, so
+    a line looks and reads identically wherever it ends up."""
     tag = 'Sys' if is_system else 'Mic'
     return f'[{start_dt.strftime("%H:%M:%S")}] [{tag}] {text} [{end_dt.strftime("%H:%M:%S")}]'
 
 
-def _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_daily_log):
-    """Routes one finished utterance to whichever destination(s) wanted
-    that source AT THE MOMENT IT WAS CAPTURED (wants_textarea /
-    wants_daily_log, stamped by _capture_loop when the utterance opened —
-    see utterance_wants_textarea / utterance_wants_daily_log there), not
-    whichever toggle state happens to be current by the time transcription
-    actually finishes. Without this, toggling Mic/System-to-textarea or
-    Daily Log off while a backlog is still queued would silently drop
-    those already-spoken utterances from a destination they were actually
-    recorded for — turning it off is a "stop capturing new stuff for this
-    destination from now on", not "un-happen everything already queued".
-    A given utterance is transcribed exactly once here regardless of how
-    many destinations want it — only the routing differs."""
+def _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_file):
+    """Routes one finished utterance to whichever output(s) were toggled
+    on AT THE MOMENT IT WAS CAPTURED (wants_textarea / wants_file, stamped
+    by _capture_loop when the utterance opened — see
+    utterance_wants_textarea / utterance_wants_file there), not whichever
+    toggle state happens to be current by the time transcription actually
+    finishes. Without this, toggling either output off while a backlog is
+    still queued would silently drop those already-spoken utterances from
+    an output they were actually recorded for — turning an output off is
+    "stop routing new stuff here from now on", not "un-happen everything
+    already queued". Text Area and File are independent of each other and
+    of which source (Mic/System) produced the utterance — either output
+    can be on, off, or both, regardless of which source(s) are active. A
+    given utterance is transcribed exactly once here regardless of how
+    many outputs want it — only the routing differs."""
     global _content
     if not text:
         return
@@ -462,8 +495,8 @@ def _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_da
             _pending_chunks.append(line + '\n')
             _save_content(_content)
 
-    if wants_daily_log:
-        _append_daily_log(start_dt, line)
+    if wants_file:
+        _append_output_file(start_dt, line)
 
 
 # ── Whisper model (lazy — (re)loaded on demand, small keyed cache) ────
@@ -553,7 +586,7 @@ def _resample_linear(samples, orig_sr, target_sr):
 
 
 def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_system, model_name,
-                       wants_textarea, wants_daily_log):
+                       wants_textarea, wants_file):
     """Transcribes one already-VAD-segmented utterance (live mic/system
     capture). Runs on the single merge-worker thread, never on the
     audio-reading thread — see _capture_loop / _merge_worker_loop."""
@@ -574,16 +607,20 @@ def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_sys
         model = _get_model(model_name)
         lang = 'en' if _model_is_english_only(model_name) else None
 
-        # condition_on_previous_text=False is the setting recommended for the
-        # distil-* checkpoints, to stop them fixating on earlier chunk text.
-        # LIVE_VAD_FILTER is off by default: this audio has already been
-        # through the utterance-level VAD in _capture_loop, which is what
-        # actually stops silence and ambient-noise false-triggers (the
-        # "Okay." / "Yeah." hallucinations) from reaching here at all.
-        # Whisper's own internal VAD pass on top of that is redundant work —
-        # set LIVE_VAD_FILTER = True above if you ever want that extra,
-        # finer-grained pass back (e.g. while tuning the VAD_* constants),
-        # at the cost of some speed.
+        # condition_on_previous_text=False is the setting recommended for
+        # the distil-* checkpoints, to stop them fixating on earlier chunk
+        # text. LIVE_VAD_FILTER is off by default: this audio has already
+        # been through the utterance-level VAD in _capture_loop, which
+        # segments on voice ENERGY — it doesn't know whether what crossed
+        # the threshold was real speech or just breath/room noise/a
+        # distant voice, so some non-speech still reaches Whisper. Whisper
+        # itself tends to hallucinate short stock filler phrases ("Okay.",
+        # "Yeah.", "Thanks.", "So.") on exactly that kind of audio, so the
+        # filter below uses Whisper's OWN per-segment confidence signals
+        # (no_speech_prob / avg_logprob) to drop those, rather than
+        # skipping straight to Whisper's internal VAD pass (which is
+        # coarser and costs more compute on every utterance instead of
+        # only on the ones that actually need a second look).
         segments, _ = model.transcribe(
             samples,
             language=lang,
@@ -591,32 +628,54 @@ def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_sys
             vad_filter=LIVE_VAD_FILTER,
             condition_on_previous_text=False,
         )
-        text = ' '.join(seg.text.strip() for seg in segments).strip()
+
+        kept = []
+        for seg in segments:
+            seg_text = seg.text.strip()
+            if not seg_text:
+                continue
+            # Whisper flags a segment as likely non-speech via
+            # no_speech_prob, and how confident it was in the words it
+            # actually produced via avg_logprob. A stock hallucinated
+            # filler phrase on silence/noise typically shows BOTH a high
+            # no_speech_prob AND a low avg_logprob at once; requiring both
+            # together (rather than either alone) avoids discarding a
+            # genuine short reply — a real "Okay" or "Thanks" spoken
+            # clearly still has a low no_speech_prob even though it's
+            # short, so it isn't caught by this filter.
+            if (seg.no_speech_prob > HALLUCINATION_NO_SPEECH_PROB
+                    and seg.avg_logprob < HALLUCINATION_MAX_AVG_LOGPROB):
+                continue
+            kept.append(seg_text)
+        text = ' '.join(kept).strip()
+
         if text:
-            # wants_textarea / wants_daily_log are likewise stamped at
-            # capture time, not read fresh here — see _emit_transcript for
-            # why: toggling either off while this utterance was still
-            # queued must not make an already-spoken line vanish from a
-            # destination it was actually captured for.
-            _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_daily_log)
+            # wants_textarea / wants_file are likewise stamped at capture
+            # time, not read fresh here — see _emit_transcript for why:
+            # toggling either off while this utterance was still queued
+            # must not make an already-spoken line vanish from an output
+            # it was actually captured for.
+            _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_file)
     except Exception:
         _log_error(f'{label}: transcribe')
 
 
-def _daily_log_path_for(dt):
+def _output_file_path_for(dt):
+    """Same dated-file convention as before (Audio Notes Data/Daily Notes/
+    YYYY-MM-DD.txt); only the toggle's name changed, not where it writes."""
     return os.path.join(DAILY_NOTES_FOLDER, dt.strftime('%Y-%m-%d') + '.txt')
 
 
-def _append_daily_log(start_dt, line):
+def _append_output_file(start_dt, line):
     """Appends one already-formatted tagged line (see _format_tagged_line)
-    to the day's log file — the file for the day the utterance STARTED in,
-    so something spanning midnight still lands under the day it began."""
-    path = _daily_log_path_for(start_dt)
+    to the day's file — the file for the day the utterance STARTED in, so
+    something spanning midnight still lands under the day it began."""
+    path = _output_file_path_for(start_dt)
     try:
         with open(path, 'a', encoding='utf-8') as f:
             f.write(line + '\n')
     except Exception:
-        _log_error('daily log: append')
+        _log_error('output file: append')
 
 
 def _load_wav_as_samples(path):
@@ -671,7 +730,20 @@ def _transcribe_file(path):
         vad_filter=True,
         condition_on_previous_text=False,
     )
-    return '\n'.join(seg.text.strip() for seg in segments if seg.text.strip())
+    lines = []
+    for seg in segments:
+        seg_text = seg.text.strip()
+        if not seg_text:
+            continue
+        # Same confidence-based hallucination filter as the live path (see
+        # _process_and_emit) — Whisper's own internal VAD (vad_filter=True
+        # above) catches most silence, but a hallucinated filler phrase can
+        # still slip through on quiet/noisy stretches within a file.
+        if (seg.no_speech_prob > HALLUCINATION_NO_SPEECH_PROB
+                and seg.avg_logprob < HALLUCINATION_MAX_AVG_LOGPROB):
+            continue
+        lines.append(seg_text)
+    return '\n'.join(lines)
 
 
 def _set_processing(label, value):
@@ -698,9 +770,9 @@ def _resolve_capture_device(p, pyaudio, is_system):
     (default input mic, or the loopback twin of the default playback device
     for system audio). Called both when a stream is (re)opened and
     periodically while it's running (see DEVICE_CHECK_SECONDS in
-    _capture_loop / _record_reader_loop) so a headset switch made mid-call
-    is picked up instead of the stream staying pinned to whatever was
-    default when it first opened."""
+    _read_device_frames) so a headset switch made mid-call is picked up
+    instead of the stream staying pinned to whatever was default when it
+    first opened."""
     if is_system:
         wasapi_info = p.get_host_api_info_by_type(pyaudio.paWASAPI)
         device_info = p.get_device_info_by_index(wasapi_info['defaultOutputDevice'])
@@ -714,13 +786,44 @@ def _resolve_capture_device(p, pyaudio, is_system):
     return device_info
 
 
-def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds=VAD_MAX_UTTERANCE_SECONDS):
+# Yielded by _read_device_frames() in place of a normal frame exactly once
+# per reconnect, so a caller with its own per-device state (e.g. an
+# in-progress VAD utterance) knows to flush/reset it before continuing.
+_DEVICE_CHANGED = object()
+
+
+def _read_device_frames(label, stop_event, is_system, frame_seconds):
+    """Shared low-level audio reader behind BOTH _capture_loop (live VAD
+    segmentation for transcription) and _record_reader_loop (resampling
+    for the Record -> WAV feature) — the two used to each duplicate this
+    entire device-handling layer independently, which is exactly how the
+    read-error bailout below once existed in one of them and not the
+    other. There is now exactly one place that:
+      - owns COM/PyAudio lifecycle for this thread (_com_thread_init /
+        _pa_acquire, released via _pa_release / _com_thread_uninit when
+        the generator ends — see the crash-safety notes on those),
+      - resolves and opens the current OS-default device,
+      - periodically re-checks that default (DEVICE_CHECK_SECONDS) and
+        reconnects if it changed (e.g. a headset switch),
+      - bails out and reconnects after 20 consecutive stream.read()
+        failures, so a dead/closed stream handle (the
+        "OSError: [Errno -9988] Stream closed" case) can't get stuck
+        retrying forever and silently go deaf on that source.
+
+    Yields (data, channels, rate) for every frame read, in order, until
+    stop_event is set (at which point the generator returns, running its
+    finally-blocks and releasing PyAudio/COM as normal). Yields the
+    _DEVICE_CHANGED sentinel exactly once whenever the stream is about to
+    be torn down and reopened against a new device — never on the very
+    first connection, and never after a resolve/open failure that hasn't
+    produced any frames yet, since there's nothing to flush in either of
+    those cases.
+    """
     _com_thread_init()
     try:
         import pyaudiowpatch as pyaudio
-        import numpy as np
     except ImportError:
-        _log_error(f'{label}: pyaudiowpatch/numpy is not installed')
+        _log_error(f'{label}: pyaudiowpatch is not installed')
         _com_thread_uninit()
         return
 
@@ -728,42 +831,6 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
     try:
         p = _pa_acquire()
 
-        # VAD state lives OUTSIDE the reconnect loop below, so switching the
-        # active headset mid-utterance doesn't reset the noise floor for no
-        # reason — only the underlying PyAudio stream gets torn down and
-        # reopened against whatever the new default device is.
-        noise_floor = VAD_MIN_ABS_RMS
-        voiced_run = 0
-        silence_run = 0
-        in_speech = False
-        utterance_buf = bytearray()
-        utterance_frames = 0
-        utterance_start_dt = None
-        # Stamped with _selected_model_name the moment an utterance opens
-        # (see below) and carried through to every out_queue.put() for
-        # that utterance, so it's transcribed with the model that was
-        # actually selected at capture time — even if the dropdown moves
-        # on to something else before a backlogged queue gets drained.
-        utterance_model_name = None
-        # Same idea, for routing: stamped with whether the textarea button
-        # and Daily Log were on AT THE MOMENT this utterance was captured,
-        # so toggling either off while a backlog is still queued doesn't
-        # retroactively make an already-spoken utterance vanish from a
-        # destination it was recorded for (see _emit_transcript).
-        utterance_wants_textarea = None
-        utterance_wants_daily_log = None
-        channels = 1
-        rate = 16000
-
-        # ── Outer loop: (re)connect to the current default device ──────
-        # Each pass resolves the current default and opens a stream against
-        # it; the inner loop reads frames from that stream until either the
-        # capture is stopped, or a periodic check (every DEVICE_CHECK_SECONDS
-        # of audio) notices the OS default device has changed — e.g. because
-        # a second headset was switched to become the active mic/speaker.
-        # On a device change, the current stream is closed and we loop back
-        # around to reconnect to the new default, instead of silently
-        # continuing to listen to the old, no-longer-active device.
         while not stop_event.is_set():
             try:
                 device_info = _resolve_capture_device(p, pyaudio, is_system)
@@ -776,7 +843,7 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
             device_name = device_info['name']
             channels = max(1, int(device_info['maxInputChannels']))
             rate = int(device_info['defaultSampleRate'])
-            frames_per_buffer = max(160, int(rate * FRAME_SECONDS))
+            frames_per_buffer = max(160, int(rate * frame_seconds))
 
             try:
                 stream = p.open(
@@ -793,18 +860,8 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
                 continue
 
             frame_seconds_actual = frames_per_buffer / float(rate)
-            hangover_frames = max(1, int(VAD_HANGOVER_SECONDS / frame_seconds_actual))
-            max_utterance_frames = max(1, int(max_utterance_seconds / frame_seconds_actual))
-            min_utterance_frames = max(1, int(VAD_MIN_UTTERANCE_SECONDS / frame_seconds_actual))
             device_check_every = max(1, int(DEVICE_CHECK_SECONDS / frame_seconds_actual))
             frames_since_check = 0
-            device_changed = False
-            # Counts consecutive failed stream.read() calls. A genuinely
-            # dead/closed stream handle (e.g. "OSError: [Errno -9988]
-            # Stream closed") would otherwise retry against the same dead
-            # handle forever, silently going deaf on that source. After
-            # enough consecutive failures, force a full reconnect via the
-            # same path already used for a headset switch.
             consecutive_read_errors = 0
 
             try:
@@ -816,70 +873,19 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
                         _log_error(f'{label}: stream read')
                         consecutive_read_errors += 1
                         if consecutive_read_errors >= 20:
-                            device_changed = True  # reuse the reconnect path below
-                            break
+                            break  # reconnect — _DEVICE_CHANGED yielded below
                         time_module.sleep(0.5)
                         continue
 
-                    frame = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-                    if channels > 1:
-                        frame = frame.reshape(-1, channels).mean(axis=1)
-                    rms = float(np.sqrt(np.mean(np.square(frame)))) if len(frame) else 0.0
+                    yield data, channels, rate
 
-                    threshold = max(VAD_MIN_ABS_RMS, noise_floor * VAD_THRESHOLD_MULTIPLIER)
-                    voiced_frame = rms > threshold
-
-                    if voiced_frame:
-                        voiced_run += 1
-                        silence_run = 0
-                    else:
-                        silence_run += 1
-                        voiced_run = 0
-                        # Only chase the noise floor while we're confident we're
-                        # NOT in speech, so a long utterance can't drag the floor
-                        # up and make the VAD deaf to quieter follow-on speech.
-                        if not in_speech:
-                            noise_floor = noise_floor * 0.98 + rms * 0.02
-
-                    if not in_speech and voiced_run >= VAD_ENTER_FRAMES:
-                        in_speech = True
-                        utterance_buf = bytearray()
-                        utterance_frames = 0
-                        utterance_start_dt = datetime.now()
-                        utterance_model_name = _selected_model_name
-                        utterance_wants_textarea = _system_to_textarea if is_system else _mic_to_textarea
-                        utterance_wants_daily_log = _daily_log_active
-
-                    if in_speech:
-                        utterance_buf.extend(data)
-                        utterance_frames += 1
-
-                        closed_by_silence = silence_run >= hangover_frames
-                        closed_by_length = utterance_frames >= max_utterance_frames
-
-                        if closed_by_silence or closed_by_length:
-                            in_speech = False
-                            voiced_run = 0
-                            silence_run = 0
-                            if utterance_frames >= min_utterance_frames:
-                                out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system, utterance_model_name, utterance_wants_textarea, utterance_wants_daily_log))
-                                if utterance_wants_daily_log:
-                                    _daily_log_queue_incr()
-                            utterance_buf = bytearray()
-                            utterance_frames = 0
-
-                    # Periodically confirm the device we're reading from is
-                    # still the OS default. This is a cheap enumeration call,
-                    # so it's throttled to once every DEVICE_CHECK_SECONDS
-                    # rather than every frame.
                     frames_since_check += 1
                     if frames_since_check >= device_check_every:
                         frames_since_check = 0
                         try:
                             current = _resolve_capture_device(p, pyaudio, is_system)
                             if current['index'] != device_index or current['name'] != device_name:
-                                device_changed = True
-                                break
+                                break  # device changed — reconnect below
                         except Exception:
                             _log_error(f'{label}: recheck device')
             finally:
@@ -889,32 +895,10 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
                 except Exception:
                     pass
 
-            if device_changed:
-                # A headset swap mid-sentence shouldn't just discard those
-                # words — flush whatever was buffered on the old device
-                # before reconnecting, exactly like a normal stop would.
-                if in_speech and utterance_frames >= min_utterance_frames:
-                    out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system, utterance_model_name, utterance_wants_textarea, utterance_wants_daily_log))
-                    if utterance_wants_daily_log:
-                        _daily_log_queue_incr()
-                in_speech = False
-                voiced_run = 0
-                silence_run = 0
-                utterance_buf = bytearray()
-                utterance_frames = 0
-                # loop back around: outer while re-resolves and reopens
-                # against whatever is now the default device
-
-        # Streaming has stopped (the outer while loop exits as soon as
-        # stop_event is set) — but if we were mid-utterance at that exact
-        # moment, don't throw away what was already captured. "Turn off"
-        # means stop listening for more speech, not discard what was
-        # already heard, so flush whatever's buffered to the queue and let
-        # the worker thread transcribe it like any other utterance.
-        if in_speech and utterance_frames >= min_utterance_frames:
-            out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, datetime.now(), is_system, utterance_model_name, utterance_wants_textarea, utterance_wants_daily_log))
-            if utterance_wants_daily_log:
-                _daily_log_queue_incr()
+            if not stop_event.is_set():
+                yield _DEVICE_CHANGED
+            # loop back around: outer while re-resolves and reopens
+            # against whatever is now the default device
 
     except Exception:
         _log_error(f'{label}: setup')
@@ -922,6 +906,136 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
         if p is not None:
             _pa_release()
         _com_thread_uninit()
+
+
+def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds=VAD_MAX_UTTERANCE_SECONDS):
+    """Runs the VAD state machine over frames from _read_device_frames,
+    segmenting continuous audio into discrete utterances and handing each
+    finished one to out_queue — this function never touches WASAPI/COM
+    directly, and never calls Whisper (see the module comment above)."""
+    try:
+        import numpy as np
+    except ImportError:
+        _log_error(f'{label}: numpy is not installed')
+        return
+
+    # VAD/utterance state. Persists across a device reconnect (headset
+    # switch) EXCEPT for whatever's mid-utterance, which gets flushed by
+    # _flush_utterance() first — see the _DEVICE_CHANGED handling below.
+    noise_floor = VAD_MIN_ABS_RMS
+    voiced_run = 0
+    silence_run = 0
+    in_speech = False
+    utterance_buf = bytearray()
+    utterance_frames = 0
+    utterance_start_dt = None
+    # Stamped with _selected_model_name the moment an utterance opens (see
+    # below) and carried through to out_queue.put() for that utterance, so
+    # it's transcribed with the model that was actually selected at
+    # capture time — even if the dropdown moves on to something else
+    # before a backlogged queue gets drained.
+    utterance_model_name = None
+    # Same idea, for routing: stamped with whether the Text Area and File
+    # outputs were on AT THE MOMENT this utterance was captured, so
+    # toggling either off while a backlog is still queued doesn't
+    # retroactively make an already-spoken utterance vanish from an
+    # output it was recorded for (see _emit_transcript).
+    utterance_wants_textarea = None
+    utterance_wants_file = None
+
+    # Frame-count thresholds derived from the stream's rate — recomputed
+    # only when that rate actually changes (i.e. right after a reconnect),
+    # not on every single frame. channels/rate themselves are set from the
+    # first frame read below and kept up to date every frame after.
+    channels = 1
+    rate = 16000
+    _last_rate = None
+    hangover_frames = 1
+    max_utterance_frames = 1
+    min_utterance_frames = 1
+
+    def flush_utterance(end_dt):
+        nonlocal in_speech, voiced_run, silence_run, utterance_buf, utterance_frames
+        if in_speech and utterance_frames >= min_utterance_frames:
+            out_queue.put((bytes(utterance_buf), channels, rate, utterance_start_dt, end_dt,
+                            is_system, utterance_model_name, utterance_wants_textarea, utterance_wants_file))
+            if utterance_wants_textarea:
+                _textarea_queue_incr()
+            if utterance_wants_file:
+                _file_queue_incr()
+        in_speech = False
+        voiced_run = 0
+        silence_run = 0
+        utterance_buf = bytearray()
+        utterance_frames = 0
+
+    gen = _read_device_frames(label, stop_event, is_system, FRAME_SECONDS)
+    try:
+        for item in gen:
+            if item is _DEVICE_CHANGED:
+                # A headset swap mid-sentence shouldn't just discard those
+                # words — flush whatever was buffered on the old device
+                # before continuing to read from the new one.
+                flush_utterance(datetime.now())
+                continue
+
+            data, channels, rate = item
+
+            if rate != _last_rate:
+                _last_rate = rate
+                frames_per_buffer = len(data) // (2 * channels)  # 16-bit samples
+                frame_seconds_actual = frames_per_buffer / float(rate)
+                hangover_frames = max(1, int(VAD_HANGOVER_SECONDS / frame_seconds_actual))
+                max_utterance_frames = max(1, int(max_utterance_seconds / frame_seconds_actual))
+                min_utterance_frames = max(1, int(VAD_MIN_UTTERANCE_SECONDS / frame_seconds_actual))
+
+            frame = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            if channels > 1:
+                frame = frame.reshape(-1, channels).mean(axis=1)
+            rms = float(np.sqrt(np.mean(np.square(frame)))) if len(frame) else 0.0
+
+            threshold = max(VAD_MIN_ABS_RMS, noise_floor * VAD_THRESHOLD_MULTIPLIER)
+            voiced_frame = rms > threshold
+
+            if voiced_frame:
+                voiced_run += 1
+                silence_run = 0
+            else:
+                silence_run += 1
+                voiced_run = 0
+                # Only chase the noise floor while we're confident we're
+                # NOT in speech, so a long utterance can't drag the floor
+                # up and make the VAD deaf to quieter follow-on speech.
+                if not in_speech:
+                    noise_floor = noise_floor * 0.98 + rms * 0.02
+
+            if not in_speech and voiced_run >= VAD_ENTER_FRAMES:
+                in_speech = True
+                utterance_buf = bytearray()
+                utterance_frames = 0
+                utterance_start_dt = datetime.now()
+                utterance_model_name = _selected_model_name
+                utterance_wants_textarea = _output_textarea_active
+                utterance_wants_file = _output_file_active
+
+            if in_speech:
+                utterance_buf.extend(data)
+                utterance_frames += 1
+
+                closed_by_silence = silence_run >= hangover_frames
+                closed_by_length = utterance_frames >= max_utterance_frames
+
+                if closed_by_silence or closed_by_length:
+                    flush_utterance(datetime.now())
+    except Exception:
+        _log_error(f'{label}: capture loop')
+    finally:
+        gen.close()
+        # Streaming has stopped — but if we were mid-utterance at that
+        # exact moment, don't throw away what was already captured. "Turn
+        # off" means stop listening for more speech, not discard what was
+        # already heard.
+        flush_utterance(datetime.now())
 
 
 # ── Single global transcription worker (merges mic + system in order) ──
@@ -999,13 +1113,15 @@ def _merge_worker_loop():
             time_module.sleep(0.15)
             continue
 
-        raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_daily_log = item
-        if wants_daily_log:
-            _daily_log_queue_decr()
+        raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_file = item
+        if wants_textarea:
+            _textarea_queue_decr()
+        if wants_file:
+            _file_queue_decr()
         label = 'system' if is_system else 'mic'
         _set_processing(label, True)
         try:
-            _process_and_emit(label, raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_daily_log)
+            _process_and_emit(label, raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_file)
         except Exception:
             _log_error(f'{label}: merge worker')
         finally:
@@ -1053,12 +1169,11 @@ def _stop_system():
 
 
 def _sync_mic_capture():
-    """Mic capture should be running whenever either consumer wants it:
-    the textarea button, or the Daily Log button (which always wants both
-    sources). Called after every change to _mic_to_textarea or
-    _daily_log_active so the thread state stays correct regardless of
-    which one flipped."""
-    if _mic_to_textarea or _daily_log_active:
+    """Mic capture runs exactly when _mic_active is on — no longer tied to
+    any destination toggle, since Text Area/File output is now fully
+    decoupled from which source(s) are active (see the module comment
+    near _mic_active above)."""
+    if _mic_active:
         _start_mic()
     else:
         _stop_mic()
@@ -1066,10 +1181,10 @@ def _sync_mic_capture():
 
 def _sync_system_capture():
     """Same idea as _sync_mic_capture, for system audio. Note this is only
-    ever invoked from a Flask request thread (a button click) — see the
-    WASAPI crash-safety comment near _system_to_textarea above — never from
-    on_load()."""
-    if _system_to_textarea or _daily_log_active:
+    ever invoked from a Flask request thread (a button click, or
+    _ensure_boot_capture_started() on first page load) — see the WASAPI
+    crash-safety comment near _mic_active above — never from on_load()."""
+    if _system_active:
         _start_system()
     else:
         _stop_system()
@@ -1106,94 +1221,37 @@ RECORD_FRAME_SAMPLES = int(RECORD_MIX_RATE * RECORD_FRAME_SECONDS)
 
 
 def _record_reader_loop(label, stop_event, is_system, out_queue):
-    """Continuously reads one device (mic or system loopback), resamples to
-    RECORD_MIX_RATE mono, and pushes chunks to out_queue for the mixer.
-    Same as _capture_loop, this re-checks the OS default device periodically
-    and reconnects if it changes (e.g. a headset switch mid-recording),
-    instead of staying pinned to whichever device was default when Record
-    was first clicked."""
-    _com_thread_init()
+    """Continuously reads one device (mic or system loopback) via the
+    shared _read_device_frames generator, resamples to RECORD_MIX_RATE
+    mono, and pushes chunks to out_queue for the mixer. All device
+    resolution, reconnect-on-headset-switch, and dead-stream recovery
+    logic lives in _read_device_frames — this function only cares about
+    what to do with each frame once it has one."""
     try:
-        import pyaudiowpatch as pyaudio
         import numpy as np
     except ImportError:
-        _log_error(f'{label}: pyaudiowpatch/numpy is not installed')
-        _com_thread_uninit()
+        _log_error(f'{label}: numpy is not installed')
         return
 
-    p = None
+    gen = _read_device_frames(label, stop_event, is_system, RECORD_FRAME_SECONDS)
     try:
-        p = _pa_acquire()
-
-        while not stop_event.is_set():
-            try:
-                device_info = _resolve_capture_device(p, pyaudio, is_system)
-            except Exception:
-                _log_error(f'{label}: resolve device')
-                time_module.sleep(1.0)
+        for item in gen:
+            if item is _DEVICE_CHANGED:
+                # Recording just carries on with whatever the new device
+                # provides — there's no per-device state here to flush,
+                # unlike _capture_loop's in-progress VAD utterance.
                 continue
 
-            device_index = device_info['index']
-            device_name = device_info['name']
-            channels = max(1, int(device_info['maxInputChannels']))
-            rate = int(device_info['defaultSampleRate'])
-            frames_per_buffer = max(160, int(rate * RECORD_FRAME_SECONDS))
-
-            try:
-                stream = p.open(
-                    format=pyaudio.paInt16,
-                    channels=channels,
-                    rate=rate,
-                    input=True,
-                    frames_per_buffer=frames_per_buffer,
-                    input_device_index=device_index,
-                )
-            except Exception:
-                _log_error(f'{label}: open stream')
-                time_module.sleep(1.0)
-                continue
-
-            frame_seconds_actual = frames_per_buffer / float(rate)
-            device_check_every = max(1, int(DEVICE_CHECK_SECONDS / frame_seconds_actual))
-            frames_since_check = 0
-
-            try:
-                while not stop_event.is_set():
-                    try:
-                        data = stream.read(frames_per_buffer, exception_on_overflow=False)
-                    except Exception:
-                        _log_error(f'{label}: stream read')
-                        time_module.sleep(0.3)
-                        continue
-
-                    samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
-                    if channels > 1:
-                        samples = samples.reshape(-1, channels).mean(axis=1)
-                    samples = _resample_linear(samples, rate, RECORD_MIX_RATE)
-                    out_queue.put(samples)
-
-                    frames_since_check += 1
-                    if frames_since_check >= device_check_every:
-                        frames_since_check = 0
-                        try:
-                            current = _resolve_capture_device(p, pyaudio, is_system)
-                            if current['index'] != device_index or current['name'] != device_name:
-                                break  # device changed — reconnect to the new default
-                        except Exception:
-                            _log_error(f'{label}: recheck device')
-            finally:
-                try:
-                    stream.stop_stream()
-                    stream.close()
-                except Exception:
-                    pass
-
+            data, channels, rate = item
+            samples = np.frombuffer(data, dtype=np.int16).astype(np.float32) / 32768.0
+            if channels > 1:
+                samples = samples.reshape(-1, channels).mean(axis=1)
+            samples = _resample_linear(samples, rate, RECORD_MIX_RATE)
+            out_queue.put(samples)
     except Exception:
-        _log_error(f'{label}: setup')
+        _log_error(f'{label}: record reader loop')
     finally:
-        if p is not None:
-            _pa_release()
-        _com_thread_uninit()
+        gen.close()
 
 
 def _record_mixer_loop(stop_event, mic_queue, sys_queue, filepath):
@@ -1330,10 +1388,11 @@ def audio_notes_view():
     return render_template(
         'audio_notes.html',
         content=content,
-        mic_active=_mic_to_textarea,
-        system_active=_system_to_textarea,
+        mic_active=_mic_active,
+        system_active=_system_active,
         recording_active=_recording_active,
-        daily_log_enabled=_daily_log_active,
+        output_textarea_enabled=_output_textarea_active,
+        output_file_enabled=_output_file_active,
         available_models=AVAILABLE_MODELS,
         current_model=_selected_model_name,
     )
@@ -1350,16 +1409,18 @@ def poll_route():
         _pending_chunks = []
     return jsonify({
         'pending': pending,
-        'mic_active': _mic_to_textarea,
-        'system_active': _system_to_textarea,
+        'mic_active': _mic_active,
+        'system_active': _system_active,
         'mic_processing': _mic_processing,
         'system_processing': _system_processing,
         'mic_queue_depth': _mic_queue.qsize(),
         'system_queue_depth': _system_queue.qsize(),
         'model_loading': _model_loading,
         'current_model': _selected_model_name,
-        'daily_log_enabled': _daily_log_active,
-        'daily_log_queue_depth': _daily_log_queue_depth,
+        'output_textarea_enabled': _output_textarea_active,
+        'output_file_enabled': _output_file_active,
+        'textarea_queue_depth': _textarea_queue_depth,
+        'file_queue_depth': _file_queue_depth,
         'recording_active': _recording_active,
         'recording_started_at': (int(_recording_started_at * 1000) if _recording_active and _recording_started_at else None),
         'recording_file': (os.path.basename(_recording_path) if _recording_active and _recording_path else None),
@@ -1375,39 +1436,36 @@ def set_model_route():
         return jsonify({'status': 'error', 'message': 'Unknown model.'})
     # Just record the choice — the (possibly slow, first-download) load
     # happens lazily in _get_model(), the next time something needs to
-    # transcribe. The same model is used for both destinations (textarea
-    # and Daily Log), since each utterance is only ever transcribed once.
+    # transcribe. The same model is used regardless of output (Text Area
+    # and/or File), since each utterance is only ever transcribed once.
     _selected_model_name = name
     return jsonify({'status': 'ok', 'model': name})
 
 
-@bp.route('/api/audio_notes/daily_log/toggle', methods=['POST'])
-def toggle_daily_log_route():
-    """Turns the Daily Log on/off. When on, this makes sure BOTH mic and
-    system-audio capture are running (starting whichever isn't already, on
-    top of whatever the textarea buttons have independently requested) and
-    writes every utterance from either source to the day's .txt file.
-    Turning it off only stops the file writes; it leaves the textarea's own
-    mic/system streaming exactly as it was."""
-    global _daily_log_active
+@bp.route('/api/audio_notes/output_file/toggle', methods=['POST'])
+def toggle_output_file_route():
+    """Turns the File output on/off — appending every transcribed
+    utterance (from whichever source(s) are active) to the day's
+    Audio Notes Data/Daily Notes/YYYY-MM-DD.txt file. Independent of the
+    Text Area output and of which sources (Mic/System) are active — see
+    the module comment near _mic_active above."""
+    global _output_file_active
     with _state_lock:
-        _daily_log_active = not _daily_log_active
-        enabled = _daily_log_active
-    try:
-        _sync_mic_capture()
-        _sync_system_capture()
-    except Exception:
-        _log_error('daily log toggle')
-        with _state_lock:
-            _daily_log_active = False
-        return jsonify({
-            'status': 'error',
-            'enabled': False,
-            'message': 'Could not start capture for the Daily Notes log. '
-                       'Make sure pyaudiowpatch and faster-whisper are '
-                       'installed and both a microphone and a WASAPI '
-                       'output/loopback device are available.',
-        })
+        _output_file_active = not _output_file_active
+        enabled = _output_file_active
+    return jsonify({'status': 'ok', 'enabled': enabled})
+
+
+@bp.route('/api/audio_notes/output_textarea/toggle', methods=['POST'])
+def toggle_output_textarea_route():
+    """Turns the Text Area output on/off — showing every transcribed
+    utterance (from whichever source(s) are active) in the on-screen
+    textarea. Independent of the File output and of which sources
+    (Mic/System) are active."""
+    global _output_textarea_active
+    with _state_lock:
+        _output_textarea_active = not _output_textarea_active
+        enabled = _output_textarea_active
     return jsonify({'status': 'ok', 'enabled': enabled})
 
 
@@ -1423,19 +1481,19 @@ def save_route():
 
 @bp.route('/api/audio_notes/mic/toggle', methods=['POST'])
 def toggle_mic_route():
-    """Turns mic streaming into the textarea on/off. Mic capture itself
-    keeps running underneath if the Daily Log button still wants it — see
-    _sync_mic_capture."""
-    global _mic_to_textarea
+    """Turns microphone capture on/off. This is purely a SOURCE toggle now
+    — it no longer has any bearing on where transcribed text goes (see the
+    Text Area / File output toggles above)."""
+    global _mic_active
     with _state_lock:
-        _mic_to_textarea = not _mic_to_textarea
-        active = _mic_to_textarea
+        _mic_active = not _mic_active
+        active = _mic_active
     try:
         _sync_mic_capture()
     except Exception:
         _log_error('mic toggle')
         with _state_lock:
-            _mic_to_textarea = False
+            _mic_active = False
         return jsonify({
             'status': 'error',
             'active': False,
@@ -1448,19 +1506,18 @@ def toggle_mic_route():
 
 @bp.route('/api/audio_notes/system/toggle', methods=['POST'])
 def toggle_system_route():
-    """Turns system-audio streaming into the textarea on/off. System
-    capture itself keeps running underneath if the Daily Log button still
-    wants it — see _sync_system_capture."""
-    global _system_to_textarea
+    """Turns system-audio capture on/off. Purely a SOURCE toggle — see
+    toggle_mic_route above."""
+    global _system_active
     with _state_lock:
-        _system_to_textarea = not _system_to_textarea
-        active = _system_to_textarea
+        _system_active = not _system_active
+        active = _system_active
     try:
         _sync_system_capture()
     except Exception:
         _log_error('system toggle')
         with _state_lock:
-            _system_to_textarea = False
+            _system_active = False
         return jsonify({
             'status': 'error',
             'active': False,

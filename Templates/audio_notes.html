@@ -25,6 +25,16 @@
         flex-wrap: wrap;
     }
 
+    /* Group of related buttons — visually separated from other groups */
+    .an-button-group {
+        display: flex;
+        gap: 6px;
+        align-items: center;
+    }
+    .an-button-group .btn {
+        white-space: nowrap;
+    }
+
     .btn-toggle {
         display: inline-flex; align-items: center; gap: 8px;
         /* Text buttons get their height from the font's line-height (1x
@@ -71,43 +81,18 @@
     .btn-toggle.processing .an-spinner { display: inline-block; }
     @keyframes an-spin { to { transform: rotate(360deg); } }
 
-    /* Icon-only toggle (no label) — used for the Daily Log on/off button.
-       Square, sized to match the other toolbar buttons' height. */
-    .btn-icon {
-        position: relative;
-        width: calc(0.875rem + 18px);
-        min-height: calc(0.875rem + 18px);
-        padding: 0 !important;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
+    /* Output-destination toggle (Text Area / File) — same shape/sizing as
+       .btn-toggle (added alongside it, not instead of it) but teal instead
+       of red when active. Red stays reserved for "audio is actually being
+       captured right now" (Mic/System/Record); teal here signals a
+       routing/settings choice instead. Declared after .btn-toggle.active
+       so it wins on buttons that carry both classes. */
+    .btn-toggle-output.active {
+        background: var(--teal-700);
+        border-color: var(--teal-700);
+        color: #fff;
     }
-    .btn-icon svg { width: 16px; height: 16px; display: block; }
-    .btn-icon.active { background: var(--teal-700); border-color: var(--teal-700); color: #fff; }
-    .btn-icon.active:hover { background: var(--teal-900); border-color: var(--teal-900); }
-
-    /* Count of utterances captured for the Daily Log but not yet
-       transcribed — see daily_log_queue_depth in poll_route(). Hidden
-       whenever it's zero so the button looks unchanged the rest of the
-       time; only appears once something is actually backlogged. */
-    .an-daily-log-badge {
-        display: none;
-        position: absolute;
-        top: -6px;
-        right: -6px;
-        min-width: 16px;
-        height: 16px;
-        padding: 0 3px;
-        border-radius: 8px;
-        background: var(--amber);
-        color: var(--ink);
-        font-size: 0.625rem;
-        font-weight: 700;
-        line-height: 16px;
-        text-align: center;
-    }
-    .an-daily-log-badge.show { display: block; }
+    .btn-toggle-output.active:hover { background: var(--teal-900); border-color: var(--teal-900); }
 
     .an-queue-badge {
         font-size: 0.6875rem;
@@ -193,30 +178,32 @@
 <div class="an-root">
 
     <div class="an-toolbar">
-        <button class="btn btn-outline btn-toggle{{ ' active' if mic_active else '' }}" id="micBtn" onclick="toggleMic()" title="On by default. Transcribes to the textarea below AND to Audio Notes Data/Daily Notes/YYYY-MM-DD.txt, tagged [Mic] and timestamped">
-            <span class="an-dot"></span> Mic
-            <span class="an-spinner" aria-hidden="true"></span>
-            <span class="an-queue-badge" id="micQueue"></span>
-        </button>
-        <button class="btn btn-outline btn-toggle{{ ' active' if system_active else '' }}" id="sysBtn" onclick="toggleSystem()" title="Off by default — click to start. Transcribes to the textarea below AND to Audio Notes Data/Daily Notes/YYYY-MM-DD.txt, tagged [Sys] and timestamped">
-            <span class="an-dot"></span> System Audio
-            <span class="an-spinner" aria-hidden="true"></span>
-            <span class="an-queue-badge" id="sysQueue"></span>
-        </button>
-        <button class="btn btn-outline btn-toggle{{ ' active' if recording_active else '' }}" id="recordBtn" onclick="toggleRecord()" title="Records mic + system audio together into one WAV file">
-            <span class="an-dot"></span> Record
-            <span class="an-rec-time" id="recTime"></span>
-        </button>
-        <button class="btn btn-outline btn-icon{{ ' active' if daily_log_enabled else '' }}" id="dailyLogBtn" onclick="toggleDailyLog()" title="Daily Notes log (Audio Notes Data/Daily Notes/YYYY-MM-DD.txt) — click to pause/resume. Live transcription above keeps working either way.">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M4 4h11l5 5v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z"></path>
-                <polyline points="14 4 14 9 19 9"></polyline>
-                <line x1="8" y1="13" x2="16" y2="13"></line>
-                <line x1="8" y1="17" x2="13" y2="17"></line>
-            </svg>
-            <span class="an-daily-log-badge" id="dailyLogQueue" title="Utterances captured for the Daily Log but not yet transcribed"></span>
-        </button>
+        <!-- LEFT: Capture toggles + Output toggles -->
+        <div class="an-button-group">
+            <button class="btn btn-outline btn-toggle{{ ' active' if mic_active else '' }}" id="micBtn" onclick="toggleMic()" title="Microphone capture on/off">
+                <span class="an-dot"></span> Mic
+                <span class="an-spinner" aria-hidden="true"></span>
+                <span class="an-queue-badge" id="micQueue"></span>
+            </button>
+            <button class="btn btn-outline btn-toggle{{ ' active' if system_active else '' }}" id="sysBtn" onclick="toggleSystem()" title="System audio capture on/off">
+                <span class="an-dot"></span> System
+                <span class="an-spinner" aria-hidden="true"></span>
+                <span class="an-queue-badge" id="sysQueue"></span>
+            </button>
+        </div>
 
+        <div class="an-button-group">
+            <button class="btn btn-outline btn-toggle btn-toggle-output{{ ' active' if output_textarea_enabled else '' }}" id="textareaBtn" onclick="toggleOutputTextarea()" title="Show transcribed text in the textarea below (from either source)">
+                Text Area
+                <span class="an-queue-badge" id="textareaQueue"></span>
+            </button>
+            <button class="btn btn-outline btn-toggle btn-toggle-output{{ ' active' if output_file_enabled else '' }}" id="fileBtn" onclick="toggleOutputFile()" title="Append transcribed text to Audio Notes Data/Daily Notes/YYYY-MM-DD.txt (from either source)">
+                File
+                <span class="an-queue-badge" id="fileQueue"></span>
+            </button>
+        </div>
+
+        <!-- CENTER: Model picker -->
         <div class="an-model-picker">
             <label for="modelSelect">Model</label>
             <select class="an-model-select" id="modelSelect" onchange="changeModel()">
@@ -231,6 +218,11 @@
 
         <div class="an-spacer"></div>
 
+        <!-- RIGHT: Record + Upload -->
+        <button class="btn btn-outline btn-toggle{{ ' active' if recording_active else '' }}" id="recordBtn" onclick="toggleRecord()" title="Records mic + system audio together into WAV">
+            <span class="an-dot"></span> Record
+            <span class="an-rec-time" id="recTime"></span>
+        </button>
         <span class="an-upload-status" id="uploadStatus">
             <span class="an-spinner" aria-hidden="true"></span> Transcribing file&hellip;
         </span>
@@ -258,10 +250,12 @@
     var sysBtn = document.getElementById('sysBtn');
     var micQueueEl = document.getElementById('micQueue');
     var sysQueueEl = document.getElementById('sysQueue');
+    var textareaBtn = document.getElementById('textareaBtn');
+    var fileBtn = document.getElementById('fileBtn');
+    var textareaQueueEl = document.getElementById('textareaQueue');
+    var fileQueueEl = document.getElementById('fileQueue');
     var recordBtn = document.getElementById('recordBtn');
     var recTimeEl = document.getElementById('recTime');
-    var dailyLogBtn = document.getElementById('dailyLogBtn');
-    var dailyLogQueueEl = document.getElementById('dailyLogQueue');
     var statusEl = document.getElementById('saveStatus');
     var modelSelect = document.getElementById('modelSelect');
     var modelLoadingEl = document.getElementById('modelLoading');
@@ -338,15 +332,25 @@
             .finally(function () { sysBtn.disabled = false; });
     }
 
-    // ── Daily Log on/off (independent of Mic/System live transcription) ──
-    function toggleDailyLog() {
-        dailyLogBtn.disabled = true;
-        fetch('/api/audio_notes/daily_log/toggle', { method: 'POST' })
+    // ── Output destination toggles (independent of Mic/System sources) ──
+    function toggleOutputTextarea() {
+        textareaBtn.disabled = true;
+        fetch('/api/audio_notes/output_textarea/toggle', { method: 'POST' })
             .then(function (r) { return r.json(); })
             .then(function (d) {
-                setToggleState(dailyLogBtn, d.enabled);
+                setToggleState(textareaBtn, d.enabled);
             })
-            .finally(function () { dailyLogBtn.disabled = false; });
+            .finally(function () { textareaBtn.disabled = false; });
+    }
+
+    function toggleOutputFile() {
+        fileBtn.disabled = true;
+        fetch('/api/audio_notes/output_file/toggle', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                setToggleState(fileBtn, d.enabled);
+            })
+            .finally(function () { fileBtn.disabled = false; });
     }
 
     // ── Recording (mic + system audio -> single WAV file) ──
@@ -483,10 +487,10 @@
                 recordingStartedAt = d.recording_active ? d.recording_started_at : null;
                 if (!d.recording_active) recTimeEl.textContent = '';
 
-                setToggleState(dailyLogBtn, d.daily_log_enabled);
-                var dailyLogQueued = d.daily_log_queue_depth || 0;
-                dailyLogQueueEl.textContent = dailyLogQueued > 9 ? '9+' : dailyLogQueued;
-                dailyLogQueueEl.classList.toggle('show', dailyLogQueued > 0);
+                setToggleState(textareaBtn, d.output_textarea_enabled);
+                setToggleState(fileBtn, d.output_file_enabled);
+                textareaQueueEl.textContent = d.textarea_queue_depth > 0 ? '(' + d.textarea_queue_depth + ' queued)' : '';
+                fileQueueEl.textContent = d.file_queue_depth > 0 ? '(' + d.file_queue_depth + ' queued)' : '';
             });
     }
 

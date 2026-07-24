@@ -54,7 +54,9 @@ FRAME_SECONDS = 0.03              # analysis window for the VAD (~30ms)
 VAD_ENTER_FRAMES = 2              # consecutive voiced frames to open an utterance
 VAD_HANGOVER_SECONDS = 0.6        # keep buffering this long after voice stops, to catch trailing words
 VAD_MIN_UTTERANCE_SECONDS = 0.3   # discard anything shorter — almost certainly a blip, not speech
-VAD_MAX_UTTERANCE_SECONDS = 20    # force a flush even mid-speech, so long monologues don't build up latency
+VAD_MAX_UTTERANCE_SECONDS = 12    # force a flush even mid-speech, so long monologues don't build up latency
+                                  # (kept fairly short — a single long utterance now occupies one of the
+                                  # two per-source transcribe workers below for its whole duration)
 VAD_THRESHOLD_MULTIPLIER = 3.0    # how far above the tracked noise floor counts as "voice"
 VAD_MIN_ABS_RMS = 0.006           # absolute floor, so a very quiet room's noise floor can't drift to ~0
 
@@ -69,24 +71,28 @@ DEVICE_CHECK_SECONDS = 2.0
 
 WHISPER_DEVICE = 'cpu'
 WHISPER_COMPUTE_TYPE = 'int8'
-# Explicit thread count instead of letting ctranslate2 auto-detect: on
-# weaker/older CPUs "auto" can pick more threads than the machine can
-# usefully run in parallel, and the extra context-switching costs more than
-# it gains. Leaving one core free for the audio capture thread(s) is a
-# better default on modest hardware. Override with the AUDIO_NOTES_CPU_THREADS
-# env var if you want to tune it for a specific machine.
+# Mic and system audio now each have their own transcribe worker running
+# concurrently (see _source_transcribe_worker / _emit_merge_loop below), so
+# two model.transcribe() calls can be in flight on the CPU at the same
+# time. Giving each one the full (cores - 1) thread count — the old,
+# single-worker sizing — would oversubscribe the CPU whenever both sources
+# actually overlap, which is exactly when this matters most. Splitting the
+# usable cores in half between the two keeps both workers running near
+# full speed without them fighting each other for cores. Override with the
+# AUDIO_NOTES_CPU_THREADS env var if you want to tune it for a specific
+# machine (it sets the PER-WORKER thread count, not the total).
 WHISPER_CPU_THREADS = int(os.environ.get(
-    'AUDIO_NOTES_CPU_THREADS', max(1, (os.cpu_count() or 4) - 1)
+    'AUDIO_NOTES_CPU_THREADS', max(1, ((os.cpu_count() or 4) - 1) // 2)
 ))
 # Live mic/system audio is already segmented by our own VAD in _capture_loop
-# before it ever reaches Whisper (see _process_and_emit), so Whisper's own
+# before it ever reaches Whisper (see _transcribe_utterance), so Whisper's own
 # internal VAD pass (vad_filter=True) is redundant work on that path — pure
 # overhead on audio that's already been filtered to voice-only. Uploaded
 # files (_transcribe_file) have no such pre-filtering, so they keep it on.
 LIVE_VAD_FILTER = False
 FILE_TRANSCRIBE_BEAM_SIZE = 5     # uploaded files are offline/batch, so it's worth spending more compute for quality
 
-# Post-transcription hallucination filter (see _process_and_emit). Our own
+# Post-transcription hallucination filter (see _transcribe_utterance). Our own
 # energy-based VAD in _capture_loop segments on voice ENERGY, not on
 # whether the audio is actually speech, so breath sounds, room noise, or a
 # distant voice can still open an utterance and reach Whisper. Whisper
@@ -114,7 +120,7 @@ HALLUCINATION_MAX_AVG_LOGPROB = -1.0
 # different tier entirely), so it isn't listed here. Plain 'small' below
 # is the multilingual option to reach for instead when a call needs
 # non-English support — see the "model selected at queue time" fix in
-# _capture_loop/_process_and_emit for why switching to it mid-call is now
+# _capture_loop/_transcribe_utterance for why switching to it mid-call is now
 # safe for anything already queued under the previous model.
 AVAILABLE_MODELS = [
     ('tiny.en', 'Tiny (English) — fastest, roughest'),
@@ -184,8 +190,8 @@ def _pa_release():
             _pa_instance = None
 
 # Live capture: a persistent queue per stream decouples audio reading from
-# transcription (see _capture_loop / _merge_worker_loop below) — this is
-# the fix for audio being dropped while a chunk is transcribing.
+# transcription (see _capture_loop / _source_transcribe_worker below) —
+# this is the fix for audio being dropped while a chunk is transcribing.
 #
 # Sources vs. destinations — two independent axes:
 #   - _mic_active / _system_active — whether each source is captured at
@@ -230,14 +236,19 @@ _system_capture_thread = None
 _system_stop_event = None
 _system_queue = queue.Queue()
 
-# Transcription itself is done by a SINGLE global worker thread (see
-# _merge_worker_loop below, started once from on_load()), not one worker
-# thread per source. Mic and System each still get their own independent
-# capture (VAD-segmenting) thread and queue — only the "consume +
-# transcribe" side is merged, so utterances from both sources get
-# transcribed in true chronological order (by when they started being
-# spoken) instead of in whichever order two concurrent worker threads
-# happen to finish.
+# Transcription runs on TWO concurrent workers, one per source (see
+# _source_transcribe_worker, started once from on_load()) — Mic and System
+# no longer share a single transcription thread, so speech on one source
+# is no longer stalled behind whatever is transcribing on the other.
+# Each worker drains its own queue strictly in the order utterances were
+# captured for that source, so per-source ordering is automatic; the two
+# results streams are then re-interleaved into one true chronological
+# order by _emit_merge_loop before anything reaches the transcript/file
+# (see _mic_ready_queue / _system_ready_queue below and the comment above
+# _emit_merge_loop for why that stage is still needed).
+_mic_ready_queue = queue.Queue()      # finished (text, start_dt, ...) results waiting to be emitted in order
+_system_ready_queue = queue.Queue()
+
 _mic_processing = False       # True while a mic utterance is actively being transcribed
 _system_processing = False    # True while a system-audio utterance is actively being transcribed
 
@@ -256,8 +267,8 @@ _output_file_active = True
 # for a specific destination; this is what the "queued" badges next to
 # the Text Area / File buttons (poll_route's 'textarea_queue_depth' /
 # 'file_queue_depth') are driven by. Incremented in _capture_loop right
-# when such an utterance is queued, decremented in _merge_worker_loop
-# right when it's dequeued for transcription.
+# when such an utterance is queued, decremented in
+# _source_transcribe_worker right when it's dequeued for transcription.
 _textarea_queue_lock = threading.Lock()
 _textarea_queue_depth = 0
 _file_queue_lock = threading.Lock()
@@ -328,13 +339,17 @@ def on_load():
     _cleanup_stale_content_tmp()
     _cleanup_stale_uploads()
     threading.Thread(target=_warm_model, daemon=True).start()
-    # The single merge-transcription worker (see _merge_worker_loop) runs
-    # for the whole process lifetime, independent of Mic/System being
-    # toggled on/off. It touches no WASAPI/COM state — it only reads from
-    # the two queues that _capture_loop threads feed and calls Whisper —
-    # so, unlike starting capture itself, it's safe to launch directly
-    # from on_load()'s background thread.
-    threading.Thread(target=_merge_worker_loop, daemon=True).start()
+    # Three long-lived threads run for the whole process lifetime,
+    # independent of Mic/System being toggled on/off: one transcribe
+    # worker per source, plus the ordering/emit stage that re-interleaves
+    # their results (see _source_transcribe_worker / _emit_merge_loop).
+    # None of these touch WASAPI/COM state directly — they only read from
+    # the queues _capture_loop threads feed and call Whisper — so, unlike
+    # starting capture itself, it's safe to launch them directly from
+    # on_load()'s background thread.
+    threading.Thread(target=_source_transcribe_worker, args=('mic', _mic_queue, _mic_ready_queue), daemon=True).start()
+    threading.Thread(target=_source_transcribe_worker, args=('system', _system_queue, _system_ready_queue), daemon=True).start()
+    threading.Thread(target=_emit_merge_loop, daemon=True).start()
     # Deliberately does NOT call _sync_mic_capture()/_sync_system_capture()
     # here. Both sources default to ON (see _mic_active/_system_active
     # above), which means satisfying that default requires starting System
@@ -509,7 +524,7 @@ def _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_fi
 # _selected_model_name itself. That's deliberate: each queued utterance is
 # stamped (in _capture_loop, at the moment it's queued) with whichever
 # model was selected right then, and is transcribed with THAT model in
-# _process_and_emit — not whatever the dropdown has since moved on to. In
+# _transcribe_utterance — not whatever the dropdown has since moved on to. In
 # a meeting where the language switches (e.g. English -> multilingual for
 # a Polish segment -> English again), a backlog of English-tagged
 # utterances that hasn't been drained yet stays correctly tagged English
@@ -585,11 +600,14 @@ def _resample_linear(samples, orig_sr, target_sr):
     return np.interp(target_idx, orig_idx, samples).astype(np.float32)
 
 
-def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_system, model_name,
-                       wants_textarea, wants_file):
+def _transcribe_utterance(label, raw_bytes, channels, rate, model_name):
     """Transcribes one already-VAD-segmented utterance (live mic/system
-    capture). Runs on the single merge-worker thread, never on the
-    audio-reading thread — see _capture_loop / _merge_worker_loop."""
+    capture) and returns the filtered text ('' if nothing worth keeping
+    was found). Runs on that source's own transcribe worker (see
+    _source_transcribe_worker) — mic and system each call this
+    concurrently on their own thread now, never on the audio-reading
+    thread. Returns text only; the caller decides what happens to it
+    (queue it for ordered emission via _emit_merge_loop, or drop it)."""
     try:
         import numpy as np
         samples = np.frombuffer(raw_bytes, dtype=np.int16).astype(np.float32) / 32768.0
@@ -647,17 +665,10 @@ def _process_and_emit(label, raw_bytes, channels, rate, start_dt, end_dt, is_sys
                     and seg.avg_logprob < HALLUCINATION_MAX_AVG_LOGPROB):
                 continue
             kept.append(seg_text)
-        text = ' '.join(kept).strip()
-
-        if text:
-            # wants_textarea / wants_file are likewise stamped at capture
-            # time, not read fresh here — see _emit_transcript for why:
-            # toggling either off while this utterance was still queued
-            # must not make an already-spoken line vanish from an output
-            # it was actually captured for.
-            _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_file)
+        return ' '.join(kept).strip()
     except Exception:
         _log_error(f'{label}: transcribe')
+        return ''
 
 
 def _output_file_path_for(dt):
@@ -736,7 +747,7 @@ def _transcribe_file(path):
         if not seg_text:
             continue
         # Same confidence-based hallucination filter as the live path (see
-        # _process_and_emit) — Whisper's own internal VAD (vad_filter=True
+        # _transcribe_utterance) — Whisper's own internal VAD (vad_filter=True
         # above) catches most silence, but a hallucinated filler phrase can
         # still slip through on quiet/noisy stretches within a file.
         if (seg.no_speech_prob > HALLUCINATION_NO_SPEECH_PROB
@@ -758,12 +769,12 @@ def _set_processing(label, value):
 # _capture_loop's only job is reading the stream and segmenting it by voice
 # activity; it NEVER calls Whisper directly, so it can never be blocked by
 # a slow transcription. Finished utterances are handed to a queue instead;
-# the single _merge_worker_loop thread (shared across both mic and system
-# — see its docstring) drains both queues in chronological order and does
-# the actual (slow) transcription. If transcription temporarily falls
-# behind, utterances queue up rather than audio getting silently dropped by
-# the OS-level stream buffer overflowing — a lagging transcript, never
-# lost speech.
+# that source's own _source_transcribe_worker thread (see its docstring)
+# drains the queue in that source's own chronological order and does the
+# actual (slow) transcription. If transcription temporarily falls behind,
+# utterances queue up rather than audio getting silently dropped by the
+# OS-level stream buffer overflowing — a lagging transcript, never lost
+# speech.
 
 def _resolve_capture_device(p, pyaudio, is_system):
     """Resolves whichever device Windows *currently* considers the default
@@ -1038,36 +1049,35 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
         flush_utterance(datetime.now())
 
 
-# ── Single global transcription worker (merges mic + system in order) ──
-# Mic and system audio are two independently-running VAD segmenters, so an
-# utterance that STARTED earlier is not guaranteed to be QUEUED first — a
-# short utterance on one source can finish and land in its queue well
-# before a long, still-in-progress utterance on the other source that
-# actually began speaking earlier. Two separate worker threads (the old
-# design) made this worse: even if queuing order were correct, whichever
-# thread's Whisper call happened to FINISH first would win the race to
-# append to the shared transcript, regardless of which utterance started
-# first.
+# ── Concurrent per-source transcription + ordered emit stage ───────────
+# Mic and system audio each get their OWN transcribe worker thread now,
+# running concurrently, instead of sharing one global worker. That's the
+# fix for the queue backlog/latency this replaces: previously, any speech
+# overlapping between the two sources (or simply a slower model, e.g.
+# 'small' instead of 'distil-small.en') had to funnel through a single
+# Whisper call at a time, so both queues would grow at the mic-heavy or
+# system-heavy end. Two workers means two utterances — one per source —
+# can be mid-transcription on the CPU at once (see the WHISPER_CPU_THREADS
+# split above for how the per-call thread count was adjusted to make room
+# for that).
 #
-# _merge_worker_loop fixes both problems by being the only thing that
-# transcribes: a single thread that looks at the oldest pending item from
-# each queue and only ever processes the one with the earlier start_dt.
-# If only one queue currently has something, that item is only "safe" to
-# process once it's older than _MAX_QUEUE_DELAY — the worst-case time an
-# utterance can sit being captured before _capture_loop is forced to flush
-# it (VAD_MAX_UTTERANCE_SECONDS + VAD_HANGOVER_SECONDS, plus a small
-# safety margin). Until then, the other source could still, in principle,
-# produce an utterance that started even earlier, so the lone item waits.
-# In normal back-and-forth conversation both queues have something to
-# compare almost all the time, so this rarely adds any real latency — the
-# worst case only shows up after one source goes completely silent for a
-# stretch.
+# Each worker (_source_transcribe_worker) drains its OWN queue strictly in
+# capture order, so within one source ordering is automatic and free.
+# Across sources it isn't: since the two workers run independently, a
+# short utterance on one side can finish transcribing before a long one
+# on the other side that actually started earlier. _emit_merge_loop is
+# the small stage that fixes that — it's the same "wait for the older of
+# two heads, or for a lone head to age past _MAX_QUEUE_DELAY" logic the
+# single-worker design used to apply BEFORE transcription; here it runs
+# AFTER transcription instead, over each source's already-produced
+# results (_mic_ready_queue / _system_ready_queue), which is what lets
+# transcription itself happen in parallel while still emitting to the
+# transcript/file in true chronological order.
 #
-# Runs for the whole lifetime of the process (started once, from
-# on_load(), like _warm_model) rather than being tied to Mic/System being
-# toggled on/off — it simply idles when both queues are empty, and keeps
-# draining whatever's left even after a source is switched off, so
-# nothing already captured is ever discarded.
+# All three threads (the two per-source workers plus this ordering stage)
+# run for the whole process lifetime, independent of Mic/System being
+# toggled on/off — see on_load() — and keep draining whatever's left even
+# after a source is switched off, so nothing already captured is discarded.
 _MAX_QUEUE_DELAY = VAD_MAX_UTTERANCE_SECONDS + VAD_HANGOVER_SECONDS + 0.5
 
 
@@ -1078,28 +1088,54 @@ def _dequeue_nowait(q):
         return None
 
 
-def _merge_worker_loop():
-    mic_head = None  # a dequeued-but-not-yet-processed item from _mic_queue, or None
-    sys_head = None  # same, for _system_queue
+def _source_transcribe_worker(label, in_queue, ready_queue):
+    """One dedicated thread per source (mic or system). Blocks on that
+    source's own raw-utterance queue and transcribes strictly in capture
+    order for that source; finished results go to ready_queue for
+    _emit_merge_loop to re-interleave with the other source and emit."""
+    while True:
+        raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_file = in_queue.get()
+        if wants_textarea:
+            _textarea_queue_decr()
+        if wants_file:
+            _file_queue_decr()
+        _set_processing(label, True)
+        try:
+            text = _transcribe_utterance(label, raw, channels, rate, model_name)
+            if text:
+                ready_queue.put((text, start_dt, end_dt, is_system, wants_textarea, wants_file))
+        except Exception:
+            _log_error(f'{label}: transcribe worker')
+        finally:
+            _set_processing(label, False)
+
+
+def _emit_merge_loop():
+    """Re-interleaves the two sources' independently-produced transcription
+    results back into one true chronological stream (by start_dt) and
+    emits each in turn — see the module comment above for why this stage
+    still exists now that transcription itself runs concurrently."""
+    mic_head = None  # a dequeued-but-not-yet-emitted result from _mic_ready_queue, or None
+    sys_head = None  # same, for _system_ready_queue
 
     while True:
         if mic_head is None:
-            mic_head = _dequeue_nowait(_mic_queue)
+            mic_head = _dequeue_nowait(_mic_ready_queue)
         if sys_head is None:
-            sys_head = _dequeue_nowait(_system_queue)
+            sys_head = _dequeue_nowait(_system_ready_queue)
 
         if mic_head is not None and sys_head is not None:
             # Both sides have something waiting — direct comparison is
             # unambiguous, no need to wait.
-            if mic_head[3] <= sys_head[3]:   # index 3 = start_dt
+            if mic_head[1] <= sys_head[1]:   # index 1 = start_dt
                 item, mic_head = mic_head, None
             else:
                 item, sys_head = sys_head, None
         elif mic_head is not None or sys_head is not None:
             head = mic_head if mic_head is not None else sys_head
-            age = (datetime.now() - head[3]).total_seconds()
+            age = (datetime.now() - head[1]).total_seconds()
             if age >= _MAX_QUEUE_DELAY:
-                # Old enough that the other (currently empty) queue could
+                # Old enough that the other (currently empty) source could
                 # not possibly still produce anything that started earlier.
                 item = head
                 if mic_head is not None:
@@ -1113,19 +1149,13 @@ def _merge_worker_loop():
             time_module.sleep(0.15)
             continue
 
-        raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_file = item
-        if wants_textarea:
-            _textarea_queue_decr()
-        if wants_file:
-            _file_queue_decr()
-        label = 'system' if is_system else 'mic'
-        _set_processing(label, True)
-        try:
-            _process_and_emit(label, raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_file)
-        except Exception:
-            _log_error(f'{label}: merge worker')
-        finally:
-            _set_processing(label, False)
+        text, start_dt, end_dt, is_system, wants_textarea, wants_file = item
+        # wants_textarea / wants_file were stamped at capture time, not
+        # read fresh here — see _emit_transcript for why: toggling either
+        # off while this utterance was still in flight must not make an
+        # already-spoken line vanish from an output it was actually
+        # captured for.
+        _emit_transcript(text, start_dt, end_dt, is_system, wants_textarea, wants_file)
 
 
 # ── Thread lifecycle: live mic / system capture ───────────────────────

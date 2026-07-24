@@ -40,33 +40,37 @@
     .graph-trigger-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
 
     .graph-canvas-wrap { position: relative; background: var(--surface-in); overflow: hidden; cursor: grab; }
+    .graph-canvas-wrap:active { cursor: grabbing; }
     .graph-canvas-wrap svg { width: 100%; height: 100%; display: block; }
     .graph-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 10px; }
 
     /* Links and nodes are teal-only; intensity/shade is set inline per-element
-       based on connection count (see nodeColor()/linkColor() in the script). */
-    .graph-link { stroke-width: 1; }
-    .graph-link.dim { opacity: 0.1 !important; }
-    .graph-link.highlight { stroke-width: 1.8; }
-    .graph-node-rect { stroke: var(--teal-900); stroke-width: 0.3; cursor: pointer; }
+       based on connection count (see nodeColor()/linkColor() in the script).
+       All sizes below are real CSS pixels at zoom level 1 — the graph now
+       uses actual pixel coordinates (not an abstract viewBox) so panning
+       and zooming track the mouse 1:1. */
+    .graph-link { stroke-width: 0.6px; transition: opacity 100ms; }
+    .graph-link.dim { opacity: 0.08 !important; }
+    .graph-link.highlight { stroke-width: 1.4px; }
+    .graph-node-rect { stroke: var(--teal-900); stroke-width: 0.6px; cursor: pointer; transition: stroke-width 100ms, opacity 100ms; }
     .graph-node-rect.dim { opacity: 0.2; }
-    .graph-node-rect:hover { stroke-width: 0.8; }
-    .graph-node-rect.neighbor { stroke-width: 0.75; filter: drop-shadow(0 0 0.5px var(--teal-900)); }
+    .graph-node-rect:hover { stroke-width: 1.6px; }
+    .graph-node-rect.neighbor { stroke-width: 1.5px; filter: drop-shadow(0 0 1.5px var(--teal-900)); }
     .graph-node-label {
-        font-family: var(--font); font-size: 1.3px; fill: var(--teal-400);
-        pointer-events: none; opacity: 0.75; transition: opacity 100ms, font-size 100ms, fill 100ms;
+        font-family: var(--font); font-size: 9px; fill: var(--teal-700);
+        pointer-events: none; opacity: 0; transition: opacity 100ms, font-size 100ms, fill 100ms;
         /* Halo behind the glyphs (same color as the canvas background) so
            overlapping labels/links from neighboring notes don't turn the
            text into an unreadable smudge — this "erases" whatever is behind
            each letter instead of needing real collision avoidance. */
         paint-order: stroke fill;
         stroke: var(--surface-in);
-        stroke-width: 0.8px;
+        stroke-width: 3px;
         stroke-linejoin: round;
     }
-    .graph-node-label.dim { opacity: 0.1; }
+    .graph-node-label.dim { opacity: 0; }
     .graph-node-label.neighbor { opacity: 1; fill: var(--teal-700); font-weight: 600; }
-    .graph-node-label.show { opacity: 1; font-size: 1.7px; font-weight: 700; fill: var(--teal-900); }
+    .graph-node-label.show { opacity: 1; font-size: 11px; font-weight: 700; fill: var(--teal-900); }
 
     /* Inside the full-screen modal the halo needs to match ITS background,
        not the sidebar mini-panel's — otherwise labels get a visible teal
@@ -197,7 +201,7 @@
     }
     .preview-area hr { border: none; height: 2px; background: var(--border); margin: 0; border-radius: 2px; }
     .preview-area blockquote { margin: 0; padding: 10px 16px; border-left: 4px solid var(--amber); background: var(--surface-in); font-style: italic; color: var(--text-muted); }
-    .preview-area .toc { background: var(--surface-in); border: 1px solid var(--border); border-left: 4px solid var(--teal-700); border-radius: var(--r); box-shadow: var(--shadow); padding: 16px; margin: 0; display: inline-block; min-width: 240px; }
+    .preview-area .toc { background: var(--surface-in); border: 1px solid var(--border); border-left: 4px solid var(--teal-700); border-radius: 0; box-shadow: var(--shadow); padding: 16px; margin: 0; display: inline-block; min-width: 240px; }
     .preview-area .toc .toctitle { display: block; font-weight: 700; text-transform: uppercase; color: var(--text-muted); margin-bottom: 8px; font-size: 0.6875rem; }
     .preview-area .toc ul { list-style: none; padding-left: 16px; margin: 0; }
     .preview-area .toc > ul { padding-left: 0; }
@@ -208,11 +212,13 @@
     .preview-area a.note-link { text-decoration: none; border-bottom: 1px dashed var(--teal-400); cursor: pointer; }
     .preview-area a.note-link:hover { color: var(--teal-900); border-bottom-color: var(--teal-900); }
 
-    .admonition { padding: 16px; margin: 0; border-radius: 0; border-left: 4px solid var(--teal-700); background: var(--surface-in); box-shadow: var(--shadow); }
+    .admonition { padding: 16px; margin: 0; border-radius: 0; border-left: 4px solid var(--teal-700); background: var(--surface-in); box-shadow: var(--shadow); color: var(--ink); }
+    .admonition p { margin: 0 0 10px; }
+    .admonition p:last-child { margin-bottom: 0; }
     .admonition-title { font-weight: 700; font-size: 0.75rem; text-transform: uppercase; margin-bottom: 8px; display: block; color: var(--teal-700); }
-    .admonition.warning { border-left-color: #d97706; background: rgba(217, 119, 6, 0.05); }
+    .admonition.warning { border-left-color: #d97706; background: rgba(217, 119, 6, 0.05); color: #7a4a06; }
     .admonition.warning .admonition-title { color: #d97706; }
-    .admonition.danger, .admonition.error { border-left-color: #e53e3e; background: rgba(229, 62, 62, 0.05); }
+    .admonition.danger, .admonition.error { border-left-color: #e53e3e; background: rgba(229, 62, 62, 0.05); color: #8a2424; }
     .admonition.danger .admonition-title, .admonition.error .admonition-title { color: #e53e3e; }
 
     .preview-area ul:has(input[type="checkbox"]) { list-style: none; padding-left: 0.5rem; }
@@ -244,7 +250,7 @@
         border-width: 0 2px 2px 0;
         transform: rotate(45deg);
     }
-    .preview-area li:has(> input[type="checkbox"]:checked) { color: var(--text-muted); text-decoration: line-through; }
+    .preview-area li:has(> input[type="checkbox"]:checked) { color: var(--text-muted); }
 
     .preview-area table { width: fit-content; max-width: 100%; margin: 0; font-size: 0.8125rem; background: var(--surface-card); border-collapse: separate; border-spacing: 0; border: 1px solid var(--border); border-radius: 0; box-shadow: var(--shadow); }
     .preview-area th { background: var(--teal-900); color: #fff; font-weight: 600; text-align: left; padding: 10px 16px; border-right: 1px solid var(--teal-700); border-bottom: 2px solid var(--teal-900); font-size: 0.75rem; }
@@ -309,7 +315,7 @@
 
         <div class="editor-footer">
             <span class="path-display" id="pathDisp">Notes /</span>
-            <input type="text" id="noteTitle" class="input" style="flex:1" placeholder="filename" oninput="scheduleSave()">
+            <input type="text" id="noteTitle" class="input" style="flex:1" placeholder="filename, or Folder/Subfolder/filename to nest it" title="Type a path with / to file this note into one or more subfolders — they're created automatically." oninput="scheduleSave()">
             <span id="saveStatus" class="save-status"></span>
 
             <button class="btn btn-primary" id="saveBtn" onclick="saveNote()" style="display:none">Save Note</button>
@@ -355,6 +361,7 @@
     </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script>
     const files = {{ files|tojson }};
     const DAILY_FOLDER_NAME = 'Daily';
@@ -383,37 +390,62 @@
     const elDelBtn = document.getElementById('delBtn');
     const elSaveBtn = document.getElementById('saveBtn');
 
+    const expandedFolders = new Set(); // full folder paths the user has opened, persists across rebuilds
+
     function buildTree() {
         const root = document.getElementById('rootFiles');
         root.innerHTML = '';
-        const folders = {};
-        const loose = [];
         const visibleFiles = matchingFiles ? files.filter(f => matchingFiles.has(f)) : files;
+
+        // Build a nested tree keyed by folder name at each level, to any depth —
+        // e.g. "Work/Clients/Acme/Kickoff.md" nests Work > Clients > Acme.
+        const treeRoot = { children: {}, items: [] };
         visibleFiles.forEach(path => {
             const parts = path.split('/');
             const label = parts.at(-1).replace('.md', '');
-            if (parts.length > 1) { (folders[parts[0]] ??= []).push({ path, label }); }
-            else { loose.push({ path, label }); }
+            let node = treeRoot;
+            for (let i = 0; i < parts.length - 1; i++) {
+                const name = parts[i];
+                node = (node.children[name] ??= { children: {}, items: [] });
+            }
+            node.items.push({ path, label });
         });
+
         // While a search is active, force every folder open so matches are
         // visible without the user needing to expand them manually.
         const forceOpen = !!matchingFiles;
-        Object.keys(folders).sort((a, b) => {
-            if (a === DAILY_FOLDER_NAME) return -1;
-            if (b === DAILY_FOLDER_NAME) return 1;
-            return a.localeCompare(b);
-        }).forEach(name => {
-            const group = document.createElement('div');
-            const cls = forceOpen ? ' expanded' : '';
-            group.innerHTML = `<div class="folder-header${cls}" onclick="toggleFolder(this,'${name}')">${name}</div><div class="folder-content${cls}" id="f-${name}"></div>`;
-            root.appendChild(group);
-            folders[name].forEach(f => appendFileEl(document.getElementById(`f-${name}`), f.path, f.label));
-        });
-        loose.forEach(f => appendFileEl(root, f.path, f.label));
+        renderTreeLevel(treeRoot, root, '', forceOpen);
 
         if (matchingFiles && !visibleFiles.length) {
             root.insertAdjacentHTML('beforeend', '<div class="search-empty">No matching notes</div>');
         }
+    }
+
+    function renderTreeLevel(node, container, folderPath, forceOpen) {
+        Object.keys(node.children).sort((a, b) => {
+            if (folderPath === '' && a === DAILY_FOLDER_NAME) return -1;
+            if (folderPath === '' && b === DAILY_FOLDER_NAME) return 1;
+            return a.localeCompare(b);
+        }).forEach(name => {
+            const fullPath = folderPath ? `${folderPath}/${name}` : name;
+            const isExpanded = forceOpen || expandedFolders.has(fullPath);
+
+            const header = document.createElement('div');
+            header.className = 'folder-header' + (isExpanded ? ' expanded' : '');
+            header.textContent = name;
+
+            const contentEl = document.createElement('div');
+            contentEl.className = 'folder-content' + (isExpanded ? ' expanded' : '');
+
+            header.onclick = () => toggleFolder(header, contentEl, fullPath);
+
+            container.appendChild(header);
+            container.appendChild(contentEl);
+
+            renderTreeLevel(node.children[name], contentEl, fullPath, forceOpen);
+        });
+
+        node.items.forEach(f => appendFileEl(container, f.path, f.label));
     }
 
     function appendFileEl(parent, path, label) {
@@ -427,9 +459,11 @@
         parent.appendChild(el);
     }
 
-    function toggleFolder(el, name) {
-        el.classList.toggle('expanded');
-        document.getElementById(`f-${name}`).classList.toggle('expanded');
+    function toggleFolder(headerEl, contentEl, fullPath) {
+        const nowExpanded = contentEl.classList.toggle('expanded');
+        headerEl.classList.toggle('expanded', nowExpanded);
+        if (nowExpanded) expandedFolders.add(fullPath);
+        else expandedFolders.delete(fullPath);
     }
 
     // ── Search ────────────────────────────────────────────
@@ -943,132 +977,43 @@
     buildTree();
 
     // ═══════════════════════════════════════════════════════════
-    // GRAPH VIEW
+    // GRAPH VIEW — powered by D3-force + d3-zoom (see the <script src=
+    // ".../d3.min.js"> tag above the main script block).
     //
-    // Layout approach mirrors how Obsidian's graph settles: it is NOT that
-    // high-degree notes are explicitly pinned to the middle. Instead:
+    // Layout mirrors how Obsidian's own graph settles:
     //   - every node repels every other node (charge/many-body force)
-    //   - every link pulls its two endpoints together (spring force)
-    //   - a very weak global pull keeps the whole cluster near the canvas
-    //     center, just so it doesn't drift off-screen
-    // A hub note has many springs tugging it from many directions at once,
-    // which averages out near the centroid of its neighbors — usually the
-    // middle of a well-connected graph. A leaf note has exactly one spring,
-    // so repulsion is free to push it out toward the rim. The "hub in the
-    // center" look is an emergent result of that force balance, not a rule
-    // — so the global center-pull below is kept deliberately weak (centerK)
-    // relative to the link/repulsion forces, otherwise it would flatten
-    // that natural clustering.
+    //   - every link pulls its two endpoints together (link force)
+    //   - a per-node pull toward the canvas center, scaled by how many
+    //     links that note has: a well-linked hub gets pulled in hard, an
+    //     isolated note barely gets pulled at all
+    //   - a collision force stops squares overlapping
+    // The combination is what produces the classic look: hubs cluster
+    // tightly at the middle, and untouched notes get pushed by collision
+    // into a packed ring/filled circle around that core, instead of
+    // drifting off wherever repulsion happens to leave them.
+    //
+    // Coordinates are real CSS pixels (not an abstract viewBox), which is
+    // what lets d3-zoom's pan/scale track the mouse 1:1.
     // ═══════════════════════════════════════════════════════════
-    var GRAPH_W = 100, GRAPH_H = 100;
-    var GRAPH_PAD = 9; // keeps squares off the canvas edge
-    var GRAPH_NODE_SIZE = 1.5; // fixed square size for every note — only color varies
-    var LABEL_MAX_CHARS = 11;   // wrap width, in characters
-    var LABEL_MAX_LINES = 2;    // longer titles get truncated with an ellipsis
-    var LABEL_LINE_HEIGHT = 1.5; // svg user-units between wrapped lines
-    var graphNodes = [], graphLinks = [], graphNodeById = {};
+    var GRAPH_NODE_SIZE = 7;     // fixed square size in px, at zoom level 1
+    var LABEL_MAX_CHARS = 11;    // wrap width, in characters
+    var LABEL_MAX_LINES = 2;     // longer titles get truncated with an ellipsis
+    var LABEL_LINE_HEIGHT = 10;  // px between wrapped label lines
+
+    var graphNodesData = [], graphLinksData = [];
     var graphMaxDegree = 1;
-    var graphRAF = null, graphDragNode = null, graphDragSvg = null, graphHoverId = null;
-    var graphAlpha = 0, graphRendered = false;
-    var ALPHA_DECAY = 0.985, ALPHA_MIN = 0.01, ALPHA_REHEAT = 0.6;
+    var graphSimulation = null;
+    var graphRendered = false;
 
     function loadGraphData() {
         fetch('/notes/graph').then(function (r) { return r.json(); })
-            .then(function (data) { initGraph(data.nodes, data.links); });
-    }
-
-    function initGraph(nodes, links) {
-        graphNodeById = {};
-        graphNodes = nodes.map(function (n, i) {
-            var angle = (i / Math.max(1, nodes.length)) * Math.PI * 2;
-            var node = {
-                id: n.id, label: n.label, folder: n.folder,
-                x: GRAPH_W / 2 + Math.cos(angle) * 25 + (Math.random() - 0.5) * 5,
-                y: GRAPH_H / 2 + Math.sin(angle) * 25 + (Math.random() - 0.5) * 5,
-                vx: 0, vy: 0, degree: 0
-            };
-            graphNodeById[n.id] = node;
-            return node;
-        });
-        graphLinks = links.map(function (l) {
-            var s = graphNodeById[l.source], t = graphNodeById[l.target];
-            if (s) s.degree++;
-            if (t) t.degree++;
-            return { source: s, target: t };
-        }).filter(function (l) { return l.source && l.target; });
-
-        graphMaxDegree = graphNodes.reduce(function (m, n) { return Math.max(m, n.degree); }, 1) || 1;
-        graphRendered = false; // (re)rendered lazily next time the modal opens
-    }
-
-    // ── Force simulation (lightweight, no external deps) ──────
-    // Forces are scaled by graphAlpha, which cools down each frame (like
-    // d3-force's alpha) so the layout settles instead of jittering forever;
-    // dragging a node reheats it briefly so the rest can react.
-    function stepGraphSimulation() {
-        var n = graphNodes.length;
-        if (!n || graphAlpha <= 0) return;
-        var repulsion = 80, springLen = 16, springK = 0.05, centerK = 0.0012, damping = 0.82;
-        var a2 = graphAlpha;
-
-        for (var i = 0; i < n; i++) {
-            var a = graphNodes[i], fx = 0, fy = 0;
-            for (var j = 0; j < n; j++) {
-                if (i === j) continue;
-                var b = graphNodes[j];
-                var dx = a.x - b.x, dy = a.y - b.y;
-                var d2 = dx * dx + dy * dy + 0.01, d = Math.sqrt(d2);
-                var force = (repulsion / d2) * a2;
-                fx += (dx / d) * force; fy += (dy / d) * force;
-            }
-            // Deliberately weak: just enough to stop the whole cluster
-            // drifting, not strong enough to override link-driven clustering.
-            fx += (GRAPH_W / 2 - a.x) * centerK * a2;
-            fy += (GRAPH_H / 2 - a.y) * centerK * a2;
-            a.fx = fx; a.fy = fy;
-        }
-
-        graphLinks.forEach(function (l) {
-            var dx = l.target.x - l.source.x, dy = l.target.y - l.source.y;
-            var d = Math.sqrt(dx * dx + dy * dy) || 0.01;
-            var stretch = (d - springLen) * springK * a2, ux = dx / d, uy = dy / d;
-            l.source.fx += ux * stretch; l.source.fy += uy * stretch;
-            l.target.fx -= ux * stretch; l.target.fy -= uy * stretch;
-        });
-
-        graphNodes.forEach(function (a) {
-            if (a === graphDragNode) { a.vx = 0; a.vy = 0; return; }
-            a.vx = (a.vx + a.fx) * damping; a.vy = (a.vy + a.fy) * damping;
-            a.x += a.vx; a.y += a.vy;
-            a.x = Math.max(GRAPH_PAD, Math.min(GRAPH_W - GRAPH_PAD, a.x));
-            a.y = Math.max(GRAPH_PAD, Math.min(GRAPH_H - GRAPH_PAD, a.y));
-        });
-
-        graphAlpha *= ALPHA_DECAY;
-        if (graphAlpha < ALPHA_MIN) graphAlpha = 0;
-    }
-
-    function startGraphSimulation() {
-        graphAlpha = ALPHA_REHEAT;
-        if (graphRAF) return;
-        (function loop() {
-            stepGraphSimulation();
-            updateGraphPositions();
-            if (graphAlpha > 0 || graphDragNode) {
-                graphRAF = requestAnimationFrame(loop);
-            } else {
-                graphRAF = null; // settled — stop spending CPU until reheated
-            }
-        })();
-    }
-
-    function reheatGraphSimulation(amount) {
-        graphAlpha = Math.max(graphAlpha, amount);
-        if (!graphRAF) startGraphSimulation();
-    }
-
-    function stopGraphSimulation() {
-        if (graphRAF) { cancelAnimationFrame(graphRAF); graphRAF = null; }
+            .then(function (data) {
+                graphNodesData = data.nodes;
+                graphLinksData = data.links;
+                // Force a fresh render next time the modal opens, so newly
+                // added/edited [[links]] show up without a full page reload.
+                graphRendered = false;
+            });
     }
 
     // ── Teal-only coloring — shade encodes connection count ────
@@ -1086,10 +1031,10 @@
         var rgb = TEAL_LIGHT.map(function (c, i) { return Math.round(c + (TEAL_DARK[i] - c) * t); });
         return 'rgb(' + rgb.join(',') + ')';
     }
-    function nodeColor(node) { return tealShade(degreeT(node.degree)); }
-    function linkStyle(l) {
-        var t = degreeT(Math.max(l.source.degree, l.target.degree));
-        return { color: tealShade(t), opacity: 0.3 + t * 0.45 };
+    function nodeColor(d) { return tealShade(degreeT(d.degree)); }
+    function linkColorOpacity(d) {
+        var t = degreeT(Math.max(d.source.degree || 0, d.target.degree || 0));
+        return { color: tealShade(t), opacity: 0.18 + t * 0.35 };
     }
 
     // Wraps a note title onto up to LABEL_MAX_LINES lines of roughly
@@ -1126,174 +1071,178 @@
     function renderGraphInto(wrapId) {
         var wrap = document.getElementById(wrapId);
         if (!wrap) return;
-        if (!graphNodes.length) {
+        wrap.innerHTML = '';
+        if (!graphNodesData.length) {
             wrap.innerHTML = '<div class="graph-empty">No notes yet — link them with [[double brackets]] to see the graph.</div>';
             return;
         }
-        var ns = 'http://www.w3.org/2000/svg';
-        var svg = document.createElementNS(ns, 'svg');
-        svg.setAttribute('viewBox', '0 0 ' + GRAPH_W + ' ' + GRAPH_H);
 
-        var linkGroup = document.createElementNS(ns, 'g');
-        var nodeGroup = document.createElementNS(ns, 'g');
-        nodeGroup.setAttribute('class', 'graph-nodes-group');
-        svg.appendChild(linkGroup); svg.appendChild(nodeGroup);
+        var width = wrap.clientWidth || 900, height = wrap.clientHeight || 600;
+        var size = GRAPH_NODE_SIZE;
 
-        graphLinks.forEach(function (l) {
-            var line = document.createElementNS(ns, 'line');
-            line.setAttribute('class', 'graph-link');
-            line.dataset.source = l.source.id; line.dataset.target = l.target.id;
-            var style = linkStyle(l);
-            line.style.stroke = style.color;
-            line.dataset.opacity = style.opacity;
-            line.style.opacity = style.opacity;
-            linkGroup.appendChild(line);
+        // Degree per node (connection count) — drives both color and how
+        // hard each node gets pulled toward the center.
+        var byId = {};
+        graphNodesData.forEach(function (n) { n.degree = 0; byId[n.id] = n; });
+        graphLinksData.forEach(function (l) {
+            var s = byId[l.source], t = byId[l.target];
+            if (s) s.degree++;
+            if (t) t.degree++;
         });
+        graphMaxDegree = graphNodesData.reduce(function (m, n) { return Math.max(m, n.degree); }, 1) || 1;
 
-        graphNodes.forEach(function (node) {
-            var g = document.createElementNS(ns, 'g');
-            g.dataset.id = node.id;
-            // Square "logo" marker — same fixed size for every note; only
-            // the teal shade (nodeColor) encodes connection count.
-            var size = GRAPH_NODE_SIZE;
-            var rect = document.createElementNS(ns, 'rect');
-            rect.setAttribute('class', 'graph-node-rect');
-            rect.setAttribute('width', size); rect.setAttribute('height', size);
-            rect.setAttribute('rx', Math.max(0.5, size * 0.22));
-            rect.style.fill = nodeColor(node);
-            rect.dataset.size = size;
+        var svg = d3.select(wrap).append('svg')
+            .attr('viewBox', [0, 0, width, height]);
 
-            var label = document.createElementNS(ns, 'text');
-            label.setAttribute('class', 'graph-node-label');
-            label.setAttribute('text-anchor', 'middle');
-            var lines = wrapLabel(node.label, LABEL_MAX_CHARS, LABEL_MAX_LINES);
-            label.dataset.lineCount = lines.length;
+        var zoomContainer = svg.append('g');
+        var zoomBehavior = d3.zoom()
+            .scaleExtent([0.15, 6])
+            .on('zoom', function (event) { zoomContainer.attr('transform', event.transform); });
+        svg.call(zoomBehavior);
+
+        // Physics — see the comment block above for what each force is for.
+        graphSimulation = d3.forceSimulation(graphNodesData)
+            .force('link', d3.forceLink(graphLinksData).id(function (d) { return d.id; }).distance(24).strength(0.75))
+            .force('charge', d3.forceManyBody().strength(-16))
+            .force('center', d3.forceCenter(width / 2, height / 2))
+            .force('x', d3.forceX(width / 2).strength(function (d) { return 0.008 + Math.min(0.1, d.degree * 0.02); }))
+            .force('y', d3.forceY(height / 2).strength(function (d) { return 0.008 + Math.min(0.1, d.degree * 0.02); }))
+            .force('collide', d3.forceCollide().radius(size / 2 + 2.5).iterations(2));
+
+        var linkSel = zoomContainer.append('g').selectAll('line')
+            .data(graphLinksData)
+            .join('line')
+            .attr('class', 'graph-link')
+            .each(function (d) {
+                var style = linkColorOpacity(d);
+                d3.select(this).style('stroke', style.color).style('opacity', style.opacity);
+            });
+
+        var nodeSel = zoomContainer.append('g').selectAll('g')
+            .data(graphNodesData, function (d) { return d.id; })
+            .join('g')
+            .attr('class', 'graph-node-g')
+            .call(graphDragBehavior());
+
+        nodeSel.append('rect')
+            .attr('class', 'graph-node-rect')
+            .attr('width', size).attr('height', size)
+            .attr('x', -size / 2).attr('y', -size / 2)
+            .attr('rx', Math.max(1, size * 0.22))
+            .style('fill', function (d) { return nodeColor(d); });
+
+        var labelSel = nodeSel.append('text')
+            .attr('class', 'graph-node-label')
+            .attr('text-anchor', 'middle');
+
+        labelSel.each(function (d) {
+            var lines = wrapLabel(d.label, LABEL_MAX_CHARS, LABEL_MAX_LINES);
+            var stackHeight = (lines.length - 1) * LABEL_LINE_HEIGHT;
+            var textEl = d3.select(this).attr('y', -size / 2 - 4 - stackHeight);
             lines.forEach(function (line, li) {
-                var tspan = document.createElementNS(ns, 'tspan');
-                tspan.textContent = line;
-                if (li > 0) tspan.setAttribute('dy', LABEL_LINE_HEIGHT);
-                label.appendChild(tspan);
-            });
-
-            g.appendChild(rect); g.appendChild(label);
-            nodeGroup.appendChild(g);
-
-            g.addEventListener('mouseenter', function () { graphHoverId = node.id; updateGraphPositions(); });
-            g.addEventListener('mouseleave', function () { graphHoverId = null; updateGraphPositions(); });
-            g.addEventListener('pointerdown', function (e) { startGraphDrag(e, node, svg); });
-            g.addEventListener('click', function () {
-                if (g.dataset.dragged === '1') { g.dataset.dragged = '0'; return; }
-                var match = files.find(function (f) { return f === node.id; });
-                if (match) {
-                    var el = document.querySelector('.file-item[data-path="' + CSS.escape(match) + '"]');
-                    loadNote(match, el);
-                    closeGraphModal();
-                }
+                textEl.append('tspan')
+                    .text(line)
+                    .attr('x', 0)
+                    .attr('dy', li === 0 ? 0 : LABEL_LINE_HEIGHT);
             });
         });
 
-        wrap.innerHTML = '';
-        wrap.appendChild(svg);
-        updateGraphPositions();
-    }
-
-    function isNeighbor(id, hoverId) {
-        return graphLinks.some(function (l) {
-            return (l.source.id === id && l.target.id === hoverId) || (l.target.id === id && l.source.id === hoverId);
+        // linkSel's bound data has its .source/.target resolved from plain id
+        // strings to the actual node objects the moment d3.forceLink() above
+        // was attached to the simulation — so by this point isConnected() can
+        // safely read l.source.id / l.target.id.
+        var linkedByIndex = {};
+        graphLinksData.forEach(function (l) {
+            linkedByIndex[l.source.id + '\u0001' + l.target.id] = true;
+            linkedByIndex[l.target.id + '\u0001' + l.source.id] = true;
         });
-    }
-
-    function updateGraphPositions() {
-        var wrap = document.getElementById('graphModalWrap');
-        var svg = wrap && wrap.querySelector('svg');
-        if (!svg) return;
-
-        svg.querySelectorAll('.graph-link').forEach(function (line) {
-            var s = graphNodeById[line.dataset.source], t = graphNodeById[line.dataset.target];
-            if (!s || !t) return;
-            line.setAttribute('x1', s.x); line.setAttribute('y1', s.y);
-            line.setAttribute('x2', t.x); line.setAttribute('y2', t.y);
-            var touchesHover = !!graphHoverId && (s.id === graphHoverId || t.id === graphHoverId);
-            var dim = !!graphHoverId && !touchesHover;
-            line.classList.toggle('dim', dim);
-            line.classList.toggle('highlight', touchesHover);
-            line.style.opacity = dim ? '' : line.dataset.opacity;
-        });
-
-        svg.querySelectorAll('.graph-nodes-group > g').forEach(function (g) {
-            var node = graphNodeById[g.dataset.id];
-            if (!node) return;
-            var rect = g.querySelector('rect'), size = parseFloat(rect.dataset.size);
-            rect.setAttribute('x', node.x - size / 2);
-            rect.setAttribute('y', node.y - size / 2);
-
-            var label = g.querySelector('text');
-            var lineCount = parseInt(label.dataset.lineCount, 10) || 1;
-            var stackHeight = (lineCount - 1) * LABEL_LINE_HEIGHT;
-            label.setAttribute('x', node.x);
-            label.setAttribute('y', node.y - size / 2 - 0.8 - stackHeight);
-            Array.prototype.forEach.call(label.children, function (tspan) {
-                tspan.setAttribute('x', node.x);
-            });
-
-            var isHover = graphHoverId === node.id;
-            var isNeighborNode = !!graphHoverId && !isHover && isNeighbor(node.id, graphHoverId);
-            var isDimmed = !!graphHoverId && !isHover && !isNeighborNode;
-
-            rect.classList.toggle('dim', isDimmed);
-            rect.classList.toggle('neighbor', isNeighborNode);
-            label.classList.toggle('dim', isDimmed);
-            label.classList.toggle('neighbor', isNeighborNode);
-            label.classList.toggle('show', isHover);
-        });
-    }
-
-    // ── Drag ────────────────────────────────────────────────
-    function svgPoint(svg, evt) {
-        var pt = svg.createSVGPoint(); pt.x = evt.clientX; pt.y = evt.clientY;
-        var ctm = svg.getScreenCTM();
-        return ctm ? pt.matrixTransform(ctm.inverse()) : { x: 0, y: 0 };
-    }
-    function startGraphDrag(e, node, svg) {
-        e.preventDefault();
-        graphDragNode = node; graphDragSvg = svg;
-        svg.setPointerCapture(e.pointerId);
-        svg.addEventListener('pointermove', onGraphDragMove);
-        svg.addEventListener('pointerup', onGraphDragEnd);
-        svg.addEventListener('pointercancel', onGraphDragEnd);
-        reheatGraphSimulation(ALPHA_REHEAT);
-    }
-    function onGraphDragMove(e) {
-        if (!graphDragNode) return;
-        var p = svgPoint(graphDragSvg, e);
-        graphDragNode.x = Math.max(GRAPH_PAD, Math.min(GRAPH_W - GRAPH_PAD, p.x));
-        graphDragNode.y = Math.max(GRAPH_PAD, Math.min(GRAPH_H - GRAPH_PAD, p.y));
-        graphDragNode.vx = 0; graphDragNode.vy = 0;
-        reheatGraphSimulation(0.3);
-        var g = graphDragSvg.querySelector('.graph-nodes-group > g[data-id="' + CSS.escape(graphDragNode.id) + '"]');
-        if (g) g.dataset.dragged = '1';
-    }
-    function onGraphDragEnd() {
-        if (graphDragSvg) {
-            graphDragSvg.removeEventListener('pointermove', onGraphDragMove);
-            graphDragSvg.removeEventListener('pointerup', onGraphDragEnd);
-            graphDragSvg.removeEventListener('pointercancel', onGraphDragEnd);
+        function isConnected(a, b) {
+            return a.id === b.id || !!linkedByIndex[a.id + '\u0001' + b.id];
         }
-        graphDragNode = null; graphDragSvg = null;
+
+        nodeSel.on('mouseenter', function (event, d) {
+            var hoverId = d.id;
+            nodeSel.select('.graph-node-rect')
+                .classed('dim', function (o) { return o.id !== hoverId && !isConnected(d, o); })
+                .classed('neighbor', function (o) { return o.id !== hoverId && isConnected(d, o); });
+            labelSel
+                .classed('dim', function (o) { return o.id !== hoverId && !isConnected(d, o); })
+                .classed('neighbor', function (o) { return o.id !== hoverId && isConnected(d, o); })
+                .classed('show', function (o) { return o.id === hoverId; });
+            linkSel
+                .classed('dim', function (l) { return l.source.id !== hoverId && l.target.id !== hoverId; })
+                .classed('highlight', function (l) { return l.source.id === hoverId || l.target.id === hoverId; });
+        }).on('mouseleave', function () {
+            nodeSel.select('.graph-node-rect').classed('dim', false).classed('neighbor', false);
+            labelSel.classed('dim', false).classed('neighbor', false).classed('show', false);
+            linkSel.classed('dim', false).classed('highlight', false);
+        }).on('click', function (event, d) {
+            if (d._dragged) { d._dragged = false; return; }
+            var match = files.find(function (f) { return f === d.id; });
+            if (match) {
+                var el = document.querySelector('.file-item[data-path="' + CSS.escape(match) + '"]');
+                loadNote(match, el);
+                closeGraphModal();
+            }
+        });
+
+        graphSimulation.on('tick', function () {
+            linkSel
+                .attr('x1', function (d) { return d.source.x; })
+                .attr('y1', function (d) { return d.source.y; })
+                .attr('x2', function (d) { return d.target.x; })
+                .attr('y2', function (d) { return d.target.y; });
+            nodeSel.attr('transform', function (d) { return 'translate(' + d.x + ',' + d.y + ')'; });
+        });
+
+        // Keeps the layout centered and legible if the browser window is
+        // resized while the graph modal happens to be open.
+        window.addEventListener('resize', function () {
+            if (!document.getElementById('graphOverlay').classList.contains('open')) return;
+            var w = wrap.clientWidth || width, h = wrap.clientHeight || height;
+            svg.attr('viewBox', [0, 0, w, h]);
+            graphSimulation.force('center', d3.forceCenter(w / 2, h / 2));
+            graphSimulation.force('x', d3.forceX(w / 2).strength(function (d) { return 0.008 + Math.min(0.1, d.degree * 0.02); }));
+            graphSimulation.force('y', d3.forceY(h / 2).strength(function (d) { return 0.008 + Math.min(0.1, d.degree * 0.02); }));
+            graphSimulation.alpha(0.3).restart();
+        });
     }
 
-    // ── Modal — graph is hidden until opened; render + simulate lazily ──
+    // ── Drag (reheats the simulation briefly so the rest of the graph
+    //    reacts, exactly like dragging a node in Obsidian's own graph) ──
+    function graphDragBehavior() {
+        function started(event, d) {
+            if (!event.active) graphSimulation.alphaTarget(0.3).restart();
+            d.fx = d.x; d.fy = d.y;
+            d._dragged = false;
+        }
+        function dragged(event, d) {
+            d.fx = event.x; d.fy = event.y;
+            d._dragged = true;
+        }
+        function ended(event, d) {
+            if (!event.active) graphSimulation.alphaTarget(0);
+            d.fx = null; d.fy = null;
+        }
+        return d3.drag().on('start', started).on('drag', dragged).on('end', ended);
+    }
+
+    // ── Modal — graph is hidden until opened; rendered lazily, and
+    //    re-rendered from scratch whenever the underlying data changed
+    //    (see the graphRendered reset in loadGraphData) ──
     function openGraphModal() {
         document.getElementById('graphOverlay').classList.add('open');
         if (!graphRendered) {
+            if (graphSimulation) graphSimulation.stop();
             renderGraphInto('graphModalWrap');
             graphRendered = true;
+        } else if (graphSimulation) {
+            graphSimulation.alpha(0.3).restart();
         }
-        startGraphSimulation();
     }
     function closeGraphModal() {
         document.getElementById('graphOverlay').classList.remove('open');
-        stopGraphSimulation(); // nothing to look at — stop spending CPU
+        if (graphSimulation) graphSimulation.stop(); // nothing to look at — stop spending CPU
     }
     function graphOverlayClick(e) { if (e.target === document.getElementById('graphOverlay')) closeGraphModal(); }
 

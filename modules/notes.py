@@ -259,6 +259,46 @@ def notes_graph():
     return jsonify({'nodes': nodes, 'links': links})
 
 
+_ADMONITION_START_RE = re.compile(r'^!!!')
+_INDENTED_RE = re.compile(r'^(?: {4,}|\t)')
+
+
+def _extract_admonitions(content, extract_other):
+    """Pulls out `!!! type "Title"` blocks, same as the old regex, but also
+    allows blank lines *inside* the block as long as more indented content
+    follows — so a callout can hold several paragraphs, not just one run of
+    indented lines. A blank line that is NOT followed by further indented
+    text ends the block normally, so spacing after a callout is untouched."""
+    lines = content.split('\n')
+    out = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if _ADMONITION_START_RE.match(line):
+            block = [line]
+            i += 1
+            while i < len(lines):
+                if _INDENTED_RE.match(lines[i]):
+                    block.append(lines[i])
+                    i += 1
+                elif lines[i].strip() == '':
+                    j = i
+                    while j < len(lines) and lines[j].strip() == '':
+                        j += 1
+                    if j < len(lines) and _INDENTED_RE.match(lines[j]):
+                        block.extend(lines[i:j])
+                        i = j
+                    else:
+                        break
+                else:
+                    break
+            out.append(extract_other('\n'.join(block)))
+        else:
+            out.append(line)
+            i += 1
+    return '\n'.join(out)
+
+
 def _convert_wiki_link(match):
     """[[Note Name]] or [[Note Name|Display Text]] -> [Display Text](note:Note Name)"""
     inner = match.group(1).strip()
@@ -306,13 +346,16 @@ def preview_note():
     # anywhere else in the document (see step 3 below).
     other_blocks = []
 
-    def extract_other(match):
-        other_blocks.append(match.group(0))
+    def extract_other(text):
+        other_blocks.append(text)
         return f"__MAGIC_OTHER_BLOCK_{len(other_blocks) - 1}__"
 
-    content = re.sub(r'^\|.*\|(?:\n^\|.*\|)*', extract_other, content, flags=re.MULTILINE)
-    content = re.sub(r'^!!!.*(?:\n(?: {4,}|\t).*)*', extract_other, content, flags=re.MULTILINE)
-    content = re.sub(r'^[-*+] +\[[ xX]\].*(?:\n^[-*+] +\[[ xX]\].*)*', extract_other, content, flags=re.MULTILINE)
+    def extract_other_match(match):
+        return extract_other(match.group(0))
+
+    content = re.sub(r'^\|.*\|(?:\n^\|.*\|)*', extract_other_match, content, flags=re.MULTILINE)
+    content = _extract_admonitions(content, extract_other)
+    content = re.sub(r'^[-*+] +\[[ xX]\].*(?:\n^[-*+] +\[[ xX]\].*)*', extract_other_match, content, flags=re.MULTILINE)
 
     # 3. Apply your custom newline logic ONLY to the plain text that is left
     content = re.sub(r'\n+', lambda m: '\n\n' + ('<br>' * (len(m.group(0)) - 1)) + '\n\n', content)
@@ -328,4 +371,13 @@ def preview_note():
     # 5. Render to HTML
     extensions = ['fenced_code', 'tables', 'extra', 'toc', ChecklistExtension(), 'admonition']
     html = markdown.markdown(content, extensions=extensions)
+
+    # External links (http/https) open in a new tab by default. Internal
+    # note: links are left alone — the front-end intercepts those clicks
+    # itself for in-app navigation, and TOC anchors (#...) stay in-page too.
+    html = re.sub(
+        r'(<a\s+href="https?://[^"]*")',
+        r'\1 target="_blank" rel="noopener noreferrer"',
+        html,
+    )
     return jsonify({'html': html})

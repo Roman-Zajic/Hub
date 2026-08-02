@@ -1,0 +1,1911 @@
+{% extends 'layout.html' %}
+{% block module_name %}Data Analysis{% endblock %}
+
+{% block extra_css %}
+<style>
+.da-root { display: flex; flex-direction: column; min-height: 100%; gap: 0; }
+
+/* ── Collapsible section (same pattern used across the app) ──────── */
+.section {
+    border: 1px solid var(--border);
+    border-radius: var(--r);
+    background: var(--surface-card);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+.section-body { display: none; }
+.section.expanded .section-body { display: block; }
+.section-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 13px 18px; cursor: pointer; user-select: none;
+    background: var(--surface-card); transition: background 130ms;
+    border-bottom: 1px solid transparent;
+}
+.section-head:hover { background: var(--surface-in); }
+.section.expanded .section-head { border-bottom-color: var(--border); }
+.section-title { font-size: 0.9375rem; font-weight: 600; color: var(--text); white-space: nowrap; }
+.section-chevron {
+    margin-left: auto; width: 20px; height: 20px;
+    color: var(--teal-400); flex-shrink: 0; transition: transform 200ms ease;
+}
+.section.expanded .section-chevron { transform: rotate(180deg); }
+.section-head-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.section-head-actions .section-chevron { margin-left: 0; }
+.section-inner { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+
+/* Sections that should grow to fill leftover vertical space while
+   expanded, and shrink back to their header's natural height while
+   collapsed (rather than leaving a large empty box behind). Applied to
+   Clean Data and Visualization — Input Data always stays natural-sized. */
+.section-grow.expanded { flex: 1 1 auto; }
+.section-grow:not(.expanded) { flex: 0 0 auto; }
+.section-grow { display: flex; flex-direction: column; min-height: 0; }
+.section-grow .section-body { flex: 1; min-height: 0; }
+.section-grow.expanded .section-body { display: flex; flex-direction: column; }
+.section-grow .section-inner { flex: 1; min-height: 0; }
+
+/* ── Input Data section — fixed to its natural size, never grows ─── */
+.da-input-row { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
+.da-toolbar { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+.da-textarea {
+    flex: 1; min-width: 260px; min-height: 38px; height: 38px; resize: vertical;
+    border: 1px solid var(--border); border-radius: 6px;
+    padding: 8px 12px; font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+    font-size: 0.8125rem; color: var(--text); outline: none; line-height: 1.4;
+    background: var(--surface-card);
+    transition: border-color 130ms, box-shadow 130ms;
+}
+.da-textarea::placeholder { color: #7A9E9E; font-family: var(--font); }
+.da-textarea:hover  { border-color: var(--teal-700); }
+.da-textarea:focus  { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+.da-cal-picker { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.da-cal-picker label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); white-space: nowrap; }
+.da-cal-select {
+    font-family: var(--font); font-size: 0.8125rem; color: var(--text);
+    background: var(--surface-card); border: 1px solid var(--border);
+    border-radius: 6px; padding: 7px 10px; outline: none; cursor: pointer;
+    transition: border-color 130ms;
+}
+.da-cal-select:hover { border-color: var(--teal-700); }
+.da-cal-select:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+/* ── Clean Data table ─────────────────────────────────────────────── */
+.rpt-table-wrap { position: relative; overflow: auto; border: 1px solid var(--border); border-radius: 0; box-shadow: var(--shadow); flex: 1; min-height: 200px; }
+.rpt-table { border-collapse: separate; border-spacing: 0; font-size: 0.75rem; width: max-content; min-width: 100%; }
+.rpt-table thead th {
+    padding: 0; text-align: left; background: var(--teal-900);
+    color: #fff; font-weight: 600; font-size: 0.75rem;
+    border-bottom: 2px solid var(--teal-900); border-right: 1px solid var(--teal-700);
+    white-space: nowrap; vertical-align: middle; position: sticky; top: 0; z-index: 3;
+}
+.rpt-table thead th:last-child { border-right: none; }
+.th-inner { display: flex; align-items: center; gap: 4px; padding: 6px 4px 6px 10px; }
+.th-label { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.col-filter-btn {
+    flex-shrink: 0; width: 19px; height: 19px; padding: 0; border: none; border-radius: 4px;
+    background: rgba(255,255,255,.10); color: #fff; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+    transition: background 130ms;
+}
+.col-filter-btn:hover { background: rgba(255,255,255,.25); }
+.col-filter-btn svg { width: 11px; height: 11px; }
+.col-filter-btn.active { background: var(--amber); color: var(--ink); }
+
+.rpt-table tbody td {
+    padding: 4px 10px; border-bottom: 1px solid var(--border); border-right: 1px solid var(--border);
+    color: var(--text); white-space: nowrap;
+}
+.rpt-table tbody td.rpt-num { text-align: right; font-variant-numeric: tabular-nums; }
+.rpt-table tbody td:last-child { border-right: none; }
+.rpt-table tbody tr:last-child td { border-bottom: none; }
+.rpt-table tbody tr:hover td { background: var(--surface-in); }
+
+.rpt-table tfoot td {
+    padding: 5px 10px; font-weight: 700; background: var(--teal-100);
+    color: var(--ink); border-top: 2px solid var(--teal-700); border-right: 1px solid var(--border);
+    font-variant-numeric: tabular-nums;
+    position: sticky; bottom: 0; z-index: 3;
+}
+.rpt-table tfoot td:last-child { border-right: none; }
+.rpt-table tfoot td.rpt-num { text-align: right; }
+
+.rpt-table-wrap:has(.da-empty) { display: flex; align-items: center; justify-content: center; }
+.da-empty { color: var(--text-muted); font-size: 0.8125rem; padding: 14px 4px; text-align: center; }
+
+/* ── Filter / sort popover (excel-style column dropdown) ─────────── */
+.filter-popover {
+    position: fixed; z-index: 700; width: 260px; max-height: 380px;
+    background: var(--surface-card); border: 1px solid var(--border); border-radius: 8px;
+    box-shadow: var(--shadow-md); display: flex; flex-direction: column; overflow: hidden;
+}
+.filter-popover-sort { display: flex; flex-direction: column; padding: 6px; border-bottom: 1px solid var(--border); gap: 2px; }
+.filter-sort-btn {
+    display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 6px;
+    border: none; background: none; cursor: pointer; font-size: 0.8125rem; color: var(--text);
+    text-align: left; transition: background 130ms;
+}
+.filter-sort-btn:hover { background: var(--surface-in); }
+.filter-sort-btn svg { width: 14px; height: 14px; color: var(--teal-700); flex-shrink: 0; }
+
+.filter-popover-search { padding: 8px; border-bottom: 1px solid var(--border); }
+.filter-popover-search input {
+    width: 100%; font-family: var(--font); font-size: 0.8125rem; color: var(--text);
+    background: var(--surface-card); border: 1px solid var(--border); border-radius: 6px;
+    padding: 6px 9px; outline: none;
+}
+.filter-popover-search input:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+.filter-select-all {
+    display: flex; align-items: center; gap: 8px; padding: 6px 10px; font-size: 0.8125rem;
+    font-weight: 600; color: var(--text); border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.filter-select-all input { accent-color: var(--teal-700); width: 14px; height: 14px; }
+
+.filter-list { flex: 1; overflow-y: auto; padding: 6px 4px; min-height: 60px; }
+.filter-flat-item {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 5px;
+    font-size: 0.8125rem; color: var(--text); cursor: pointer; transition: background 130ms;
+}
+.filter-flat-item:hover { background: var(--surface-in); }
+.filter-flat-item input { accent-color: var(--teal-700); width: 14px; height: 14px; flex-shrink: 0; }
+
+.filter-tree-row { display: flex; align-items: center; gap: 2px; border-radius: 5px; transition: background 130ms; }
+.filter-tree-row:hover { background: var(--surface-in); }
+.filter-tree-toggle {
+    flex-shrink: 0; width: 20px; height: 26px; padding: 0; border: none; background: none;
+    color: var(--teal-400); cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+}
+.filter-tree-toggle svg { width: 10px; height: 10px; transition: transform 150ms ease; }
+.filter-tree-node.expanded > .filter-tree-row > .filter-tree-toggle svg { transform: rotate(90deg); }
+.filter-tree-year, .filter-tree-month {
+    flex: 1; display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 0;
+    font-size: 0.8125rem; color: var(--text); cursor: pointer;
+}
+.filter-tree-year input, .filter-tree-month input { accent-color: var(--teal-700); width: 14px; height: 14px; flex-shrink: 0; }
+.filter-tree-row-month { padding-left: 16px; }
+.filter-tree-day {
+    display: flex; align-items: center; gap: 8px; padding: 5px 8px 5px 44px; border-radius: 5px;
+    font-size: 0.8125rem; color: var(--text); cursor: pointer; transition: background 130ms;
+}
+.filter-tree-day:hover { background: var(--surface-in); }
+.filter-tree-day input { accent-color: var(--teal-700); width: 14px; height: 14px; flex-shrink: 0; }
+
+.filter-tree-children { display: none; }
+.filter-tree-node.expanded > .filter-tree-children { display: block; }
+.filter-list.search-mode .filter-tree-children { display: block; }
+
+.filter-empty { color: var(--text-muted); font-size: 0.75rem; padding: 10px; text-align: center; }
+
+.filter-popover-actions {
+    display: flex; justify-content: flex-end; gap: 8px; padding: 8px; border-top: 1px solid var(--border); flex-shrink: 0;
+}
+
+/* ── Visualization section ─────────────────────────────────────── */
+.viz-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex-shrink: 0; }
+.viz-toolbar-spacer { flex: 1; }
+.viz-toolbar .btn-sm, .viz-toolbar .da-cal-select { height: 32px; box-sizing: border-box; }
+
+.viz-editor-wrap { flex: 1; min-height: 0; display: flex; gap: 10px; }
+.viz-columns-panel {
+    width: 300px; flex-shrink: 0; min-height: 0; display: flex; flex-direction: column;
+    border: 1px solid var(--border); border-radius: 6px; background: var(--surface-card); overflow: hidden;
+}
+.viz-columns-panel-title {
+    flex-shrink: 0; padding: 8px 10px; font-size: 0.6875rem; font-weight: 700; text-transform: uppercase;
+    letter-spacing: 0.06em; color: var(--text-muted); border-bottom: 1px solid var(--border);
+}
+.viz-columns-panel-list { flex: 1; min-height: 0; overflow-y: auto; padding: 6px; display: flex; flex-direction: column; gap: 2px; }
+.viz-column-chip {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    width: 100%; min-height: 30px; box-sizing: border-box; flex-shrink: 0;
+    text-align: left; padding: 5px 8px; border: none; border-radius: 4px;
+    background: none; font-family: var(--font); cursor: pointer; transition: background 130ms;
+}
+.viz-column-chip:hover { background: var(--surface-in); }
+.viz-column-chip-name {
+    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text); font-size: 0.75rem;
+}
+.viz-column-chip:hover .viz-column-chip-name { color: var(--teal-700); }
+.viz-column-chip-type {
+    flex-shrink: 0; color: var(--teal-700); background: var(--teal-100);
+    font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
+    padding: 2px 7px; border-radius: 20px;
+}
+.viz-editor {
+    flex: 1; resize: none; border: 1px solid var(--border); border-radius: 6px;
+    padding: 12px 14px; font-family: "Consolas", "SFMono-Regular", Menlo, monospace;
+    font-size: 0.8125rem; color: var(--text); outline: none; line-height: 1.6;
+    background: var(--surface-card); transition: border-color 130ms, box-shadow 130ms;
+}
+.viz-editor::placeholder { color: #7A9E9E; }
+.viz-editor:hover { border-color: var(--teal-700); }
+.viz-editor:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+
+.viz-errors { display: none; flex-shrink: 0; font-size: 0.75rem; color: #7A4A06; background: rgba(217,119,6,.08); border: 1px solid rgba(217,119,6,.3); border-radius: 6px; padding: 8px 10px; }
+
+.viz-preview-wrap { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.viz-grid {
+    flex: 1; min-height: 0; display: grid;
+    grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 12px;
+}
+.viz-card {
+    background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r);
+    box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; min-height: 0;
+}
+.viz-card-head { padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 0.8125rem; font-weight: 600; color: var(--text); flex-shrink: 0; }
+.viz-card-body { flex: 1; min-height: 0; min-width: 0; display: flex; padding: 6px; }
+.viz-card-body svg { display: block; }
+.viz-card-body > * { flex: 1; min-height: 0; min-width: 0; }
+
+.viz-chart-scroll { width: 100%; height: 100%; }
+.viz-chart-scroll-x { overflow-x: auto; overflow-y: hidden; }
+.viz-chart-scroll-y { overflow-y: auto; overflow-x: hidden; }
+
+.viz-matrix-wrap { flex: 1; min-height: 0; overflow: auto; width: 100%; }
+.viz-matrix { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+.viz-matrix th {
+    background: var(--teal-900); color: #fff; font-weight: 600; text-align: left;
+    padding: 5px 8px; position: sticky; top: 0; z-index: 1; white-space: nowrap;
+}
+.viz-matrix th.has-filter { padding: 0; }
+.viz-matrix th.has-filter .th-inner { padding: 5px 4px 5px 8px; }
+.viz-matrix td { padding: 4px 8px; border-bottom: 1px solid var(--border); color: var(--text); white-space: nowrap; }
+.viz-matrix th.viz-num, .viz-matrix td.viz-num { text-align: right; font-variant-numeric: tabular-nums; }
+.viz-matrix tfoot td {
+    font-weight: 700; background: var(--teal-100); color: var(--ink); border-top: 2px solid var(--teal-700);
+    position: sticky; bottom: 0; z-index: 1;
+}
+.viz-matrix tbody tr { cursor: pointer; }
+.viz-matrix tbody tr:hover td { background: var(--surface-in); }
+.viz-matrix tbody tr.viz-row-selected td { background: rgba(225,160,30,.20); }
+.viz-matrix tbody tr.viz-row-dimmed td { opacity: .45; }
+
+/* ── Full-screen presentation (same expand icon as Timers) ────────── */
+.viz-fullscreen-overlay {
+    display: none; position: fixed; inset: 0; z-index: 600;
+    background: var(--surface-page); padding: 20px; flex-direction: column; gap: 14px;
+}
+.viz-fullscreen-overlay.open { display: flex; }
+.viz-fullscreen-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.viz-fullscreen-overlay .viz-grid { flex: 1; min-height: 0; }
+
+.input-fullscreen-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.input-fullscreen-body .da-input-row { flex: 1; min-height: 0; align-items: stretch; }
+.input-fullscreen-body .da-textarea { flex: 1; height: auto; min-height: 0; }
+
+.report-fullscreen-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+.viz-filter-panel {
+    display: none; flex-wrap: wrap; align-items: center; gap: 8px;
+    flex-shrink: 0; padding-bottom: 2px;
+}
+.viz-filter-chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+    border-radius: 20px; border: 1px solid var(--border); background: var(--surface-card);
+    color: var(--text); font-size: 0.75rem; font-weight: 600; cursor: pointer;
+    transition: border-color 130ms, background 130ms; font-family: var(--font);
+}
+.viz-filter-chip:hover { border-color: var(--teal-700); }
+.viz-filter-chip.active { border-color: var(--teal-700); background: var(--teal-100); color: var(--ink); }
+.viz-filter-chip svg { flex-shrink: 0; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="da-root">
+
+    <!-- ════════════════════════════════════════════════════════
+         SECTION 1 — INPUT DATA
+    ════════════════════════════════════════════════════════ -->
+    <div class="section expanded" id="sec-data">
+        <div class="section-head" onclick="toggleSection('data')">
+            <span class="section-title">Input Data</span>
+            <div class="section-head-actions">
+                <button type="button" class="btn btn-outline btn-sm" title="Full screen" onclick="event.stopPropagation(); openInputFullscreen()">
+                    <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="12" rx="1"></rect></svg>
+                </button>
+                <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+            </div>
+        </div>
+        <div class="section-body">
+            <div class="section-inner">
+                <div class="da-input-row" id="daInputRow">
+                    <div class="da-toolbar">
+                        <button class="btn btn-primary btn-sm" onclick="processData()">Process</button>
+                        <button class="btn btn-outline btn-sm" onclick="clearData()">Clear</button>
+                    </div>
+                    <textarea class="da-textarea" id="daInput" placeholder="Paste TSV data here (copy a range in Excel and paste — first row must be the column headers)."></textarea>
+                    <div class="da-cal-picker">
+                        <label for="dateCalendarSelect">Date aggregation</label>
+                        <select class="da-cal-select" id="dateCalendarSelect" onchange="onCalendarChange()">
+                            <option value="std" selected>Standard Calendar</option>
+                            <option value="ey">EY Calendar</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         SECTION 2 — CLEAN DATA
+    ════════════════════════════════════════════════════════ -->
+    <div class="section expanded section-grow" id="sec-report">
+        <div class="section-head" onclick="toggleSection('report')">
+            <span class="section-title">Clean Data</span>
+            <div class="section-head-actions">
+                <button type="button" class="btn btn-outline btn-sm" title="Full screen" onclick="event.stopPropagation(); openReportFullscreen()">
+                    <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="12" rx="1"></rect></svg>
+                </button>
+                <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+            </div>
+        </div>
+        <div class="section-body">
+            <div class="section-inner">
+                <div class="rpt-table-wrap" id="reportWrap">
+                    <div class="da-empty">Paste data above and click Process to build the table.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         SECTION 3 — VISUALIZATION
+    ════════════════════════════════════════════════════════ -->
+    <div class="section expanded section-grow" id="sec-viz">
+        <div class="section-head" onclick="toggleSection('viz')">
+            <span class="section-title">Visualization</span>
+            <div class="section-head-actions">
+                <button type="button" class="btn btn-outline btn-sm" id="vizFullscreenBtn" title="Full screen" onclick="event.stopPropagation(); openVizFullscreen()">
+                    <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="12" rx="1"></rect></svg>
+                </button>
+                <button type="button" class="btn btn-outline btn-sm" id="vizToggleModeBtn" onclick="event.stopPropagation(); toggleVizMode()">Preview</button>
+                <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+            </div>
+        </div>
+        <div class="section-body">
+            <div class="section-inner">
+                <div class="viz-toolbar" id="vizToolbar">
+                    <select class="da-cal-select" id="vizLoadSelect" onchange="onLoadVizChange()">
+                        <option value="">Load saved…</option>
+                    </select>
+                    <button class="btn btn-outline btn-sm" onclick="saveVisualization()">Save</button>
+                    <button class="btn btn-outline btn-sm" onclick="deleteVisualization()">Delete</button>
+                    <button class="btn btn-outline btn-sm" onclick="addSampleVisual('column')">+ Column sample</button>
+                    <button class="btn btn-outline btn-sm" onclick="addSampleVisual('bar')">+ Bar sample</button>
+                    <button class="btn btn-outline btn-sm" onclick="addSampleVisual('line')">+ Line sample</button>
+                    <button class="btn btn-outline btn-sm" onclick="addSampleVisual('matrix')">+ Matrix sample</button>
+                    <button class="btn btn-outline btn-sm" onclick="addSampleVisual('filter')">+ Filter sample</button>
+                    <div class="viz-toolbar-spacer"></div>
+                </div>
+
+                <div class="viz-errors" id="vizErrors"></div>
+
+                <div class="viz-editor-wrap" id="vizEditorWrap">
+                    <textarea class="viz-editor" id="vizEditor" spellcheck="false" placeholder="One visual (or filter) per line, using key=value pairs.
+
+size=1x1 | type=column | title=Sales by Region | field=Region | value=Sales
+size=1x1 | type=bar | field=Category | value=Profit
+size=2x1 | type=matrix | field=Region,Category | value=Sales,Profit
+size=1x1 | type=line | field=Order Date | value=Sales | calendar=ey | agg=month
+type=filter | field=Rank" oninput="onVizEditorInput()"></textarea>
+                    <div class="viz-columns-panel" id="vizColumnsPanel">
+                        <div class="viz-columns-panel-title">Columns</div>
+                        <div class="viz-columns-panel-list" id="vizColumnsPanelList"></div>
+                    </div>
+                </div>
+
+                <div class="viz-preview-wrap" id="vizPreviewWrap" style="display:none">
+                    <div class="viz-filter-panel" id="vizFilterPanel"></div>
+                    <div class="viz-grid" id="vizGrid"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<div class="viz-fullscreen-overlay" id="inputFullscreenOverlay">
+    <div class="viz-fullscreen-head">
+        <span class="section-title">Input Data</span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="closeInputFullscreen()">Exit Full Screen</button>
+    </div>
+    <div class="input-fullscreen-body" id="inputFullscreenBody"></div>
+</div>
+
+<div class="viz-fullscreen-overlay" id="reportFullscreenOverlay">
+    <div class="viz-fullscreen-head">
+        <span class="section-title">Clean Data</span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="closeReportFullscreen()">Exit Full Screen</button>
+    </div>
+    <div class="report-fullscreen-body" id="reportFullscreenBody"></div>
+</div>
+
+<div class="viz-fullscreen-overlay" id="vizFullscreenOverlay">
+    <div class="viz-fullscreen-head">
+        <span class="section-title">Visualization</span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="closeVizFullscreen()">Exit Full Screen</button>
+    </div>
+    <div class="viz-filter-panel" id="vizFilterPanelFullscreen"></div>
+    <div class="viz-grid" id="vizGridFullscreen"></div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════════
+var columns = [];          // [{key, label, type, hidden}]
+var rows = [];             // [{ colKey: {v,t,d,s} }]
+var columnFilters = {};    // colKey -> Set(of allowed 'd' values) — absent = unfiltered
+var sortState = null;      // {key, dir}
+var dateCalendar = 'std';  // 'std' | 'ey' — which calendar groups date columns in the Clean Data filter tree
+var activePopover = null;  // currently open filter popover element, or null
+var activePopoverCol = null;
+
+var vizMode = 'edit';          // 'edit' | 'preview'
+var vizPresets = {};           // name -> definition text, cached from the server
+var currentVizName = null;     // name of the currently loaded/saved preset, or null
+var vizEditSaveTimer = null;
+var vizCrossFilters = {};      // placement-index (this render pass) -> Set(of selected group keys) for that visual
+var vizMatrixFilters = {};     // placement-index -> { dimIndex: Set(allowed aggregated label values) } — matrix's own column filters
+var vizDashboardFilters = {};  // colKey -> Set(allowed values) — the dashboard filter panel, applies to every visual
+var vizFilterDefs = [];        // parsed 'filter' DSL lines from the most recent render: [{col, calendar}]
+var vizLastBaseRows = [];      // rows fed into the current render pass, before per-visual cross-filtering — used when a matrix filter popover opens later
+var vizLastPlaced = [];        // packed.placed from the current render pass — likewise
+var vizGridTarget = null;      // which grid element renderVisualization() currently draws into
+var vizFilterPanelTarget = null; // which filter-panel element renderVisualization() currently draws into
+
+// ═══════════════════════════════════════════════════════════════
+//  SECTION TOGGLE
+// ═══════════════════════════════════════════════════════════════
+function toggleSection(id){
+    document.getElementById('sec-'+id).classList.toggle('expanded');
+}
+
+function onCalendarChange(){
+    dateCalendar = document.getElementById('dateCalendarSelect').value;
+    // Existing date-column filters were built against the previous
+    // calendar's Year/Month grouping — clear them so the tree rebuilds
+    // cleanly next time it's opened, rather than showing a stale mix.
+    columns.filter(function(c){ return c.type === 'date'; }).forEach(function(c){ delete columnFilters[c.key]; });
+    renderTable();
+}
+
+// ── Full screen for Input Data / Clean Data ──────────────────────────
+// Unlike Visualization (which redraws into whichever target is active),
+// there's only ever one textarea / one table here, so the simplest,
+// least error-prone approach is to just move the real element into the
+// overlay and back — every id, listener, and popover position keeps
+// working untouched since it's the same node, not a rebuild.
+var inputRowHomeParent = null;
+var reportWrapHomeParent = null;
+
+function openInputFullscreen(){
+    var row = document.getElementById('daInputRow');
+    inputRowHomeParent = row.parentNode;
+    document.getElementById('inputFullscreenBody').appendChild(row);
+    document.getElementById('inputFullscreenOverlay').classList.add('open');
+}
+function closeInputFullscreen(){
+    if (inputRowHomeParent) inputRowHomeParent.appendChild(document.getElementById('daInputRow'));
+    document.getElementById('inputFullscreenOverlay').classList.remove('open');
+}
+
+function openReportFullscreen(){
+    var wrap = document.getElementById('reportWrap');
+    reportWrapHomeParent = wrap.parentNode;
+    document.getElementById('reportFullscreenBody').appendChild(wrap);
+    document.getElementById('reportFullscreenOverlay').classList.add('open');
+}
+function closeReportFullscreen(){
+    if (reportWrapHomeParent) reportWrapHomeParent.appendChild(document.getElementById('reportWrap'));
+    document.getElementById('reportFullscreenOverlay').classList.remove('open');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ESCAPING HELPERS
+// ═══════════════════════════════════════════════════════════════
+function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+
+// ═══════════════════════════════════════════════════════════════
+//  PROCESS / CLEAR
+// ═══════════════════════════════════════════════════════════════
+function processData(){
+    var text = document.getElementById('daInput').value;
+    fetch('/api/data_analysis/process', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({text: text})
+    }).then(function(r){ return r.json(); }).then(function(data){
+        columns = data.columns || [];
+        rows = data.rows || [];
+        columnFilters = {};
+        sortState = null;
+        vizCrossFilters = {};
+        vizMatrixFilters = {};
+        vizDashboardFilters = {};
+        renderTable();
+        renderColumnsPanel();
+    }).catch(function(){
+        alert('Could not process that data — check the console/server log.');
+    });
+}
+
+function clearData(){
+    document.getElementById('daInput').value = '';
+    columns = []; rows = []; columnFilters = {}; sortState = null;
+    vizCrossFilters = {}; vizMatrixFilters = {}; vizDashboardFilters = {};
+    renderTable();
+    renderColumnsPanel();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  ROW VISIBILITY / SORT  (shared source of truth for the Clean Data
+//  table AND for Visualization, which always reads from here)
+// ═══════════════════════════════════════════════════════════════
+function rowPassesFilters(row, exceptKey){
+    return Object.keys(columnFilters).every(function(k){
+        if (k === exceptKey) return true;
+        var allowed = columnFilters[k];
+        if (!allowed) return true;
+        var cell = row[k];
+        return cell && allowed.has(cell.d);
+    });
+}
+
+function getPassingRows(exceptKey){
+    return rows.filter(function(r){ return rowPassesFilters(r, exceptKey); });
+}
+
+function computeDisplayRows(){
+    var visible = getPassingRows(null);
+    if (sortState){
+        var key = sortState.key, dir = sortState.dir;
+        visible = visible.slice().sort(function(a,b){
+            var av = a[key] ? a[key].s : '';
+            var bv = b[key] ? b[key].s : '';
+            var cmp;
+            if (typeof av === 'number' && typeof bv === 'number') cmp = av - bv;
+            else cmp = String(av).localeCompare(String(bv), undefined, {numeric:true});
+            return dir === 'asc' ? cmp : -cmp;
+        });
+    }
+    return visible;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  CLEAN DATA TABLE RENDER
+// ═══════════════════════════════════════════════════════════════
+function visibleColumns(){
+    return columns.filter(function(c){ return !c.hidden; });
+}
+
+function isNumericType(t){ return t === 'number' || t === 'percentage'; }
+
+function formatValue(colDef, num){
+    if (colDef.type === 'percentage') return Math.round(num * 100) + '%';
+    return num.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+}
+
+function computeColumnTotal(col, displayRows){
+    if (!isNumericType(col.type)) return null;
+    var sum = 0, any = false;
+    displayRows.forEach(function(row){
+        var cell = row[col.key];
+        if (cell && typeof cell.s === 'number'){ sum += cell.s; any = true; }
+    });
+    if (!any) return null;
+    return formatValue(col, sum);
+}
+
+function renderTable(){
+    var wrap = document.getElementById('reportWrap');
+
+    if (!columns.length){
+        wrap.innerHTML = '<div class="da-empty">Paste data above and click Process to build the table.</div>';
+        if (vizMode === 'preview') renderVisualization();
+        return;
+    }
+
+    var cols = visibleColumns();
+    var displayRows = computeDisplayRows();
+
+    if (!displayRows.length){
+        wrap.innerHTML = '<div class="da-empty">No rows match the current filters.</div>';
+        if (vizMode === 'preview') renderVisualization();
+        return;
+    }
+
+    var thead = '<tr>' + cols.map(function(c){
+        var isFiltered = !!columnFilters[c.key];
+        return '<th data-col="'+escAttr(c.key)+'"><div class="th-inner">'+
+            '<span class="th-label" title="'+escAttr(c.label)+'">'+escHtml(c.label)+'</span>'+
+            '<button type="button" class="col-filter-btn'+(isFiltered?' active':'')+'" data-col="'+escAttr(c.key)+'" title="Filter / sort" onclick="onFilterBtnClick(event, this)">'+
+            '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 9 12 14 6"></polyline></svg>'+
+            '</button></div></th>';
+    }).join('') + '</tr>';
+
+    var tbody = displayRows.map(function(row){
+        return '<tr>' + cols.map(function(c){
+            var cell = row[c.key] || {d:''};
+            var cls = isNumericType(c.type) ? ' class="rpt-num"' : '';
+            return '<td'+cls+'>'+(cell.d !== '' ? escHtml(cell.d) : '<span style="color:var(--border)">—</span>')+'</td>';
+        }).join('') + '</tr>';
+    }).join('');
+
+    var tfootCells = cols.map(function(c, idx){
+        var total = computeColumnTotal(c, displayRows);
+        var cls = isNumericType(c.type) ? ' class="rpt-num"' : '';
+        var content = total !== null ? escHtml(total) : (idx === 0 ? 'Total' : '');
+        return '<td'+cls+'>'+content+'</td>';
+    }).join('');
+
+    wrap.innerHTML = '<table class="rpt-table"><thead>'+thead+'</thead><tbody>'+tbody+'</tbody><tfoot><tr>'+tfootCells+'</tr></tfoot></table>';
+
+    // Keep Visualization in sync with whatever Clean Data currently shows.
+    if (vizMode === 'preview') renderVisualization();
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  FILTER / SORT POPOVER
+// ═══════════════════════════════════════════════════════════════
+function closePopover(){
+    if (activePopover){
+        activePopover.remove();
+        activePopover = null;
+        activePopoverCol = null;
+        document.removeEventListener('mousedown', onDocMouseDownForPopover, true);
+    }
+}
+
+function onDocMouseDownForPopover(e){
+    if (!activePopover) return;
+    if (activePopover.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('.col-filter-btn')) return; // let the toggle button's own click handle it
+    closePopover();
+}
+
+function onFilterBtnClick(e, btnEl){
+    e.stopPropagation();
+    var colKey = btnEl.dataset.col;
+    if (activePopoverCol === colKey){ closePopover(); return; }
+    closePopover();
+    openPopover(colKey, btnEl);
+}
+
+function buildFlatUnique(colKey){
+    var passing = getPassingRows(colKey);
+    var seen = {};
+    var out = [];
+    passing.forEach(function(r){
+        var d = (r[colKey] || {}).d || '';
+        if (!(d in seen)){ seen[d] = true; out.push(d); }
+    });
+    out.sort(function(a,b){ return a.localeCompare(b, undefined, {numeric:true}); });
+    return out;
+}
+
+function buildDateTree(colKey){
+    var passing = getPassingRows(colKey);
+    var yKey = colKey + (dateCalendar === 'std' ? '__std_year' : '__ey_year');
+    var mKey = colKey + (dateCalendar === 'std' ? '__std_month' : '__ey_month');
+    var tree = {}; // year -> { month -> Set(days) }
+    passing.forEach(function(r){
+        var dayVal = (r[colKey] || {}).d;
+        if (!dayVal) return;
+        var yearVal = ((r[yKey] || {}).d) || '(Unknown)';
+        var monthVal = ((r[mKey] || {}).d) || '(Unknown)';
+        tree[yearVal] = tree[yearVal] || {};
+        tree[yearVal][monthVal] = tree[yearVal][monthVal] || {};
+        tree[yearVal][monthVal][dayVal] = true;
+    });
+    return tree;
+}
+
+// Pure formatters — given a tree/list of values plus which are currently
+// allowed, produce the checkbox markup. No knowledge of WHERE the tree or
+// values came from, so the same two functions back Clean Data's own
+// column filters, the Visualization matrix column filters, and the
+// Visualization dashboard filter panel.
+function renderDateTreeHtml(tree, allowed){
+    var years = Object.keys(tree).sort();
+    if (!years.length) return '<div class="filter-empty">No values</div>';
+    return years.map(function(year){
+        var months = tree[year];
+        var monthKeys = Object.keys(months).sort();
+        var html = '<div class="filter-tree-node">'+
+            '<div class="filter-tree-row filter-tree-row-year">'+
+                '<button type="button" class="filter-tree-toggle" aria-label="Expand"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 4 12 9 6 14"></polyline></svg></button>'+
+                '<label class="filter-tree-year" data-search="'+escAttr(year)+'">'+
+                '<input type="checkbox" data-level="year" data-year="'+escAttr(year)+'"> '+escHtml(year)+
+                '</label>'+
+            '</div><div class="filter-tree-children">';
+        monthKeys.forEach(function(month){
+            var days = Object.keys(months[month]).sort();
+            html += '<div class="filter-tree-node">'+
+                '<div class="filter-tree-row filter-tree-row-month">'+
+                    '<button type="button" class="filter-tree-toggle" aria-label="Expand"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 4 12 9 6 14"></polyline></svg></button>'+
+                    '<label class="filter-tree-month" data-search="'+escAttr(month)+'">'+
+                    '<input type="checkbox" data-level="month" data-year="'+escAttr(year)+'" data-month="'+escAttr(month)+'"> '+escHtml(month)+
+                    '</label>'+
+                '</div><div class="filter-tree-children">';
+            days.forEach(function(day){
+                var checked = !allowed || allowed.has(day);
+                html += '<label class="filter-tree-day" data-search="'+escAttr(day)+'">'+
+                    '<input type="checkbox" data-level="day" data-year="'+escAttr(year)+'" data-month="'+escAttr(month)+'" data-value="'+escAttr(day)+'" '+(checked?'checked':'')+'> '+escHtml(day)+
+                    '</label>';
+            });
+            html += '</div></div>';
+        });
+        html += '</div></div>';
+        return html;
+    }).join('');
+}
+
+function renderFlatListHtml(values, allowed){
+    if (!values.length) return '<div class="filter-empty">No values</div>';
+    return values.map(function(v){
+        var checked = !allowed || allowed.has(v);
+        return '<label class="filter-flat-item" data-search="'+escAttr(v)+'">'+
+            '<input type="checkbox" data-level="flat" data-value="'+escAttr(v)+'" '+(checked?'checked':'')+'> '+
+            (v !== '' ? escHtml(v) : '<span style="color:var(--text-muted)">(blank)</span>')+
+            '</label>';
+    }).join('');
+}
+
+function buildPopoverListHtml(col){
+    var allowed = columnFilters[col.key];
+    if (col.type === 'date') return renderDateTreeHtml(buildDateTree(col.key), allowed);
+    return renderFlatListHtml(buildFlatUnique(col.key), allowed);
+}
+
+function refreshTreeStates(root){
+    Array.from(root.querySelectorAll('input[data-level="month"]')).forEach(function(monthCb){
+        var days = Array.from(root.querySelectorAll('input[data-level="day"]')).filter(function(d){
+            return d.dataset.year === monthCb.dataset.year && d.dataset.month === monthCb.dataset.month;
+        });
+        var checkedCount = days.filter(function(d){ return d.checked; }).length;
+        monthCb.checked = days.length > 0 && checkedCount === days.length;
+        monthCb.indeterminate = checkedCount > 0 && checkedCount < days.length;
+    });
+    Array.from(root.querySelectorAll('input[data-level="year"]')).forEach(function(yearCb){
+        var months = Array.from(root.querySelectorAll('input[data-level="month"]')).filter(function(m){
+            return m.dataset.year === yearCb.dataset.year;
+        });
+        var fullyChecked = months.filter(function(m){ return m.checked && !m.indeterminate; }).length;
+        var anyChecked = months.some(function(m){ return m.checked || m.indeterminate; });
+        yearCb.checked = months.length > 0 && fullyChecked === months.length;
+        yearCb.indeterminate = anyChecked && fullyChecked !== months.length;
+    });
+}
+
+function applyTreeSearch(root, q){
+    q = (q || '').toLowerCase();
+    if (!q){
+        Array.from(root.querySelectorAll('[data-search]')).forEach(function(el){ el.style.display = ''; });
+        Array.from(root.querySelectorAll('.filter-tree-node')).forEach(function(el){ el.style.display = ''; });
+        return;
+    }
+    Array.from(root.querySelectorAll('label.filter-tree-day, label.filter-flat-item')).forEach(function(el){
+        el.style.display = el.dataset.search.toLowerCase().indexOf(q) !== -1 ? '' : 'none';
+    });
+    Array.from(root.querySelectorAll('.filter-tree-node')).forEach(function(node){
+        var label = node.querySelector(':scope > .filter-tree-row.filter-tree-row-month label.filter-tree-month');
+        if (!label) return;
+        var ownMatch = label.dataset.search.toLowerCase().indexOf(q) !== -1;
+        var anyVisible = Array.from(node.querySelectorAll('label.filter-tree-day')).some(function(d){ return d.style.display !== 'none'; });
+        node.style.display = (ownMatch || anyVisible) ? '' : 'none';
+    });
+    Array.from(root.querySelectorAll('.filter-tree-node')).forEach(function(node){
+        var label = node.querySelector(':scope > .filter-tree-row.filter-tree-row-year label.filter-tree-year');
+        if (!label) return;
+        var ownMatch = label.dataset.search.toLowerCase().indexOf(q) !== -1;
+        var children = node.querySelectorAll(':scope > .filter-tree-children > .filter-tree-node');
+        var anyVisible = Array.from(children).some(function(c){ return c.style.display !== 'none'; });
+        node.style.display = (ownMatch || anyVisible) ? '' : 'none';
+    });
+}
+
+function applySelectorFor(col){
+    return col.type === 'date' ? 'input[data-level="day"]' : 'input[data-level="flat"]';
+}
+
+function updateApplyState(pop, col){
+    var selector = applySelectorFor(col);
+    var anyChecked = Array.from(pop.querySelectorAll(selector)).some(function(cb){ return cb.checked; });
+    var applyBtn = pop.querySelector('[data-role="apply"]');
+    applyBtn.disabled = !anyChecked;
+    applyBtn.title = anyChecked ? '' : 'At least one value must stay selected';
+}
+
+function openPopover(colKey, anchorEl){
+    var col = columns.find(function(c){ return c.key === colKey; });
+    if (!col) return;
+
+    var pop = document.createElement('div');
+    pop.className = 'filter-popover';
+    pop.innerHTML =
+        '<div class="filter-popover-sort">'+
+            '<button type="button" class="filter-sort-btn" data-sort="asc"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="14" x2="4" y2="4"></line><polyline points="1 7 4 4 7 7"></polyline><line x1="9" y1="6" x2="15" y2="6"></line><line x1="9" y1="10" x2="14" y2="10"></line><line x1="9" y1="14" x2="12" y2="14"></line></svg> Sort ascending</button>'+
+            '<button type="button" class="filter-sort-btn" data-sort="desc"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="4" x2="4" y2="14"></line><polyline points="1 11 4 14 7 11"></polyline><line x1="9" y1="6" x2="12" y2="6"></line><line x1="9" y1="10" x2="14" y2="10"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg> Sort descending</button>'+
+        '</div>'+
+        '<div class="filter-popover-search"><input type="text" placeholder="Search…" data-role="search"></div>'+
+        '<label class="filter-select-all"><input type="checkbox" data-role="select-all"> Select all</label>'+
+        '<div class="filter-list" data-role="list">'+buildPopoverListHtml(col)+'</div>'+
+        '<div class="filter-popover-actions">'+
+            '<button type="button" class="btn btn-outline btn-sm" data-role="cancel">Cancel</button>'+
+            '<button type="button" class="btn btn-primary btn-sm" data-role="apply">Apply</button>'+
+        '</div>';
+
+    document.body.appendChild(pop);
+    activePopover = pop;
+    activePopoverCol = colKey;
+
+    if (col.type === 'date') refreshTreeStates(pop);
+    updateApplyState(pop, col);
+
+    var r = anchorEl.getBoundingClientRect();
+    var top = r.bottom + 4;
+    var left = r.left;
+    var maxLeft = window.innerWidth - 270;
+    if (left > maxLeft) left = Math.max(8, maxLeft);
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+
+    Array.from(pop.querySelectorAll('.filter-sort-btn')).forEach(function(btn){
+        btn.addEventListener('click', function(){
+            sortState = {key: colKey, dir: btn.dataset.sort};
+            closePopover();
+            renderTable();
+        });
+    });
+
+    var listEl = pop.querySelector('[data-role="list"]');
+
+    listEl.addEventListener('click', function(e){
+        var toggle = e.target.closest('.filter-tree-toggle');
+        if (!toggle) return;
+        var node = toggle.closest('.filter-tree-node');
+        if (node) node.classList.toggle('expanded');
+    });
+
+    var searchInput = pop.querySelector('[data-role="search"]');
+    searchInput.addEventListener('input', function(){
+        var q = searchInput.value.trim().toLowerCase();
+        listEl.classList.toggle('search-mode', !!q);
+        if (col.type === 'date'){
+            applyTreeSearch(pop, q);
+        } else {
+            Array.from(pop.querySelectorAll('.filter-flat-item')).forEach(function(el){
+                el.style.display = (!q || el.dataset.search.toLowerCase().indexOf(q) !== -1) ? '' : 'none';
+            });
+        }
+    });
+
+    var selectAllCb = pop.querySelector('[data-role="select-all"]');
+    selectAllCb.addEventListener('change', function(){
+        Array.from(listEl.querySelectorAll('input[type="checkbox"]')).forEach(function(cb){
+            var container = cb.closest('label');
+            if (container && container.style.display === 'none') return;
+            cb.checked = selectAllCb.checked;
+        });
+        if (col.type === 'date') refreshTreeStates(pop);
+        updateApplyState(pop, col);
+    });
+
+    if (col.type !== 'date'){
+        listEl.addEventListener('change', function(){ updateApplyState(pop, col); });
+    }
+
+    if (col.type === 'date'){
+        listEl.addEventListener('change', function(e){
+            var cb = e.target;
+            if (!(cb.matches && cb.matches('input[type="checkbox"]'))) return;
+            if (cb.dataset.level === 'year'){
+                Array.from(listEl.querySelectorAll('input[data-level]')).filter(function(c){
+                    return c.dataset.year === cb.dataset.year;
+                }).forEach(function(c){ if (c !== cb) c.checked = cb.checked; });
+            } else if (cb.dataset.level === 'month'){
+                Array.from(listEl.querySelectorAll('input[data-level="day"]')).filter(function(c){
+                    return c.dataset.year === cb.dataset.year && c.dataset.month === cb.dataset.month;
+                }).forEach(function(c){ c.checked = cb.checked; });
+            }
+            refreshTreeStates(pop);
+            updateApplyState(pop, col);
+        });
+    }
+
+    pop.querySelector('[data-role="cancel"]').addEventListener('click', closePopover);
+    pop.querySelector('[data-role="apply"]').addEventListener('click', function(){
+        var selector = applySelectorFor(col);
+        var allValues = Array.from(pop.querySelectorAll(selector)).map(function(cb){ return cb.dataset.value; });
+        var checkedValues = Array.from(pop.querySelectorAll(selector)).filter(function(cb){ return cb.checked; }).map(function(cb){ return cb.dataset.value; });
+
+        if (checkedValues.length === allValues.length){
+            delete columnFilters[colKey];
+        } else {
+            columnFilters[colKey] = new Set(checkedValues);
+        }
+        closePopover();
+        renderTable();
+    });
+
+    setTimeout(function(){
+        document.addEventListener('mousedown', onDocMouseDownForPopover, true);
+    }, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  VISUALIZATION — text DSL: one visual (or filter) per line, using
+//  explicit key=value segments separated by '|' — order doesn't matter
+//  for parsing, but the convention (and what the samples/placeholder use)
+//  is size, then type, then title, then field/value, then calendar/agg:
+//
+//    size=1x1 | type=column | title=Sales by Region | field=Region | value=Sales
+//
+//    size:    1x1 | 2x1 | 1x2 | 2x2   (fits inside a fixed 2x2 grid)
+//    type:    column | bar | line | matrix | filter
+//    title:   optional — auto-generated ("Sum of X by Y") if omitted
+//    field:   column/bar/line take exactly one; matrix takes 1+ (comma-separated)
+//    value:   column/bar/line take exactly one; matrix takes 1+ (comma-separated)
+//    calendar/agg: optional, date fields only — calendar=std/ey, agg=day/week/month/year
+//
+//    type=filter | field=Column Name [| calendar=std/ey]
+//      Adds a control to the dashboard filter panel above the grid instead
+//      of a visual — applies to every visual, on top of Clean Data's own
+//      filters. Date columns use the SAME calendar toggle as everything
+//      else (see dateCalendar) for their Year/Month/Day tree.
+//
+//  Source is always the Clean Data table AFTER its active filters/sort, AND
+//  after any cross-filter selections active on OTHER visuals (see
+//  vizCrossFilters / computeRowsForVisual below) — clicking a point in one
+//  visual highlights it in amber there and filters every other visual. A
+//  matrix's own per-column filters (vizMatrixFilters) work the same way.
+// ═══════════════════════════════════════════════════════════════
+function findColumnByLabel(label){
+    label = (label || '').trim().toLowerCase();
+    return columns.find(function(c){ return c.label.trim().toLowerCase() === label; }) || null;
+}
+
+function normalizeAgg(raw){
+    raw = (raw || '').toLowerCase().trim().replace(/s$/, '');
+    return ['day','week','month','year'].indexOf(raw) !== -1 ? raw : 'day';
+}
+
+// Splits a line into { key: value } from '|'-separated key=value segments.
+// Only the FIRST '=' in a segment is treated as the delimiter, so a value
+// (e.g. a title) containing its own '=' is left intact.
+function parseKeyValueLine(trimmed){
+    var kv = {};
+    trimmed.split('|').forEach(function(seg){
+        var eq = seg.indexOf('=');
+        if (eq === -1) return;
+        var key = seg.slice(0, eq).trim().toLowerCase();
+        var val = seg.slice(eq + 1).trim();
+        kv[key] = val;
+    });
+    return kv;
+}
+
+function parseVizDefinition(text){
+    var lines = (text || '').split('\n');
+    var visuals = [];
+    var filterDefs = [];
+    var errors = [];
+
+    lines.forEach(function(line, idx){
+        var trimmed = line.trim();
+        if (!trimmed || trimmed.charAt(0) === '#') return;
+        var lineNo = idx + 1;
+        var kv = parseKeyValueLine(trimmed);
+
+        var type = (kv.type || '').toLowerCase();
+        if (!type){
+            errors.push('Line '+lineNo+': missing type= (column, bar, line, matrix, or filter).');
+            return;
+        }
+
+        // type=filter | field=Column Name [| calendar=std/ey] — adds a
+        // control to the dashboard filter panel instead of a grid visual.
+        if (type === 'filter'){
+            var filterFieldName = kv.field || kv.fields;
+            if (!filterFieldName){ errors.push('Line '+lineNo+': filter needs field=Column Name.'); return; }
+            var filterCol = findColumnByLabel(filterFieldName);
+            if (!filterCol){ errors.push('Line '+lineNo+': unknown column "'+filterFieldName+'".'); return; }
+            filterDefs.push({col: filterCol, calendar: kv.calendar === 'ey' ? 'ey' : 'std'});
+            return;
+        }
+
+        if (['column','bar','line','matrix'].indexOf(type) === -1){
+            errors.push('Line '+lineNo+': unknown type "'+(kv.type||'')+'" (use column, bar, line, matrix, or filter).');
+            return;
+        }
+
+        var sizeMatch = (kv.size || '').match(/^([12])\s*x\s*([12])$/i);
+        if (!sizeMatch){
+            errors.push('Line '+lineNo+': size= must be one of 1x1, 2x1, 1x2, 2x2.');
+            return;
+        }
+        var w = parseInt(sizeMatch[1], 10), h = parseInt(sizeMatch[2], 10);
+
+        var fieldNames = (kv.field || kv.fields || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+        var valueNames = (kv.value || kv.values || '').split(',').map(function(s){ return s.trim(); }).filter(Boolean);
+        if (!fieldNames.length){ errors.push('Line '+lineNo+': field= is required.'); return; }
+        if (!valueNames.length){ errors.push('Line '+lineNo+': value= is required.'); return; }
+        if (type !== 'matrix' && fieldNames.length !== 1){ errors.push('Line '+lineNo+': column/bar/line charts take exactly one field=.'); return; }
+        if (type !== 'matrix' && valueNames.length !== 1){ errors.push('Line '+lineNo+': column/bar/line charts take exactly one value=.'); return; }
+
+        var dims = [], dimError = null;
+        fieldNames.forEach(function(n){
+            var cd = findColumnByLabel(n);
+            if (!cd && !dimError) dimError = n;
+            dims.push(cd);
+        });
+        if (dimError){ errors.push('Line '+lineNo+': unknown column "'+dimError+'".'); return; }
+
+        var values = [], valError = null;
+        valueNames.forEach(function(n){
+            var cd = findColumnByLabel(n);
+            if (!cd && !valError) valError = n;
+            values.push(cd);
+        });
+        if (valError){ errors.push('Line '+lineNo+': unknown column "'+valError+'".'); return; }
+
+        var calendar = kv.calendar === 'ey' ? 'ey' : 'std';
+        var agg = normalizeAgg(kv.agg);
+        var title = kv.title || (type === 'matrix'
+            ? dims.map(function(d){ return d.label; }).join(' / ') + ' — ' + values.map(function(v){ return v.label; }).join(', ')
+            : 'Sum of ' + values[0].label + ' by ' + dims[0].label);
+
+        visuals.push({
+            type: type, size: {w: w, h: h},
+            dims: dims, values: values,
+            dimAggs: dims.map(function(){ return agg; }),
+            dimCalendars: dims.map(function(){ return calendar; }),
+            title: title
+        });
+    });
+
+    return {visuals: visuals, errors: errors, filterDefs: filterDefs};
+}
+
+function packVisuals(visuals){
+    var occ = [[false,false],[false,false]]; // occ[row][col], fixed 2x2 canvas
+    var placed = [];
+    var overflowErrors = [];
+
+    visuals.forEach(function(v){
+        var w = v.size.w, h = v.size.h;
+        var foundRow = -1, foundCol = -1;
+        for (var r = 0; r <= 2 - h && foundRow === -1; r++){
+            for (var c = 0; c <= 2 - w && foundRow === -1; c++){
+                var fits = true;
+                for (var rr = r; rr < r + h && fits; rr++){
+                    for (var cc = c; cc < c + w; cc++){
+                        if (occ[rr][cc]) { fits = false; break; }
+                    }
+                }
+                if (fits){ foundRow = r; foundCol = c; }
+            }
+        }
+        if (foundRow === -1){
+            overflowErrors.push('"'+v.title+'" doesn\'t fit in the 2x2 grid and was skipped.');
+            return;
+        }
+        for (var rr2 = foundRow; rr2 < foundRow + h; rr2++){
+            for (var cc2 = foundCol; cc2 < foundCol + w; cc2++) occ[rr2][cc2] = true;
+        }
+        placed.push({visual: v, row: foundRow, col: foundCol});
+    });
+
+    return {placed: placed, overflowErrors: overflowErrors};
+}
+
+function getGroupValue(row, colDef, calendar, agg){
+    if (colDef.type !== 'date' || agg === 'day'){
+        return (row[colDef.key] || {}).d || '';
+    }
+    var suffix = calendar === 'ey' ? 'ey' : 'std';
+    var extKey = colDef.key + '__' + suffix + '_' + agg;
+    return (row[extKey] || {}).d || '';
+}
+
+function aggregateRows(srcRows, dimCols, dimAggs, dimCalendars, valCols){
+    var groups = {};
+    var order = [];
+    srcRows.forEach(function(row){
+        var labelParts = dimCols.map(function(cd, i){ return getGroupValue(row, cd, dimCalendars[i], dimAggs[i]); });
+        var key = labelParts.join('\u0001');
+        if (!groups[key]){
+            groups[key] = {key: key, labels: labelParts, sums: valCols.map(function(){ return 0; })};
+            order.push(key);
+        }
+        valCols.forEach(function(vc, i){
+            var cell = row[vc.key];
+            if (cell && typeof cell.s === 'number') groups[key].sums[i] += cell.s;
+        });
+    });
+    var result = order.map(function(k){ return groups[k]; });
+    result.sort(function(a, b){
+        for (var i = 0; i < a.labels.length; i++){
+            var cmp = String(a.labels[i]).localeCompare(String(b.labels[i]), undefined, {numeric:true});
+            if (cmp !== 0) return cmp;
+        }
+        return 0;
+    });
+    return result;
+}
+
+// ── Cross-filtering ─────────────────────────────────────────────────
+// Clicking a point/bar/row in one visual selects it there (amber) and
+// filters every OTHER visual down to matching rows — never itself, the
+// same "except my own filter" idea already used by the Clean Data
+// column filters. Multiple visuals can have active selections at once;
+// a target visual's rows must satisfy ALL other visuals' selections.
+// A matrix's own per-column filters (see vizMatrixFilters) work the same
+// way: they restrict the matrix's own display AND propagate to every
+// other visual, independent of (and in addition to) any click-selection.
+function rowMatchesSelection(row, visual, selectedKeys){
+    if (!selectedKeys || !selectedKeys.size) return true;
+    var labelParts = visual.dims.map(function(cd, i){ return getGroupValue(row, cd, visual.dimCalendars[i], visual.dimAggs[i]); });
+    return selectedKeys.has(labelParts.join('\u0001'));
+}
+
+function rowPassesMatrixOwnFilters(row, visual, filtersForThisMatrix, exceptDimIdx){
+    if (!filtersForThisMatrix) return true;
+    return visual.dims.every(function(cd, i){
+        if (i === exceptDimIdx) return true;
+        var allowed = filtersForThisMatrix[i];
+        if (!allowed) return true;
+        var val = getGroupValue(row, cd, visual.dimCalendars[i], visual.dimAggs[i]);
+        return allowed.has(val);
+    });
+}
+
+function computeRowsForVisual(baseRows, placed, targetIdx){
+    return baseRows.filter(function(row){
+        return placed.every(function(p, idx){
+            if (idx === targetIdx) return true;
+            var sel = vizCrossFilters[idx];
+            if (sel && sel.size && !rowMatchesSelection(row, p.visual, sel)) return false;
+            if (p.visual.type === 'matrix'){
+                var mf = vizMatrixFilters[idx];
+                if (mf && Object.keys(mf).length && !rowPassesMatrixOwnFilters(row, p.visual, mf, null)) return false;
+            }
+            return true;
+        });
+    });
+}
+
+function svgEl(tag, attrs){
+    var el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+    Object.keys(attrs || {}).forEach(function(k){ el.setAttribute(k, attrs[k]); });
+    return el;
+}
+
+function truncateLabel(s, n){
+    s = String(s == null ? '' : s);
+    return s.length > n ? s.slice(0, n - 1) + '\u2026' : s;
+}
+
+// Wraps a label onto up to maxLines lines of roughly maxChars characters
+// each (word-wrapped, not mid-word), ellipsizing only if it still doesn't
+// fit — same technique used for the notes graph's node labels.
+function wrapChartLabel(text, maxChars, maxLines){
+    var words = String(text == null ? '' : text).split(/\s+/).filter(Boolean);
+    var lines = [];
+    var current = '';
+    words.forEach(function(w){
+        var test = current ? current + ' ' + w : w;
+        if (test.length > maxChars && current){ lines.push(current); current = w; }
+        else current = test;
+    });
+    if (current) lines.push(current);
+
+    if (lines.length > maxLines){
+        lines = lines.slice(0, maxLines);
+        var last = lines[maxLines - 1];
+        lines[maxLines - 1] = (last.length > maxChars - 1 ? last.slice(0, maxChars - 1) : last) + '\u2026';
+    } else {
+        lines = lines.map(function(l){ return l.length > maxChars ? l.slice(0, maxChars - 1) + '\u2026' : l; });
+    }
+    return lines.length ? lines : [''];
+}
+
+function emptyChartMessage(){
+    var d = document.createElement('div');
+    d.style.cssText = 'display:flex;align-items:center;justify-content:center;color:#008282;font-size:0.75rem;width:100%;height:100%;';
+    d.textContent = 'No data';
+    return d;
+}
+
+// Every bar/column/line-point gets this fixed thickness and gap (in real
+// pixels) regardless of how many categories there are — instead of
+// squeezing to fit, the chart grows past its card's width/height and the
+// surrounding scroll wrapper (see .viz-chart-scroll-x/-y) picks up a
+// scrollbar. This is also what makes each mark a stable, clickable target
+// for cross-filtering.
+var CHART_MARK = 36;
+var CHART_GAP = 16;
+var CHART_FONT = 9;
+var CHART_TEAL = '#008282';
+var CHART_AMBER = '#E1A01E';
+var CHART_DIM_OPACITY = 0.32;
+
+// Category labels are sized to the fixed per-mark slot (CHART_MARK +
+// CHART_GAP) and wrap onto up to 2 lines before ellipsizing.
+function renderColumnChartInto(container, groups, valueCol, selected, onPick){
+    if (!groups.length){ container.appendChild(emptyChartMessage()); return; }
+
+    var scroll = document.createElement('div');
+    scroll.className = 'viz-chart-scroll viz-chart-scroll-x';
+    container.appendChild(scroll); // insert first so its real (unpadded) box can be measured
+
+    var availW = scroll.clientWidth || 240, availH = scroll.clientHeight || 160;
+    var marginTop = 14, marginBottom = 46, marginLeft = 14, marginRight = 14;
+    var n = groups.length;
+    var contentW = marginLeft + marginRight + n * (CHART_MARK + CHART_GAP) + CHART_GAP;
+    var svgW = Math.max(availW, contentW);
+    var svgH = Math.max(availH, 120);
+    var plotH = svgH - marginTop - marginBottom;
+    var maxChars = Math.max(3, Math.floor((CHART_MARK + CHART_GAP) / 4.6));
+
+    var svg = svgEl('svg', {width: svgW, height: svgH});
+
+    var maxVal = Math.max.apply(null, groups.map(function(g){ return g.sums[0]; }).concat([0]));
+    if (maxVal <= 0) maxVal = 1;
+
+    svg.appendChild(svgEl('line', {x1: marginLeft, y1: marginTop + plotH, x2: svgW - marginRight, y2: marginTop + plotH, stroke: '#D0ECEB', 'stroke-width': 1}));
+
+    groups.forEach(function(g, i){
+        var val = g.sums[0];
+        var barH = Math.max(0, (val / maxVal) * plotH);
+        var x = marginLeft + CHART_GAP + i * (CHART_MARK + CHART_GAP);
+        var y = marginTop + plotH - barH;
+        var isSel = selected && selected.has(g.key);
+        var dimmed = selected && selected.size > 0 && !isSel;
+        var rect = svgEl('rect', {x: x.toFixed(2), y: y.toFixed(2), width: CHART_MARK, height: barH.toFixed(2), fill: isSel ? CHART_AMBER : CHART_TEAL, opacity: dimmed ? CHART_DIM_OPACITY : 1, rx: '1', style: 'cursor:pointer'});
+        var title = svgEl('title', {}); title.textContent = (g.labels[0] || '(blank)') + ': ' + formatValue(valueCol, val);
+        rect.appendChild(title);
+        rect.addEventListener('click', function(){ onPick(g.key); });
+        svg.appendChild(rect);
+
+        var cx = x + CHART_MARK / 2;
+        wrapChartLabel(g.labels[0], maxChars, 2).forEach(function(line, li){
+            var label = svgEl('text', {x: cx.toFixed(2), y: (marginTop + plotH + 13 + li * 10).toFixed(2), 'text-anchor': 'middle', 'font-size': CHART_FONT, fill: '#008282'});
+            label.textContent = line;
+            svg.appendChild(label);
+        });
+    });
+
+    scroll.appendChild(svg);
+}
+
+// Points connected by a line, spaced the same fixed way as the column
+// chart, with the same wrapped category labels underneath.
+function renderLineChartInto(container, groups, valueCol, selected, onPick){
+    if (!groups.length){ container.appendChild(emptyChartMessage()); return; }
+
+    var scroll = document.createElement('div');
+    scroll.className = 'viz-chart-scroll viz-chart-scroll-x';
+    container.appendChild(scroll);
+
+    var availW = scroll.clientWidth || 240, availH = scroll.clientHeight || 160;
+    var marginTop = 14, marginBottom = 46, marginLeft = 14, marginRight = 14;
+    var n = groups.length;
+    var contentW = marginLeft + marginRight + n * (CHART_MARK + CHART_GAP) + CHART_GAP;
+    var svgW = Math.max(availW, contentW);
+    var svgH = Math.max(availH, 120);
+    var plotH = svgH - marginTop - marginBottom;
+    var maxChars = Math.max(3, Math.floor((CHART_MARK + CHART_GAP) / 4.6));
+
+    var svg = svgEl('svg', {width: svgW, height: svgH});
+
+    var maxVal = Math.max.apply(null, groups.map(function(g){ return g.sums[0]; }).concat([0]));
+    if (maxVal <= 0) maxVal = 1;
+
+    svg.appendChild(svgEl('line', {x1: marginLeft, y1: marginTop + plotH, x2: svgW - marginRight, y2: marginTop + plotH, stroke: '#D0ECEB', 'stroke-width': 1}));
+
+    var points = groups.map(function(g, i){
+        var x = marginLeft + CHART_GAP + i * (CHART_MARK + CHART_GAP) + CHART_MARK / 2;
+        var y = marginTop + plotH - Math.max(0, (g.sums[0] / maxVal) * plotH);
+        return {x: x, y: y, g: g};
+    });
+
+    svg.appendChild(svgEl('path', {
+        d: points.map(function(p, i){ return (i === 0 ? 'M' : 'L') + p.x.toFixed(2) + ',' + p.y.toFixed(2); }).join(' '),
+        fill: 'none', stroke: CHART_TEAL, 'stroke-width': '2'
+    }));
+
+    points.forEach(function(p){
+        var isSel = selected && selected.has(p.g.key);
+        var dimmed = selected && selected.size > 0 && !isSel;
+        var circle = svgEl('circle', {cx: p.x.toFixed(2), cy: p.y.toFixed(2), r: isSel ? 5 : 4, fill: isSel ? CHART_AMBER : CHART_TEAL, opacity: dimmed ? CHART_DIM_OPACITY : 1, style: 'cursor:pointer'});
+        var title = svgEl('title', {}); title.textContent = (p.g.labels[0] || '(blank)') + ': ' + formatValue(valueCol, p.g.sums[0]);
+        circle.appendChild(title);
+        circle.addEventListener('click', function(){ onPick(p.g.key); });
+        svg.appendChild(circle);
+
+        wrapChartLabel(p.g.labels[0], maxChars, 2).forEach(function(line, li){
+            var label = svgEl('text', {x: p.x.toFixed(2), y: (marginTop + plotH + 13 + li * 10).toFixed(2), 'text-anchor': 'middle', 'font-size': CHART_FONT, fill: '#008282'});
+            label.textContent = line;
+            svg.appendChild(label);
+        });
+    });
+
+    scroll.appendChild(svg);
+}
+
+// Same fixed-thickness idea for the bar chart, stacked vertically instead
+// — the left margin grows/shrinks to fit the longest label (bounded), and
+// the SVG's height (not width) grows past the card when there are too
+// many categories, picking up a vertical scrollbar.
+function renderBarChartInto(container, groups, valueCol, selected, onPick){
+    if (!groups.length){ container.appendChild(emptyChartMessage()); return; }
+
+    var scroll = document.createElement('div');
+    scroll.className = 'viz-chart-scroll viz-chart-scroll-y';
+    container.appendChild(scroll);
+
+    var availW = scroll.clientWidth || 240, availH = scroll.clientHeight || 160;
+    var longest = Math.max.apply(null, groups.map(function(g){ return String(g.labels[0] || '').length; }).concat([1]));
+    var marginLeft = Math.max(46, Math.min(150, 20 + longest * 4.3));
+    var marginRight = 14, marginTop = 10, marginBottom = 10;
+    var n = groups.length;
+    var contentH = marginTop + marginBottom + n * (CHART_MARK + CHART_GAP) + CHART_GAP;
+    var svgW = Math.max(availW, 160);
+    var svgH = Math.max(availH, contentH);
+    var plotW = svgW - marginLeft - marginRight;
+    var maxChars = Math.max(3, Math.floor((marginLeft - 10) / 4.3));
+
+    var svg = svgEl('svg', {width: svgW, height: svgH});
+
+    var maxVal = Math.max.apply(null, groups.map(function(g){ return g.sums[0]; }).concat([0]));
+    if (maxVal <= 0) maxVal = 1;
+
+    svg.appendChild(svgEl('line', {x1: marginLeft, y1: marginTop, x2: marginLeft, y2: svgH - marginBottom, stroke: '#D0ECEB', 'stroke-width': 1}));
+
+    groups.forEach(function(g, i){
+        var val = g.sums[0];
+        var barW = Math.max(0, (val / maxVal) * plotW);
+        var y = marginTop + CHART_GAP + i * (CHART_MARK + CHART_GAP);
+        var isSel = selected && selected.has(g.key);
+        var dimmed = selected && selected.size > 0 && !isSel;
+        var rect = svgEl('rect', {x: marginLeft, y: y.toFixed(2), width: barW.toFixed(2), height: CHART_MARK, fill: isSel ? CHART_AMBER : CHART_TEAL, opacity: dimmed ? CHART_DIM_OPACITY : 1, rx: '1', style: 'cursor:pointer'});
+        var title = svgEl('title', {}); title.textContent = (g.labels[0] || '(blank)') + ': ' + formatValue(valueCol, val);
+        rect.appendChild(title);
+        rect.addEventListener('click', function(){ onPick(g.key); });
+        svg.appendChild(rect);
+
+        var label = svgEl('text', {x: marginLeft - 6, y: (y + CHART_MARK / 2 + 3).toFixed(2), 'text-anchor': 'end', 'font-size': CHART_FONT, fill: '#008282'});
+        label.textContent = truncateLabel(g.labels[0], maxChars);
+        svg.appendChild(label);
+    });
+
+    scroll.appendChild(svg);
+}
+
+function renderMatrixInto(container, groups, visual, selected, onPick, placementIdx){
+    var dims = visual.dims, values = visual.values;
+    var wrap = document.createElement('div');
+    wrap.className = 'viz-matrix-wrap';
+    var table = document.createElement('table');
+    table.className = 'viz-matrix';
+
+    var thead = document.createElement('thead');
+    var htr = document.createElement('tr');
+    dims.forEach(function(d, dimIdx){
+        var th = document.createElement('th');
+        th.className = 'has-filter';
+        var inner = document.createElement('div');
+        inner.className = 'th-inner';
+        var label = document.createElement('span');
+        label.className = 'th-label';
+        label.textContent = d.label;
+        inner.appendChild(label);
+        var isFiltered = !!(vizMatrixFilters[placementIdx] && vizMatrixFilters[placementIdx][dimIdx]);
+        var btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'col-filter-btn' + (isFiltered ? ' active' : '');
+        btn.title = 'Filter';
+        btn.innerHTML = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 9 12 14 6"></polyline></svg>';
+        btn.addEventListener('click', function(e){
+            e.stopPropagation();
+            openMatrixFilterPopover(placementIdx, dimIdx, visual, btn);
+        });
+        inner.appendChild(btn);
+        th.appendChild(inner);
+        htr.appendChild(th);
+    });
+    values.forEach(function(v){ var th = document.createElement('th'); th.className = 'viz-num'; th.textContent = v.label; htr.appendChild(th); });
+    thead.appendChild(htr);
+    table.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    var totals = values.map(function(){ return 0; });
+    groups.forEach(function(g){
+        var tr = document.createElement('tr');
+        var isSel = selected && selected.has(g.key);
+        var dimmed = selected && selected.size > 0 && !isSel;
+        if (isSel) tr.classList.add('viz-row-selected');
+        if (dimmed) tr.classList.add('viz-row-dimmed');
+        g.labels.forEach(function(l){ var td = document.createElement('td'); td.textContent = l || '\u2014'; tr.appendChild(td); });
+        g.sums.forEach(function(s, i){
+            var td = document.createElement('td'); td.className = 'viz-num'; td.textContent = formatValue(values[i], s);
+            totals[i] += s;
+            tr.appendChild(td);
+        });
+        tr.addEventListener('click', function(){ onPick(g.key); });
+        tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    var tfoot = document.createElement('tfoot');
+    var ftr = document.createElement('tr');
+    var labelTd = document.createElement('td'); labelTd.colSpan = dims.length; labelTd.textContent = 'Total'; ftr.appendChild(labelTd);
+    totals.forEach(function(t, i){ var td = document.createElement('td'); td.className = 'viz-num'; td.textContent = formatValue(values[i], t); ftr.appendChild(td); });
+    tfoot.appendChild(ftr);
+    table.appendChild(tfoot);
+
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+}
+
+function buildVisualCardShell(v, row, col){
+    var card = document.createElement('div');
+    card.className = 'viz-card';
+    card.style.gridColumn = (col + 1) + ' / span ' + v.size.w;
+    card.style.gridRow = (row + 1) + ' / span ' + v.size.h;
+
+    var head = document.createElement('div');
+    head.className = 'viz-card-head';
+    head.textContent = v.title;
+    card.appendChild(head);
+
+    var body = document.createElement('div');
+    body.className = 'viz-card-body';
+    card.appendChild(body);
+
+    return {card: card, body: body};
+}
+
+function drawVisualBody(v, body, groups, placementIdx){
+    body.innerHTML = '';
+    var selected = vizCrossFilters[placementIdx];
+
+    function onPick(key){
+        var sel = vizCrossFilters[placementIdx] || new Set();
+        if (sel.has(key)) sel.delete(key); else sel.add(key);
+        vizCrossFilters[placementIdx] = sel;
+        renderVisualization();
+    }
+
+    if (v.type === 'column') renderColumnChartInto(body, groups, v.values[0], selected, onPick);
+    else if (v.type === 'bar') renderBarChartInto(body, groups, v.values[0], selected, onPick);
+    else if (v.type === 'line') renderLineChartInto(body, groups, v.values[0], selected, onPick);
+    else renderMatrixInto(body, groups, v, selected, onPick, placementIdx);
+}
+
+// ── Dashboard filter panel ───────────────────────────────────────────
+// "filter | Column Name" lines render as a small chip above the grid.
+// Clicking one opens the same kind of checkbox/tree popover Clean Data
+// uses (dates grouped by the SAME calendar chosen in Input Data), and
+// restricts every visual — it's just another layer under baseRows.
+function getDashboardFilterBaseRows(exceptColKey){
+    return computeDisplayRows().filter(function(row){
+        return Object.keys(vizDashboardFilters).every(function(k){
+            if (k === exceptColKey) return true;
+            var allowed = vizDashboardFilters[k];
+            if (!allowed) return true;
+            var cell = row[k];
+            return cell && allowed.has(cell.d);
+        });
+    });
+}
+
+function buildDashboardDateTree(colKey, exceptColKey){
+    var passing = getDashboardFilterBaseRows(exceptColKey);
+    var yKey = colKey + (dateCalendar === 'std' ? '__std_year' : '__ey_year');
+    var mKey = colKey + (dateCalendar === 'std' ? '__std_month' : '__ey_month');
+    var tree = {};
+    passing.forEach(function(r){
+        var dayVal = (r[colKey] || {}).d;
+        if (!dayVal) return;
+        var yearVal = ((r[yKey] || {}).d) || '(Unknown)';
+        var monthVal = ((r[mKey] || {}).d) || '(Unknown)';
+        tree[yearVal] = tree[yearVal] || {};
+        tree[yearVal][monthVal] = tree[yearVal][monthVal] || {};
+        tree[yearVal][monthVal][dayVal] = true;
+    });
+    return tree;
+}
+
+function buildDashboardFlatUnique(colKey, exceptColKey){
+    var passing = getDashboardFilterBaseRows(exceptColKey);
+    var seen = {}; var out = [];
+    passing.forEach(function(r){
+        var d = (r[colKey] || {}).d || '';
+        if (!(d in seen)){ seen[d] = true; out.push(d); }
+    });
+    out.sort(function(a, b){ return a.localeCompare(b, undefined, {numeric: true}); });
+    return out;
+}
+
+function renderFilterPanel(filterDefs){
+    var panel = vizFilterPanelTarget || document.getElementById('vizFilterPanel');
+    if (!filterDefs.length){ panel.innerHTML = ''; panel.style.display = 'none'; return; }
+    panel.style.display = 'flex';
+    panel.innerHTML = filterDefs.map(function(fd, idx){
+        var active = !!vizDashboardFilters[fd.col.key];
+        return '<button type="button" class="viz-filter-chip'+(active ? ' active' : '')+'" data-idx="'+idx+'">'+escHtml(fd.col.label)+
+            '<svg viewBox="0 0 18 18" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 6 9 12 14 6"></polyline></svg>'+
+            '</button>';
+    }).join('');
+    Array.from(panel.querySelectorAll('.viz-filter-chip')).forEach(function(btn){
+        btn.addEventListener('click', function(){ openDashboardFilterPopover(filterDefs[+btn.dataset.idx], btn); });
+    });
+}
+
+// Shared shell for both the dashboard filter popover and the matrix column
+// filter popover — search + select-all + checkbox list (tree or flat) +
+// apply/cancel, reusing the exact same interaction wiring (refreshTreeStates
+// / applyTreeSearch / updateApplyState) Clean Data's own popover uses.
+function openFilterOnlyPopover(anchorEl, isDate, listHtml, onApply){
+    closePopover();
+    var pop = document.createElement('div');
+    pop.className = 'filter-popover';
+    pop.innerHTML =
+        '<div class="filter-popover-search"><input type="text" placeholder="Search…" data-role="search"></div>'+
+        '<label class="filter-select-all"><input type="checkbox" data-role="select-all"> Select all</label>'+
+        '<div class="filter-list" data-role="list">'+listHtml+'</div>'+
+        '<div class="filter-popover-actions">'+
+            '<button type="button" class="btn btn-outline btn-sm" data-role="cancel">Cancel</button>'+
+            '<button type="button" class="btn btn-primary btn-sm" data-role="apply">Apply</button>'+
+        '</div>';
+    document.body.appendChild(pop);
+    activePopover = pop;
+    activePopoverCol = anchorEl;
+
+    var pseudoCol = {type: isDate ? 'date' : 'text'};
+    if (isDate) refreshTreeStates(pop);
+    updateApplyState(pop, pseudoCol);
+
+    var r = anchorEl.getBoundingClientRect();
+    var top = r.bottom + 4, left = r.left;
+    var maxLeft = window.innerWidth - 270;
+    if (left > maxLeft) left = Math.max(8, maxLeft);
+    pop.style.top = top + 'px';
+    pop.style.left = left + 'px';
+
+    var listEl = pop.querySelector('[data-role="list"]');
+
+    listEl.addEventListener('click', function(e){
+        var toggle = e.target.closest('.filter-tree-toggle');
+        if (!toggle) return;
+        var node = toggle.closest('.filter-tree-node');
+        if (node) node.classList.toggle('expanded');
+    });
+
+    var searchInput = pop.querySelector('[data-role="search"]');
+    searchInput.addEventListener('input', function(){
+        var q = searchInput.value.trim().toLowerCase();
+        listEl.classList.toggle('search-mode', !!q);
+        if (isDate){
+            applyTreeSearch(pop, q);
+        } else {
+            Array.from(pop.querySelectorAll('.filter-flat-item')).forEach(function(el){
+                el.style.display = (!q || el.dataset.search.toLowerCase().indexOf(q) !== -1) ? '' : 'none';
+            });
+        }
+    });
+
+    var selectAllCb = pop.querySelector('[data-role="select-all"]');
+    selectAllCb.addEventListener('change', function(){
+        Array.from(listEl.querySelectorAll('input[type="checkbox"]')).forEach(function(cb){
+            var container = cb.closest('label');
+            if (container && container.style.display === 'none') return;
+            cb.checked = selectAllCb.checked;
+        });
+        if (isDate) refreshTreeStates(pop);
+        updateApplyState(pop, pseudoCol);
+    });
+
+    if (!isDate){
+        listEl.addEventListener('change', function(){ updateApplyState(pop, pseudoCol); });
+    } else {
+        listEl.addEventListener('change', function(e){
+            var cb = e.target;
+            if (!(cb.matches && cb.matches('input[type="checkbox"]'))) return;
+            if (cb.dataset.level === 'year'){
+                Array.from(listEl.querySelectorAll('input[data-level]')).filter(function(c){ return c.dataset.year === cb.dataset.year; }).forEach(function(c){ if (c !== cb) c.checked = cb.checked; });
+            } else if (cb.dataset.level === 'month'){
+                Array.from(listEl.querySelectorAll('input[data-level="day"]')).filter(function(c){ return c.dataset.year === cb.dataset.year && c.dataset.month === cb.dataset.month; }).forEach(function(c){ c.checked = cb.checked; });
+            }
+            refreshTreeStates(pop);
+            updateApplyState(pop, pseudoCol);
+        });
+    }
+
+    pop.querySelector('[data-role="cancel"]').addEventListener('click', closePopover);
+    pop.querySelector('[data-role="apply"]').addEventListener('click', function(){
+        var selector = isDate ? 'input[data-level="day"]' : 'input[data-level="flat"]';
+        var allValues = Array.from(pop.querySelectorAll(selector)).map(function(cb){ return cb.dataset.value; });
+        var checkedValues = Array.from(pop.querySelectorAll(selector)).filter(function(cb){ return cb.checked; }).map(function(cb){ return cb.dataset.value; });
+        onApply(checkedValues, allValues);
+        closePopover();
+    });
+
+    setTimeout(function(){ document.addEventListener('mousedown', onDocMouseDownForPopover, true); }, 0);
+}
+
+function openDashboardFilterPopover(filterDef, anchorEl){
+    var col = filterDef.col;
+    var isDate = col.type === 'date';
+    var listHtml = isDate
+        ? renderDateTreeHtml(buildDashboardDateTree(col.key, col.key), vizDashboardFilters[col.key])
+        : renderFlatListHtml(buildDashboardFlatUnique(col.key, col.key), vizDashboardFilters[col.key]);
+
+    openFilterOnlyPopover(anchorEl, isDate, listHtml, function(checkedValues, allValues){
+        if (checkedValues.length === allValues.length) delete vizDashboardFilters[col.key];
+        else vizDashboardFilters[col.key] = new Set(checkedValues);
+        renderVisualization();
+    });
+}
+
+function openMatrixFilterPopover(placementIdx, dimIdx, visual, anchorEl){
+    var dimCol = visual.dims[dimIdx];
+    var ownFilters = vizMatrixFilters[placementIdx] || {};
+    var baseForThis = computeRowsForVisual(vizLastBaseRows, vizLastPlaced, placementIdx);
+    var passing = baseForThis.filter(function(row){ return rowPassesMatrixOwnFilters(row, visual, ownFilters, dimIdx); });
+
+    var seen = {}; var values = [];
+    passing.forEach(function(row){
+        var val = getGroupValue(row, dimCol, visual.dimCalendars[dimIdx], visual.dimAggs[dimIdx]);
+        if (!(val in seen)){ seen[val] = true; values.push(val); }
+    });
+    values.sort(function(a, b){ return a.localeCompare(b, undefined, {numeric: true}); });
+
+    var listHtml = renderFlatListHtml(values, ownFilters[dimIdx]);
+
+    openFilterOnlyPopover(anchorEl, false, listHtml, function(checkedValues, allValues){
+        var filters = vizMatrixFilters[placementIdx] || {};
+        if (checkedValues.length === allValues.length) delete filters[dimIdx];
+        else filters[dimIdx] = new Set(checkedValues);
+        vizMatrixFilters[placementIdx] = filters;
+        renderVisualization();
+    });
+}
+
+function renderVisualization(){
+    var grid = vizGridTarget || document.getElementById('vizGrid');
+    var errorsEl = document.getElementById('vizErrors');
+
+    if (!columns.length){
+        grid.innerHTML = '<div class="da-empty" style="grid-column:1/span 2;grid-row:1/span 2">Process some data in Input Data first.</div>';
+        errorsEl.style.display = 'none';
+        (vizFilterPanelTarget || document.getElementById('vizFilterPanel')).style.display = 'none';
+        return;
+    }
+
+    var parsed = parseVizDefinition(document.getElementById('vizEditor').value);
+    var packed = packVisuals(parsed.visuals);
+    var allErrors = parsed.errors.concat(packed.overflowErrors);
+
+    errorsEl.innerHTML = allErrors.map(function(e){ return '<div>'+escHtml(e)+'</div>'; }).join('');
+    errorsEl.style.display = allErrors.length ? 'block' : 'none';
+
+    vizFilterDefs = parsed.filterDefs;
+    renderFilterPanel(vizFilterDefs);
+
+    if (!packed.placed.length){
+        grid.innerHTML = '<div class="da-empty" style="grid-column:1/span 2;grid-row:1/span 2">No visuals to show — switch to Edit and define at least one line.</div>';
+        return;
+    }
+
+    // Dashboard filters (the panel above) sit under everything else — the
+    // same base every visual's own cross-filtering further narrows.
+    var baseRows = computeDisplayRows().filter(function(row){
+        return Object.keys(vizDashboardFilters).every(function(k){
+            var allowed = vizDashboardFilters[k];
+            if (!allowed) return true;
+            var cell = row[k];
+            return cell && allowed.has(cell.d);
+        });
+    });
+    vizLastBaseRows = baseRows;
+    vizLastPlaced = packed.placed;
+
+    grid.innerHTML = '';
+
+    // Phase 1: build empty card shells and insert them, so column/bar/line
+    // charts can measure REAL available space next (needed for the fixed
+    // bar-size + scroll behavior — there's no such thing before layout).
+    var pending = [];
+    packed.placed.forEach(function(p, idx){
+        var built = buildVisualCardShell(p.visual, p.row, p.col);
+        grid.appendChild(built.card);
+        pending.push({idx: idx, visual: p.visual, body: built.body});
+    });
+
+    // Phase 2: aggregate (respecting every OTHER visual's cross-filter
+    // selection and matrix filters — see computeRowsForVisual — plus a
+    // matrix's own filters restricting its own display) and draw.
+    pending.forEach(function(item){
+        var rowsForThis = computeRowsForVisual(baseRows, packed.placed, item.idx);
+        if (item.visual.type === 'matrix'){
+            var ownFilters = vizMatrixFilters[item.idx];
+            if (ownFilters && Object.keys(ownFilters).length){
+                rowsForThis = rowsForThis.filter(function(row){ return rowPassesMatrixOwnFilters(row, item.visual, ownFilters, null); });
+            }
+        }
+        var groups = aggregateRows(rowsForThis, item.visual.dims, item.visual.dimAggs, item.visual.dimCalendars, item.visual.values);
+        drawVisualBody(item.visual, item.body, groups, item.idx);
+    });
+}
+
+// ── Edit / Preview toggle (same pattern as the Notes module) ────────
+function setVizMode(mode){
+    var wasPreview = vizMode === 'preview';
+    vizMode = mode;
+    var isPreview = mode === 'preview';
+    if (isPreview && !wasPreview){ vizCrossFilters = {}; vizMatrixFilters = {}; vizDashboardFilters = {}; } // stale selections/filters don't carry across a definition change
+    document.getElementById('vizEditorWrap').style.display = isPreview ? 'none' : 'flex';
+    document.getElementById('vizPreviewWrap').style.display = isPreview ? 'flex' : 'none';
+    document.getElementById('vizToolbar').style.display = isPreview ? 'none' : 'flex';
+    document.getElementById('vizToggleModeBtn').textContent = isPreview ? 'Edit' : 'Preview';
+    if (!isPreview) document.getElementById('vizErrors').style.display = 'none';
+    if (isPreview) renderVisualization();
+}
+function toggleVizMode(){ setVizMode(vizMode === 'edit' ? 'preview' : 'edit'); }
+
+// ── Full screen (same expand/close idea as the Timers widget) ───────
+function openVizFullscreen(){
+    document.getElementById('vizFullscreenOverlay').classList.add('open');
+    vizGridTarget = document.getElementById('vizGridFullscreen');
+    vizFilterPanelTarget = document.getElementById('vizFilterPanelFullscreen');
+    if (vizMode !== 'preview') setVizMode('preview'); else renderVisualization();
+}
+function closeVizFullscreen(){
+    document.getElementById('vizFullscreenOverlay').classList.remove('open');
+    vizGridTarget = document.getElementById('vizGrid');
+    vizFilterPanelTarget = document.getElementById('vizFilterPanel');
+    renderVisualization();
+}
+
+function onVizEditorInput(){
+    // No autosave to disk here — the definition only persists once the
+    // user explicitly clicks Save (see saveVisualization below).
+}
+
+// ── Columns side panel (Edit mode only, lives inside vizEditorWrap) ──
+// Lists every Clean Data column so field=/value= names can be clicked in
+// instead of hand-typed — the whole point being to avoid typos against
+// column names the person might not have all memorized/visible.
+function renderColumnsPanel(){
+    var list = document.getElementById('vizColumnsPanelList');
+    var cols = visibleColumns();
+    if (!cols.length){
+        list.innerHTML = '<div class="filter-empty">Process some data in Input Data first.</div>';
+        return;
+    }
+    list.innerHTML = cols.map(function(c, i){
+        return '<button type="button" class="viz-column-chip" data-idx="'+i+'" title="'+escAttr(c.label)+'">'+
+            '<span class="viz-column-chip-name">'+escHtml(c.label)+'</span>'+
+            '<span class="viz-column-chip-type">'+escHtml(c.type)+'</span></button>';
+    }).join('');
+    Array.from(list.querySelectorAll('.viz-column-chip')).forEach(function(btn, i){
+        btn.addEventListener('click', function(){ insertTextAtCursor(cols[i].label); });
+    });
+}
+
+function insertTextAtCursor(text){
+    var ta = document.getElementById('vizEditor');
+    var start = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+    var end = ta.selectionEnd == null ? ta.value.length : ta.selectionEnd;
+    var val = ta.value;
+    ta.value = val.slice(0, start) + text + val.slice(end);
+    var newPos = start + text.length;
+    ta.focus();
+    ta.selectionStart = ta.selectionEnd = newPos;
+}
+
+// ── Save / Load / Delete presets ─────────────────────────────────────
+function loadVizPresetList(){
+    return fetch('/api/data_analysis/visualizations').then(function(r){ return r.json(); }).then(function(map){
+        vizPresets = map || {};
+        var sel = document.getElementById('vizLoadSelect');
+        var current = sel.value;
+        sel.innerHTML = '<option value="">Load saved…</option>' + Object.keys(vizPresets).sort().map(function(n){
+            return '<option value="'+escAttr(n)+'">'+escHtml(n)+'</option>';
+        }).join('');
+        if (current && vizPresets[current] !== undefined) sel.value = current;
+    });
+}
+
+function onLoadVizChange(){
+    var sel = document.getElementById('vizLoadSelect');
+    var name = sel.value;
+    if (!name){ currentVizName = null; return; }
+    currentVizName = name;
+    document.getElementById('vizEditor').value = vizPresets[name] || '';
+    setVizMode('preview');
+}
+
+function saveVisualization(){
+    var suggested = currentVizName || '';
+    var name = prompt('Save visuals as:', suggested);
+    if (name === null) return;
+    name = name.trim();
+    if (!name) return;
+    fetch('/api/data_analysis/visualizations/save', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name: name, definition: document.getElementById('vizEditor').value})
+    }).then(function(r){ return r.json(); }).then(function(d){
+        if (d.status === 'error'){ alert(d.message || 'Could not save.'); return; }
+        currentVizName = name;
+        loadVizPresetList().then(function(){ document.getElementById('vizLoadSelect').value = name; });
+    });
+}
+
+function deleteVisualization(){
+    var sel = document.getElementById('vizLoadSelect');
+    var name = sel.value;
+    if (!name){ alert('Select a saved preset to delete first.'); return; }
+    if (!confirm('Delete saved visuals "'+name+'"? This cannot be undone.')) return;
+    fetch('/api/data_analysis/visualizations/delete', {
+        method: 'POST', headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({name: name})
+    }).then(function(){
+        if (currentVizName === name){ currentVizName = null; document.getElementById('vizEditor').value = ''; }
+        loadVizPresetList();
+    });
+}
+
+// ── Sample visuals — one button per visual type, each APPENDS its own
+// sample line to whatever's already in the editor, so you can pick and
+// choose which ones to include instead of getting a fixed bundle. ──
+var SAMPLE_VIZ_LINES = {
+    column: 'size=1x1 | type=column | title=Revenue by Month | field=Accounting Date | value=NSR / Tech Revenue | agg=month',
+    bar: 'size=1x1 | type=bar | title=Margin by Activity | field=Activity Code Description | value=Margin Cost',
+    line: 'size=1x1 | type=line | title=Hours by Month | field=Accounting Date | value=Charged Hours / Tech Quantity | agg=month',
+    matrix: 'size=2x1 | type=matrix | title=Detail by Employee | field=Employee / Tech Product Name,Rank / Method | value=Charged Hours / Tech Quantity,Margin Cost',
+    filter: 'type=filter | field=Rank / Method'
+};
+
+function addSampleVisual(type){
+    var line = SAMPLE_VIZ_LINES[type];
+    if (!line) return;
+    var editor = document.getElementById('vizEditor');
+    var current = editor.value.replace(/\s+$/, '');
+    editor.value = current ? current + '\n' + line : line;
+    currentVizName = null;
+    document.getElementById('vizLoadSelect').value = '';
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+var SAMPLE_TSV =
+"Employee / Tech Product Name\tRank / Method\tActivity Code Description\tAccounting Date\tTransaction Date\tCharged Hours / Tech Quantity\tLabor Cost\tTech Uplift Cost\tMargin Cost\tNSR / Tech Revenue\tANSR / Tech Revenue\n"+
+"Alice Nowak\tSenior Consultant\tClient Review\t12 Jul 2026\t09 Jul 2026\t4.5\t450.00\t45.00\t120.00\t615.00\t598.00\n"+
+"Alice Nowak\tSenior Consultant\tDocumentation\t14 Jul 2026\t13 Jul 2026\t2.0\t200.00\t20.00\t50.00\t270.00\t262.00\n"+
+"Bartek Kowalski\tManager\tClient Review\t19 Jul 2026\t16 Jul 2026\t3.0\t420.00\t60.00\t95.00\t575.00\t560.00\n"+
+"Bartek Kowalski\tManager\tProject Planning\t09 Aug 2026\t05 Aug 2026\t5.0\t700.00\t100.00\t180.00\t980.00\t950.00\n"+
+"Bartek Kowalski\tManager\tTraining\t23 Aug 2026\t20 Aug 2026\t0\t0.00\t0.00\t0.00\t0.00\t0.00\n"+
+"Chloe Zielinska\tAssociate\tDocumentation\t26 Jul 2026\t23 Jul 2026\t6.5\t455.00\t35.00\t70.00\t560.00\t545.00\n"+
+"Chloe Zielinska\tAssociate\tClient Review\t16 Aug 2026\t13 Aug 2026\t1.5\t105.00\t8.00\t18.00\t131.00\t128.00\n"+
+"Damian Wojcik\tSenior Consultant\tProject Planning\t06 Sep 2026\t02 Sep 2026\t3.5\t385.00\t42.00\t88.00\t515.00\t500.00\n"+
+"Damian Wojcik\tSenior Consultant\tTraining\t13 Sep 2026\t10 Sep 2026\t2.5\t250.00\t25.00\t45.00\t320.00\t310.00\n"+
+"Ewa Mazur\tAssociate\tTraining\t20 Sep 2026\t17 Sep 2026\t0\t0.00\t0.00\t0.00\t0.00\t0.00\n";
+
+renderTable();
+loadVizPresetList();
+document.getElementById('daInput').value = SAMPLE_TSV.trim();
+processData();
+</script>
+{% endblock %}

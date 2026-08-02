@@ -1,0 +1,586 @@
+{% extends 'layout.html' %}
+{% block module_name %}Timers{% endblock %}
+
+{% block extra_css %}
+<style>
+    .tm-root { display: flex; flex-direction: column; gap: 16px; height: 100%; min-height: 0; }
+    .tm-toolbar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+    .tm-toolbar-spacer { flex: 1; }
+    .tm-empty { color: var(--text-muted); font-size: 0.875rem; padding: 40px 0; text-align: center; }
+
+    .tm-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        grid-auto-rows: 1fr;
+        gap: 16px;
+        overflow-y: auto;
+        padding-bottom: 4px;
+        align-items: stretch;
+    }
+
+    /* ── Timer card — every card shares the exact same internal
+       structure/heights (see tm-card-body/tm-subline/tm-progress-track
+       below) so cards line up regardless of timer type or state. ── */
+    .tm-card {
+        background: var(--surface-card);
+        border: 1px solid var(--border);
+        border-radius: var(--r);
+        box-shadow: var(--shadow);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        height: 100%;
+    }
+    .tm-card-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 14px;
+        background: var(--teal-900);
+        color: #fff;
+    }
+    .tm-card-name {
+        font-size: 0.875rem; font-weight: 600; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+        cursor: text; border-radius: 4px; padding: 2px 4px; margin: -2px -4px;
+        transition: background 130ms;
+    }
+    .tm-card-name:hover { background: rgba(255,255,255,.12); }
+    .tm-type-badge {
+        font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+        background: rgba(255,255,255,.15); color: var(--teal-100);
+        padding: 3px 8px; border-radius: 20px; white-space: nowrap; flex-shrink: 0;
+    }
+    .tm-card-body { padding: 16px 14px; display: flex; flex-direction: column; gap: 10px; align-items: center; flex: 1; justify-content: center; }
+
+    .tm-time {
+        font-size: 2.1rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1;
+        cursor: text; border-radius: 6px; padding: 2px 8px; transition: background 130ms;
+    }
+    .tm-time:hover { background: var(--surface-in); }
+    .tm-subline { font-size: 0.75rem; color: var(--text-muted); text-align: center; min-height: 1.4em; }
+
+    .tm-progress-track { width: 100%; height: 7px; background: var(--surface-in); border-radius: 4px; overflow: hidden; }
+    .tm-progress-fill { height: 100%; background: var(--amber); transition: width 0.4s linear; border-radius: 4px; }
+    .tm-progress-fill.phase-break { background: var(--teal-400); }
+
+    .tm-status-pill {
+        font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+        padding: 2px 9px; border-radius: 20px;
+    }
+    .tm-status-pill.running   { background: rgba(0,130,130,.12); color: var(--teal-700); }
+    .tm-status-pill.paused    { background: rgba(225,160,30,.15); color: var(--amber); }
+    .tm-status-pill.stopped   { background: var(--surface-in); color: var(--text-muted); }
+    .tm-status-pill.completed { background: rgba(196,30,58,.10); color: var(--red); }
+    .tm-status-pill.scheduled { background: rgba(0,130,130,.12); color: var(--teal-700); }
+
+    .tm-card-actions { display: flex; align-items: center; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--border); flex-shrink: 0; }
+    .tm-card-actions .tm-spacer { flex: 1; }
+    .tm-icon-btn {
+        width: 30px !important; height: 30px !important; padding: 0 !important; flex: 0 0 auto !important;
+        display: inline-flex !important; align-items: center !important; justify-content: center !important;
+    }
+    .tm-icon-btn svg { width: 15px; height: 15px; }
+    .tm-icon-btn.tm-sound-on  { color: var(--amber); border-color: var(--amber); }
+    .tm-icon-btn.tm-sound-off { color: var(--text-muted); }
+
+    /* ── Inline edit inputs (name / time) — replace the display element
+       in place, no popup/modal involved. ── */
+    .tm-inline-input {
+        font-family: var(--font); outline: none;
+        border: none; border-bottom: 2px solid var(--amber);
+        background: transparent; border-radius: 0;
+    }
+    .tm-card-name-input { font-size: 0.875rem; font-weight: 600; color: #fff; width: 100%; padding: 2px 4px; margin: -2px -4px; }
+    .tm-card-name-input::placeholder { color: rgba(255,255,255,.6); }
+    .tm-time-input { font-size: 2.1rem; font-weight: 700; color: var(--ink); text-align: center; width: 100%; padding: 2px 8px; font-variant-numeric: tabular-nums; }
+
+    /* ── Add modal ───────────────────────────────────────── */
+    .overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(1,45,44,0.32); align-items: center; justify-content: center; }
+    .overlay.open { display: flex; }
+    .modal { background: var(--surface-card); border-radius: 12px; width: 400px; max-width: 94vw; max-height: 90vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md); border: 1px solid var(--border); }
+    .modal-head { display: flex; align-items: flex-start; padding: 16px 20px; border-bottom: 1px solid var(--border); gap: 12px; }
+    .modal-title { font-weight: 600; font-size: 0.9375rem; color: var(--text); flex: 1; }
+    .modal-body { flex: 1; overflow-y: auto; padding: 18px 20px; display: flex; flex-direction: column; gap: 12px; }
+    .modal-foot { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+    .modal-foot .tm-spacer { flex: 1; }
+
+    .field-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .field-row { display: flex; flex-direction: column; }
+    .field-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+    .type-picker { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .type-opt {
+        border: 1px solid var(--border); border-radius: 8px; padding: 12px 10px; cursor: pointer;
+        text-align: center; font-size: 0.8125rem; font-weight: 600; color: var(--text-muted);
+        transition: border-color 130ms, background 130ms, color 130ms;
+    }
+    .type-opt:hover { border-color: var(--teal-700); }
+    .type-opt.selected { border-color: var(--teal-700); background: var(--teal-100); color: var(--ink); }
+
+    /* ── Full-screen detail modal (expand from a card) ─────── */
+    .tm-detail-overlay { display: none; position: fixed; inset: 0; z-index: 250; background: rgba(1,45,44,0.5); align-items: center; justify-content: center; }
+    .tm-detail-overlay.open { display: flex; }
+    .tm-detail-shell {
+        background: var(--surface-card); border-radius: 14px; border: 1px solid var(--border);
+        box-shadow: var(--shadow-md); width: 420px; max-width: 92vw; padding: 32px; position: relative;
+        display: flex; flex-direction: column; align-items: center; gap: 18px;
+        transition: width 200ms ease, height 200ms ease, border-radius 200ms ease;
+    }
+    .tm-detail-shell.maximized { width: 100vw; height: 100vh; max-width: 100vw; border-radius: 0; justify-content: center; }
+    .tm-detail-close, .tm-detail-max {
+        position: absolute; top: 14px; width: 34px; height: 34px; padding: 0 !important;
+        display: inline-flex; align-items: center; justify-content: center;
+        border-radius: 50%; background: var(--surface-card); box-shadow: var(--shadow);
+    }
+    .tm-detail-close { right: 14px; }
+    .tm-detail-max { right: 56px; }
+    .tm-detail-name { font-size: 1.75rem; font-weight: 700; color: var(--ink); text-align: center; cursor: text; }
+    .tm-detail-time { font-size: 4.5rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1; cursor: text; }
+    .tm-detail-shell.maximized .tm-detail-time { font-size: 8rem; }
+    .tm-detail-sub { font-size: 0.875rem; color: var(--text-muted); }
+    .tm-detail-progress { width: 100%; max-width: 320px; }
+    .tm-detail-actions { display: flex; gap: 10px; align-items: center; }
+    .tm-detail-name-input { font-size: 1.75rem; font-weight: 700; text-align: center; width: 100%; }
+    .tm-detail-time-input { font-size: 4.5rem; font-weight: 700; text-align: center; width: 100%; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tm-root">
+    <div class="tm-toolbar">
+        <button class="btn btn-primary" onclick="openAddModal()">Add Timer</button>
+        <div class="tm-toolbar-spacer"></div>
+        <span style="font-size:0.75rem;color:var(--text-muted)" id="soundHint"></span>
+    </div>
+
+    <div class="tm-grid" id="tmGrid">
+        <div class="tm-empty">No timers yet — click "Add Timer" to create one.</div>
+    </div>
+</div>
+
+<!-- ── Add modal ── -->
+<div class="overlay" id="formOverlay" onclick="formOverlayClick(event)">
+    <div class="modal">
+        <div class="modal-head">
+            <div class="modal-title">New Timer</div>
+            <button class="btn btn-outline btn-sm" onclick="closeFormModal()">&#x2715;</button>
+        </div>
+        <div class="modal-body">
+            <div class="type-picker" id="typePicker">
+                <div class="type-opt" data-type="countdown">Countdown</div>
+                <div class="type-opt" data-type="pomodoro">Pomodoro</div>
+                <div class="type-opt" data-type="alarm">Alarm</div>
+            </div>
+
+            <input type="text" id="fName" class="input" placeholder="Timer name (optional)">
+
+            <!-- Countdown: a single unlabeled field, same treatment as the name box -->
+            <div id="fields-countdown" style="display:none">
+                <input type="text" inputmode="numeric" id="fCountdownMin" class="input" placeholder="Minutes (e.g. 10)">
+            </div>
+
+            <!-- Pomodoro fields -->
+            <div id="fields-pomodoro" style="display:none">
+                <div class="field-grid-2">
+                    <div class="field-row"><div class="field-label">Work (min)</div><input type="number" id="fPomWork" class="input" min="1" value="25"></div>
+                    <div class="field-row"><div class="field-label">Break (min)</div><input type="number" id="fPomBreak" class="input" min="1" value="5"></div>
+                </div>
+            </div>
+
+            <!-- Alarm: always arms for the next occurrence of this time -->
+            <div id="fields-alarm" style="display:none">
+                <input type="time" id="fAlarmTime" class="input" value="09:00">
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-outline btn-sm tm-icon-btn" id="fSoundBtn" title="Toggle sound" onclick="toggleFormSound()"></button>
+            <div class="tm-spacer"></div>
+            <button class="btn btn-outline" onclick="closeFormModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitForm()">Save</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Full-screen expandable detail modal ── -->
+<div class="tm-detail-overlay" id="detailOverlay" onclick="detailOverlayClick(event)">
+    <div class="tm-detail-shell" id="detailShell">
+        <button class="btn btn-outline btn-sm tm-detail-max" onclick="toggleMaximize()" title="Maximize">
+            <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="12" rx="1"></rect></svg>
+        </button>
+        <button class="btn btn-outline btn-sm tm-detail-close" onclick="closeDetail()">&#x2715;</button>
+        <div class="tm-type-badge" id="detailType"></div>
+        <div class="tm-detail-name" id="detailName" title="Click to rename"></div>
+        <div class="tm-detail-time" id="detailTime" title="Click to edit">--:--</div>
+        <div class="tm-detail-sub" id="detailSub"></div>
+        <div class="tm-detail-progress"><div class="tm-progress-track"><div class="tm-progress-fill" id="detailProgressFill" style="width:0%"></div></div></div>
+        <div class="tm-detail-actions" id="detailActions"></div>
+    </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  This page does NOT poll on its own — layout.html runs the single
+//  global poll loop (so sound only ever fires once, from one place)
+//  and dispatches a 'timers:update' event with the latest data. This
+//  page just listens and re-renders — EXCEPT while an inline edit is
+//  in progress (tmEditing), so a mid-typing input never gets clobbered
+//  by the next 1s refresh.
+// ═══════════════════════════════════════════════════════════════
+var latestTimers = [];
+var detailTimerId = null;
+var selectedType = 'countdown';
+var formSoundEnabled = true;
+var tmEditing = false;   // true while any inline name/time input has focus
+
+var TYPE_LABELS = { countdown: 'Countdown', pomodoro: 'Pomodoro', alarm: 'Alarm' };
+
+// ── Small inline icon set, reused everywhere in this file ────────
+var ICON_PLAY  = '<svg viewBox="0 0 18 18" fill="currentColor"><polygon points="5,3 15,9 5,15"></polygon></svg>';
+var ICON_PAUSE = '<svg viewBox="0 0 18 18" fill="currentColor"><rect x="4" y="3" width="4" height="12"></rect><rect x="10" y="3" width="4" height="12"></rect></svg>';
+var ICON_STOP  = '<svg viewBox="0 0 18 18" fill="currentColor"><rect x="4" y="4" width="10" height="10"></rect></svg>';
+var ICON_DELETE = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="4" x2="14" y2="14"></line><line x1="14" y1="4" x2="4" y2="14"></line></svg>';
+var ICON_BELL_ON  = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8a5 5 0 0 1 10 0c0 3 1 4 1 4H3s1-1 1-4Z"></path><path d="M7.5 14a1.5 1.5 0 0 0 3 0"></path></svg>';
+var ICON_BELL_OFF = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8a5 5 0 0 1 10 0c0 3 1 4 1 4H3s1-1 1-4Z"></path><path d="M7.5 14a1.5 1.5 0 0 0 3 0"></path><line x1="2" y1="2" x2="16" y2="16"></line></svg>';
+
+window.addEventListener('timers:update', function (e) {
+    latestTimers = e.detail.timers || [];
+    if (tmEditing) return;  // don't yank an in-progress edit out from under the user
+    renderGrid();
+    if (detailTimerId) renderDetail();
+});
+
+document.getElementById('soundHint').textContent = window.__timersSoundReady ? '' : 'Click anywhere once to enable alarm sound.';
+window.addEventListener('timers:sound-ready', function () { document.getElementById('soundHint').textContent = ''; });
+
+function fmtClock(totalSeconds) {
+    totalSeconds = Math.max(0, Math.round(totalSeconds));
+    var h = Math.floor(totalSeconds / 3600), m = Math.floor((totalSeconds % 3600) / 60), s = totalSeconds % 60;
+    var p2 = function (n) { return n < 10 ? '0' + n : '' + n; };
+    return h > 0 ? (h + ':' + p2(m) + ':' + p2(s)) : (p2(m) + ':' + p2(s));
+}
+
+// Accepts "12" (minutes), "12:30" (mm:ss) or "1:12:30" (h:mm:ss).
+function parseDurationInput(str) {
+    str = (str || '').trim();
+    if (!str) return null;
+    if (str.indexOf(':') === -1) {
+        var mins = parseFloat(str);
+        return isNaN(mins) ? null : Math.round(mins * 60);
+    }
+    var parts = str.split(':').map(function (p) { return parseInt(p, 10); });
+    if (parts.some(isNaN)) return null;
+    var seconds = 0;
+    for (var i = 0; i < parts.length; i++) seconds = seconds * 60 + parts[i];
+    return seconds;
+}
+
+function progressPct(t) {
+    if (t.phase_seconds) return Math.min(100, (t.elapsed_seconds / t.phase_seconds) * 100);
+    return 0;
+}
+
+function cardTimeAndSub(t) {
+    if (t.type === 'countdown') return { time: fmtClock(t.remaining_seconds), sub: '\u00A0' };
+    if (t.type === 'pomodoro') return { time: fmtClock(t.remaining_seconds), sub: (t.phase === 'work' ? 'Work' : 'Break') };
+    if (t.type === 'alarm') return { time: t.config.time, sub: t.status === 'scheduled' ? ('in ' + fmtClock(t.remaining_seconds)) : '\u00A0' };
+    return { time: '--:--', sub: '\u00A0' };
+}
+
+function statusLabel(t) { return t.status.charAt(0).toUpperCase() + t.status.slice(1); }
+function isActivelyRunning(t) { return t.status === 'running' || t.status === 'scheduled'; }
+function findTimer(id) { return latestTimers.find(function (t) { return t.id === id; }); }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function renderGrid() {
+    var grid = document.getElementById('tmGrid');
+    if (!latestTimers.length) {
+        grid.innerHTML = '<div class="tm-empty">No timers yet — click "Add Timer" to create one.</div>';
+        return;
+    }
+    grid.innerHTML = latestTimers.map(function (t) { return cardHtml(t); }).join('');
+}
+
+function cardHtml(t) {
+    var tv = cardTimeAndSub(t);
+    var isCountLike = (t.type === 'countdown' || t.type === 'pomodoro');
+    var pct = isCountLike ? progressPct(t) : 0;
+    var fillClass = 'tm-progress-fill' + (t.phase === 'break' ? ' phase-break' : '');
+    var soundClass = t.sound_enabled ? 'tm-sound-on' : 'tm-sound-off';
+
+    var actions = '';
+    if (isCountLike) {
+        actions += t.status === 'running'
+            ? '<button class="btn btn-outline btn-sm tm-icon-btn" title="Pause" onclick="pauseTimer(\'' + t.id + '\')">' + ICON_PAUSE + '</button>'
+            : '<button class="btn btn-primary btn-sm tm-icon-btn" title="' + (t.status === 'paused' ? 'Resume' : 'Start') + '" onclick="startTimer(\'' + t.id + '\')">' + ICON_PLAY + '</button>';
+        actions += '<button class="btn btn-outline btn-sm tm-icon-btn" title="Stop" onclick="stopTimer(\'' + t.id + '\')">' + ICON_STOP + '</button>';
+    } else {
+        actions += (t.status === 'stopped' || t.status === 'completed')
+            ? '<button class="btn btn-primary btn-sm tm-icon-btn" title="Enable" onclick="enableTimer(\'' + t.id + '\')">' + ICON_PLAY + '</button>'
+            : '<button class="btn btn-outline btn-sm tm-icon-btn" title="Disable" onclick="stopTimer(\'' + t.id + '\')">' + ICON_STOP + '</button>';
+    }
+    actions += '<button class="btn btn-outline btn-sm tm-icon-btn ' + soundClass + '" title="Toggle sound" onclick="toggleSound(\'' + t.id + '\')">' + (t.sound_enabled ? ICON_BELL_ON : ICON_BELL_OFF) + '</button>';
+    actions += '<span class="tm-spacer"></span>';
+    actions += '<button class="btn btn-danger btn-sm tm-icon-btn" title="Delete" onclick="deleteTimer(\'' + t.id + '\')">' + ICON_DELETE + '</button>';
+
+    return '<div class="tm-card" data-id="' + t.id + '">' +
+        '<div class="tm-card-head">' +
+            '<span class="tm-card-name" data-role="name" title="Click to rename">' + escHtml(t.name) + '</span>' +
+            '<span class="tm-type-badge">' + TYPE_LABELS[t.type] + '</span>' +
+        '</div>' +
+        '<div class="tm-card-body">' +
+            '<div class="tm-time" data-role="time" title="Click to edit">' + tv.time + '</div>' +
+            '<div class="tm-subline">' + tv.sub + '</div>' +
+            '<div class="tm-progress-track" style="' + (isCountLike ? '' : 'visibility:hidden') + '"><div class="' + fillClass + '" style="width:' + pct + '%"></div></div>' +
+            '<span class="tm-status-pill ' + t.status + '">' + statusLabel(t) + '</span>' +
+        '</div>' +
+        '<div class="tm-card-actions">' + actions + '</div>' +
+    '</div>';
+}
+
+// ── Actions ──────────────────────────────────────────────────────
+function startTimer(id)  { fetch('/api/timers/' + id + '/start', { method: 'POST' }); }
+function pauseTimer(id)  { fetch('/api/timers/' + id + '/pause', { method: 'POST' }); }
+function stopTimer(id)   { fetch('/api/timers/' + id + '/stop', { method: 'POST' }); }
+function enableTimer(id) { fetch('/api/timers/' + id + '/enable', { method: 'POST' }); }
+function toggleSound(id) {
+    var t = findTimer(id);
+    if (!t) return;
+    fetch('/api/timers/' + id + '/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sound_enabled: !t.sound_enabled }) });
+}
+function deleteTimer(id) {
+    fetch('/api/timers/' + id + '/delete', { method: 'POST' }).then(function () {
+        latestTimers = latestTimers.filter(function (t) { return t.id !== id; });
+        renderGrid();
+        if (detailTimerId === id) closeDetail();
+    });
+}
+
+// ── Inline edit: name (works in any state, on both the card and the
+//    expanded detail view — same helper, different DOM anchors) ────
+function beginNameEdit(displayEl, t) {
+    if (tmEditing) return;
+    tmEditing = true;
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'tm-inline-input ' + (displayEl.classList.contains('tm-detail-name') ? 'tm-detail-name-input' : 'tm-card-name-input');
+    input.value = t.name;
+    input.placeholder = 'Timer name';
+    displayEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function finish(commit) {
+        tmEditing = false;
+        var val = input.value.trim();
+        input.replaceWith(displayEl);
+        if (commit && val && val !== t.name) {
+            fetch('/api/timers/' + t.id + '/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: val }) })
+                .then(function () { window.dispatchEvent(new Event('timers:force-refresh')); });
+        } else {
+            renderGrid();
+            if (detailTimerId) renderDetail();
+        }
+    }
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') finish(true);
+        if (e.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', function () { finish(true); });
+}
+
+// ── Inline edit: the time value itself. For countdown/pomodoro this
+//    edits the CURRENT remaining/elapsed time (not the original
+//    configured duration) — so adjusting a running timer moves where
+//    it's counting from, rather than resetting it. For alarm it edits
+//    the clock time directly, since alarms don't have an elapsed
+//    concept. ──
+function beginTimeEdit(displayEl, t) {
+    if (tmEditing) return;
+    tmEditing = true;
+    var input = document.createElement('input');
+    input.className = 'tm-inline-input ' + (displayEl.classList.contains('tm-detail-time') ? 'tm-detail-time-input' : 'tm-time-input');
+
+    if (t.type === 'alarm') {
+        input.type = 'time';
+        input.value = t.config.time;
+    } else {
+        input.type = 'text';
+        input.inputMode = 'numeric';
+        input.value = fmtClock(t.remaining_seconds);
+    }
+    displayEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function finish(commit) {
+        tmEditing = false;
+        var raw = input.value;
+        input.replaceWith(displayEl);
+        if (!commit) { renderGrid(); if (detailTimerId) renderDetail(); return; }
+
+        if (t.type === 'alarm') {
+            if (!raw) { renderGrid(); return; }
+            fetch('/api/timers/' + t.id + '/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: { time: raw } }) })
+                .then(function () { window.dispatchEvent(new Event('timers:force-refresh')); });
+        } else {
+            var seconds = parseDurationInput(raw);
+            if (seconds === null) { renderGrid(); return; }
+            fetch('/api/timers/' + t.id + '/set_remaining', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seconds: seconds }) })
+                .then(function () { window.dispatchEvent(new Event('timers:force-refresh')); });
+        }
+    }
+    input.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') finish(true);
+        if (e.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', function () { finish(true); });
+}
+
+// A committed inline edit fetches immediately rather than waiting up to
+// 1s for the next poll tick, so the UI feels instant.
+window.addEventListener('timers:force-refresh', function () {
+    fetch('/api/timers/list').then(function (r) { return r.json(); }).then(function (data) {
+        latestTimers = data.timers || [];
+        renderGrid();
+        if (detailTimerId) renderDetail();
+    });
+});
+
+document.getElementById('tmGrid').addEventListener('click', function (e) {
+    var nameEl = e.target.closest('[data-role="name"]');
+    var timeEl = e.target.closest('[data-role="time"]');
+    var card = e.target.closest('.tm-card');
+    if (!card) return;
+    var t = findTimer(card.dataset.id);
+    if (!t) return;
+    if (nameEl) { beginNameEdit(nameEl, t); return; }
+    if (timeEl) { beginTimeEdit(timeEl, t); return; }
+    if (e.target.closest('.tm-card-actions')) return;
+    openDetail(t.id);
+});
+
+// ── Add modal ─────────────────────────────────────────────────────
+function selectType(type) {
+    selectedType = type;
+    document.querySelectorAll('.type-opt').forEach(function (el) { el.classList.toggle('selected', el.dataset.type === type); });
+    ['countdown','pomodoro','alarm'].forEach(function (tt) { document.getElementById('fields-' + tt).style.display = (tt === type) ? 'block' : 'none'; });
+}
+
+function renderFormSoundBtn() {
+    var btn = document.getElementById('fSoundBtn');
+    btn.innerHTML = formSoundEnabled ? ICON_BELL_ON : ICON_BELL_OFF;
+    btn.className = 'btn btn-outline btn-sm tm-icon-btn ' + (formSoundEnabled ? 'tm-sound-on' : 'tm-sound-off');
+}
+function toggleFormSound() { formSoundEnabled = !formSoundEnabled; renderFormSoundBtn(); }
+
+function openAddModal() {
+    document.getElementById('fName').value = '';
+    document.getElementById('fCountdownMin').value = '';
+    document.getElementById('fAlarmTime').value = '09:00';
+    formSoundEnabled = true;
+    renderFormSoundBtn();
+    selectType('countdown');
+    document.getElementById('formOverlay').classList.add('open');
+}
+
+function closeFormModal() { document.getElementById('formOverlay').classList.remove('open'); }
+function formOverlayClick(e) { if (e.target === document.getElementById('formOverlay')) closeFormModal(); }
+
+document.getElementById('typePicker').addEventListener('click', function (e) {
+    var opt = e.target.closest('.type-opt');
+    if (opt) selectType(opt.dataset.type);
+});
+
+function buildConfig(type) {
+    if (type === 'countdown') {
+        var mins = parseFloat(document.getElementById('fCountdownMin').value);
+        if (!mins || mins <= 0) mins = 10;
+        return { duration_seconds: Math.round(mins * 60) };
+    }
+    if (type === 'pomodoro') return {
+        work_minutes: parseInt(document.getElementById('fPomWork').value || '25', 10),
+        break_minutes: parseInt(document.getElementById('fPomBreak').value || '5', 10),
+    };
+    if (type === 'alarm') return { time: document.getElementById('fAlarmTime').value || '09:00' };
+    return {};
+}
+
+function submitForm() {
+    var payload = {
+        type: selectedType,
+        name: document.getElementById('fName').value.trim(),
+        sound_enabled: formSoundEnabled,
+        config: buildConfig(selectedType),
+    };
+    fetch('/api/timers/create', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (d.status === 'error') { alert(d.message || 'Could not save timer.'); return; }
+            closeFormModal();
+            window.dispatchEvent(new Event('timers:force-refresh'));
+        });
+}
+
+// ── Full-screen detail modal ─────────────────────────────────────
+function openDetail(id) {
+    detailTimerId = id;
+    renderDetail();
+    document.getElementById('detailOverlay').classList.add('open');
+}
+function closeDetail() {
+    detailTimerId = null;
+    document.getElementById('detailOverlay').classList.remove('open');
+    document.getElementById('detailShell').classList.remove('maximized');
+}
+function detailOverlayClick(e) { if (e.target === document.getElementById('detailOverlay')) closeDetail(); }
+function toggleMaximize() { document.getElementById('detailShell').classList.toggle('maximized'); }
+
+function renderDetail() {
+    var t = findTimer(detailTimerId);
+    if (!t) { closeDetail(); return; }
+    var tv = cardTimeAndSub(t);
+    document.getElementById('detailType').textContent = TYPE_LABELS[t.type];
+    var nameEl = document.getElementById('detailName');
+    if (nameEl.tagName === 'DIV') nameEl.textContent = t.name;
+    var timeEl = document.getElementById('detailTime');
+    if (timeEl.tagName === 'DIV') timeEl.textContent = tv.time;
+    document.getElementById('detailSub').textContent = (tv.sub && tv.sub !== '\u00A0' ? tv.sub + '  \u2014  ' : '') + statusLabel(t);
+
+    var isCountLike = (t.type === 'countdown' || t.type === 'pomodoro');
+    document.querySelector('.tm-detail-progress').style.display = isCountLike ? 'block' : 'none';
+    if (isCountLike) {
+        var fill = document.getElementById('detailProgressFill');
+        fill.style.width = progressPct(t) + '%';
+        fill.className = 'tm-progress-fill' + (t.phase === 'break' ? ' phase-break' : '');
+    }
+
+    var actions = document.getElementById('detailActions');
+    actions.innerHTML = '';
+    function mkBtn(html, cls, title, fn) {
+        var b = document.createElement('button');
+        b.className = cls + ' tm-icon-btn'; b.innerHTML = html; b.title = title; b.onclick = fn;
+        return b;
+    }
+    if (isCountLike) {
+        actions.appendChild(t.status === 'running'
+            ? mkBtn(ICON_PAUSE, 'btn btn-primary', 'Pause', function () { pauseTimer(t.id); })
+            : mkBtn(ICON_PLAY, 'btn btn-primary', t.status === 'paused' ? 'Resume' : 'Start', function () { startTimer(t.id); }));
+        actions.appendChild(mkBtn(ICON_STOP, 'btn btn-outline', 'Stop', function () { stopTimer(t.id); }));
+    } else {
+        actions.appendChild((t.status === 'stopped' || t.status === 'completed')
+            ? mkBtn(ICON_PLAY, 'btn btn-primary', 'Enable', function () { enableTimer(t.id); })
+            : mkBtn(ICON_STOP, 'btn btn-outline', 'Disable', function () { stopTimer(t.id); }));
+    }
+    actions.appendChild(mkBtn(t.sound_enabled ? ICON_BELL_ON : ICON_BELL_OFF, 'btn btn-outline' + (t.sound_enabled ? ' tm-sound-on' : ' tm-sound-off'), 'Toggle sound', function () { toggleSound(t.id); }));
+}
+
+document.getElementById('detailName').addEventListener('click', function () {
+    var t = findTimer(detailTimerId);
+    if (t) beginNameEdit(document.getElementById('detailName'), t);
+});
+document.getElementById('detailTime').addEventListener('click', function () {
+    var t = findTimer(detailTimerId);
+    if (t) beginTimeEdit(document.getElementById('detailTime'), t);
+});
+</script>
+{% endblock %}

@@ -1,5 +1,5 @@
 {% extends 'layout.html' %}
-{% block module_name %}Notes{% endblock %}
+{% block module_name %}Notes (Sync){% endblock %}
 
 {% block extra_css %}
 <style>
@@ -9,7 +9,7 @@
     /* ── File Tree ─────────────────────────────────────────── */
     .file-panel { background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow); display: flex; flex-direction: column; overflow: hidden; }
     .search-box { display: flex; gap: 6px; padding: 10px 10px 0; flex-shrink: 0; }
-    .search-box .input { flex: 1; font-size: 0.75rem; padding: 7px 10px; }
+    .search-box .input { flex: 1; min-width: 0; font-size: 0.75rem; padding: 7px 8px; }
     .cal-icon-btn {
         width: 32px; height: 32px; flex-shrink: 0;
         display: flex; align-items: center; justify-content: center;
@@ -19,6 +19,33 @@
     }
     .cal-icon-btn:hover  { border-color: var(--teal-700); color: var(--teal-700); background: var(--surface-in); }
     .cal-icon-btn.active { border-color: var(--teal-700); color: var(--teal-700); background: var(--teal-100); }
+
+    /* ── Sync icon button — same size/look as the calendar icon button,
+       just a small unsynced-count badge and a spin while syncing ── */
+    .sync-icon-btn { position: relative; }
+    .sync-badge {
+        position: absolute; top: -5px; right: -5px;
+        display: flex; align-items: center; justify-content: center;
+        min-width: 15px; height: 15px; padding: 0 3px;
+        border-radius: 8px; background: var(--amber); color: var(--ink);
+        font-size: 0.5625rem; font-weight: 700; line-height: 1; text-align: center;
+    }
+    .sync-icon-btn.syncing svg { animation: sync-spin 0.9s linear infinite; }
+    @keyframes sync-spin { to { transform: rotate(360deg); } }
+
+    /* ── Toast (same pattern as email.html) ──────────────────── */
+    .toast-fb {
+        position: fixed; bottom: 22px; right: 22px;
+        background: var(--teal-900); color: #fff;
+        font-size: 0.8125rem; font-weight: 600;
+        padding: 11px 18px; border-radius: 7px;
+        box-shadow: var(--shadow-md);
+        opacity: 0; transform: translateY(8px);
+        transition: opacity 180ms, transform 180ms;
+        pointer-events: none; z-index: 999;
+    }
+    .toast-fb.show  { opacity: 1; transform: translateY(0); }
+    .toast-fb.error { background: var(--red); }
     .file-list { flex: 1; overflow-y: auto; padding: 12px; }
     .search-empty { color: var(--text-muted); font-size: 0.75rem; padding: 10px 4px; }
     mark { background: var(--amber); color: var(--ink); border-radius: 2px; padding: 0 1px; }
@@ -285,6 +312,14 @@
                     <line x1="3" y1="10" x2="21" y2="10"></line>
                 </svg>
             </button>
+            <button type="button" class="cal-icon-btn sync-icon-btn" id="syncNowBtn" onclick="runSync()" title="Sync with GitHub">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="23 4 23 10 17 10"></polyline>
+                    <polyline points="1 20 1 14 7 14"></polyline>
+                    <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                </svg>
+                <span class="sync-badge" id="syncBadge" style="display:none"></span>
+            </button>
         </div>
         <div class="file-list" id="treeRoot">
             <div class="folder-header expanded" id="rootHeader">Notes</div>
@@ -324,6 +359,8 @@
         </div>
     </div>
 </div>
+
+<div class="toast-fb" id="syncToast"></div>
 
 <!-- ── Date-range Calendar Modal ── -->
 <div class="cal-overlay" id="calOverlay" onclick="calOverlayClick(event)">
@@ -365,6 +402,124 @@
 <script>
     const files = {{ files|tojson }};
     const DAILY_FOLDER_NAME = 'Daily';
+
+    // ── Sync state (see notes_sync.py) ──────────────────────
+    let dirtyPaths = new Set({{ dirty_paths|tojson }});
+    let pendingDeletes = new Set({{ pending_deletes|tojson }});
+    let syncConfigured = {{ 'true' if configured else 'false' }};
+    let lastSyncedAt = {{ last_synced_at|tojson }};   // ISO string or null
+    let configError = {{ config_error|tojson }};      // set when config.json exists but fails to parse
+    let syncInProgress = false;
+    const CONFIG_PATH = {{ config_path|tojson }};
+
+    function formatRelativeTime(iso) {
+        const then = new Date(iso.replace(' ', 'T'));
+        const diffSec = Math.max(0, Math.floor((Date.now() - then.getTime()) / 1000));
+        if (diffSec < 60) return 'just now';
+        const diffMin = Math.floor(diffSec / 60);
+        if (diffMin < 60) return diffMin + 'm ago';
+        const diffHr = Math.floor(diffMin / 60);
+        if (diffHr < 24) return diffHr + 'h ago';
+        return Math.floor(diffHr / 24) + 'd ago';
+    }
+
+    function updateSyncBadge() {
+        const btn = document.getElementById('syncNowBtn');
+        const badge = document.getElementById('syncBadge');
+        const count = dirtyPaths.size + pendingDeletes.size;
+        if (count > 0) {
+            badge.textContent = count > 99 ? '99+' : count;
+            badge.style.display = 'flex';
+        } else {
+            badge.style.display = 'none';
+        }
+        let tooltip;
+        if (configError) {
+            tooltip = configError;
+        } else if (!syncConfigured) {
+            tooltip = 'Not configured — edit ' + CONFIG_PATH;
+        } else {
+            tooltip = lastSyncedAt ? ('Sync with GitHub — last synced ' + formatRelativeTime(lastSyncedAt)) : 'Sync with GitHub — never synced yet';
+            if (count > 0) tooltip += ` (${count} unsynced)`;
+        }
+        btn.title = tooltip;
+    }
+
+    function refreshSyncStatus() {
+        return fetch('/notes_sync/status').then(r => r.json()).then(d => {
+            dirtyPaths = new Set(d.dirty_paths);
+            pendingDeletes = new Set(d.pending_deletes);
+            syncConfigured = d.configured;
+            lastSyncedAt = d.last_synced_at;
+            configError = d.config_error;
+            updateSyncBadge();
+            buildTree();
+        });
+    }
+
+    // ── Sync Now ─────────────────────────────────────────────
+    const toastEl = document.getElementById('syncToast');
+    let toastTimer = null;
+    function showToast(msg, isError) {
+        toastEl.textContent = msg;
+        toastEl.classList.toggle('error', !!isError);
+        toastEl.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toastEl.classList.remove('show'), isError ? 4000 : 2400);
+    }
+
+    function summarizeSync(d) {
+        if (d.status === 'error') return { msg: d.message || 'Sync failed.', error: true };
+        const parts = [];
+        if (d.pulled && d.pulled.length) parts.push(d.pulled.length + ' pulled');
+        if (d.pushed && d.pushed.length) parts.push(d.pushed.length + ' pushed');
+        if (d.deleted_local && d.deleted_local.length) parts.push(d.deleted_local.length + ' removed locally');
+        if (d.deleted_remote && d.deleted_remote.length) parts.push(d.deleted_remote.length + ' removed on GitHub');
+        const conflictCount = (d.conflicts || []).length;
+        const errorCount = (d.errors || []).length;
+        let msg = parts.length ? parts.join(', ') : 'Already up to date';
+        if (conflictCount) msg += ` — ${conflictCount} conflict${conflictCount > 1 ? 's' : ''} (saved as .conflict files)`;
+        if (errorCount) msg += ` — ${errorCount} error${errorCount > 1 ? 's' : ''}`;
+        return { msg, error: !!(conflictCount || errorCount) };
+    }
+
+    function runSync() {
+        if (syncInProgress) return;
+        if (!syncConfigured) {
+            showToast(configError || ('Not configured — edit ' + CONFIG_PATH), true);
+            return;
+        }
+        syncInProgress = true;
+        const btn = document.getElementById('syncNowBtn');
+        btn.classList.add('syncing');
+        btn.disabled = true;
+        fetch('/notes_sync/sync', { method: 'POST' })
+            .then(r => r.json())
+            .then(d => {
+                const { msg, error } = summarizeSync(d);
+                showToast(msg, error);
+                const treeChanged = d.status === 'ok' && (
+                    (d.pulled && d.pulled.length) ||
+                    (d.conflicts && d.conflicts.length) ||
+                    (d.deleted_local && d.deleted_local.length) ||
+                    (d.deleted_remote && d.deleted_remote.length)
+                );
+                if (treeChanged) {
+                    // The file listing itself changed (pulls/deletes/conflict copies) —
+                    // reload for a fully consistent tree/graph/editor state, after a
+                    // brief pause so the toast above is actually readable first.
+                    setTimeout(() => location.reload(), 1600);
+                } else {
+                    refreshSyncStatus();
+                }
+            })
+            .catch(() => showToast('Network error reaching the server.', true))
+            .finally(() => {
+                syncInProgress = false;
+                btn.classList.remove('syncing');
+                btn.disabled = false;
+            });
+    }
     let activeFolder = '';
     let originalPath = '';
     let saveTimer = null;
@@ -551,7 +706,7 @@
         if (query) params.set('q', query);
         if (activeDateFrom) params.set('from', activeDateFrom);
         if (activeDateTo) params.set('to', activeDateTo);
-        fetch('/notes/search?' + params.toString())
+        fetch('/notes_sync/search?' + params.toString())
             .then(r => r.json())
             .then(({ matches }) => {
                 matchingFiles = new Set(matches);
@@ -571,7 +726,7 @@
         calRangeStart = activeDateFrom;
         calRangeEnd = activeDateTo;
 
-        fetch('/notes/meta')
+        fetch('/notes_sync/meta')
             .then(r => r.json())
             .then(({ notes }) => {
                 calCounts = {};
@@ -705,7 +860,7 @@
         opts = opts || {};
         isPreview = mode === 'preview';
         if (isPreview) {
-            fetch('/notes/preview', {
+            fetch('/notes_sync/preview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ content: elContent.value })
@@ -877,7 +1032,7 @@
         const name = parts.pop().replace('.md', '');
         activeFolder = parts.join('/');
 
-        fetch(`/notes/load/${fullPath}`)
+        fetch(`/notes_sync/load/${fullPath}`)
             .then(r => r.json())
             .then(({ content }) => {
                 elTitle.value = name;
@@ -917,14 +1072,14 @@
         const newPath = activeFolder ? `${activeFolder}/${filename}` : filename;
 
         if (originalPath && newPath !== originalPath) {
-            await fetch('/notes/delete', {
+            await fetch('/notes_sync/delete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filename: originalPath })
             });
         }
 
-        fetch('/notes/save', {
+        fetch('/notes_sync/save', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filename: newPath, content: elContent.value })
@@ -938,6 +1093,7 @@
             } else {
                 originalPath = newPath;
                 loadGraphData();
+                refreshSyncStatus();
             }
         });
     }
@@ -956,7 +1112,7 @@
     }
 
     function openDailyNote() {
-        fetch('/notes/daily', { method: 'POST' })
+        fetch('/notes_sync/daily', { method: 'POST' })
             .then(r => r.json())
             .then(({ path }) => {
                 if (!files.includes(path)) {
@@ -964,6 +1120,7 @@
                     files.sort();
                     buildTree();
                 }
+                refreshSyncStatus();
                 const el = document.querySelector(`.file-item[data-path="${CSS.escape(path)}"]`);
                 loadNote(path, el);
             });
@@ -972,7 +1129,7 @@
     function deleteNote() {
         if (!originalPath) return;
         if (!confirm(`Delete "${originalPath}"?`)) return;
-        fetch('/notes/delete', {
+        fetch('/notes_sync/delete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ filename: originalPath })
@@ -980,6 +1137,7 @@
     }
 
     buildTree();
+    updateSyncBadge();
 
     // ═══════════════════════════════════════════════════════════
     // GRAPH VIEW — powered by D3-force + d3-zoom (see the <script src=
@@ -1011,7 +1169,7 @@
     var graphRendered = false;
 
     function loadGraphData() {
-        fetch('/notes/graph').then(function (r) { return r.json(); })
+        fetch('/notes_sync/graph').then(function (r) { return r.json(); })
             .then(function (data) {
                 graphNodesData = data.nodes;
                 graphLinksData = data.links;

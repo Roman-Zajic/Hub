@@ -187,6 +187,14 @@ body {
 {% endblock %}
 
 {% block content %}
+<script>
+  /* Evaluated by Jinja here, outside the raw-text section below (that
+     section exists so Jinja leaves the example markup's double-brace
+     pill syntax alone) — read by the rest of the script via these two
+     globals. */
+  window.SERVER_CONTENT    = {{ content | tojson }};
+  window.HAS_SAVED_CONTENT = {{ 'true' if has_saved_content else 'false' }};
+</script>
 {% raw %}
 <div class="wrap">
 
@@ -221,6 +229,7 @@ body {
       <button class="btn btn-outline btn-sm" data-action="signature">+ Signature</button>
     </div>
     <div class="tb-group" style="margin-left:auto">
+      <button class="btn btn-outline btn-sm" id="loadSampleBtn" title="Replace the current markup with the built-in example">Load Sample</button>
       <button class="btn btn-primary btn-sm" id="downloadBtn">Download .eml</button>
     </div>
   </div>
@@ -860,6 +869,26 @@ function buildStandaloneDoc(subject, parsed) {
 const markupEl = document.getElementById('markup');
 const frameEl  = document.getElementById('previewFrame');
 
+/* ── Server-side session content (see email.py) — set by the small
+   non-raw <script> block above, since Jinja doesn't run inside {% raw %}. */
+const SERVER_CONTENT     = window.SERVER_CONTENT;
+const HAS_SAVED_CONTENT  = window.HAS_SAVED_CONTENT;
+
+/* ── Autosave (debounced, same shape as audio_notes.html) ───────────── */
+let saveTimer = null;
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveContent, 800);
+}
+function saveContent() {
+  clearTimeout(saveTimer);
+  fetch('/api/email/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ content: markupEl.value })
+  }).catch(function () { /* best-effort — next debounced save will retry */ });
+}
+
 /* There's no separate Subject field any more -- the email's subject (used for the
    .eml file's Subject header and download filename) is simply the first H1 heading
    in the markup, the same way a reader would identify "what this email is about". */
@@ -873,6 +902,7 @@ function render() {
   const parsed = parseMarkup(markupEl.value);
   const subject = extractSubjectFromMarkup(markupEl.value);
   frameEl.srcdoc = buildStandaloneDoc(subject, parsed);
+  scheduleSave();
 }
 
 markupEl.addEventListener('input', render);
@@ -1056,6 +1086,13 @@ async function downloadEml() {
 
 document.getElementById('downloadBtn').addEventListener('click', function () { downloadEml(); });
 
+function loadSample() {
+  if (markupEl.value.trim() && !confirm('Replace the current markup with the built-in example? This can\'t be undone.')) return;
+  markupEl.value = EXAMPLE_MARKUP;
+  render();
+}
+document.getElementById('loadSampleBtn').addEventListener('click', loadSample);
+
 const EXAMPLE_MARKUP = [
 '[[logo: Email Composer — Component Reference]]\n\n',
 '# Email Composer\n\n',
@@ -1102,7 +1139,11 @@ const EXAMPLE_MARKUP = [
 ].join('');
 
 /* ── Init ───────────────────────────────────────────── */
-markupEl.value = EXAMPLE_MARKUP;
+/* Restore whatever was saved before the app was last closed. Only a fresh
+   install (nothing ever saved — HAS_SAVED_CONTENT is false) falls back to
+   the built-in example markup; once anything has been saved, even an
+   emptied composer is respected as-is rather than being replaced. */
+markupEl.value = HAS_SAVED_CONTENT ? SERVER_CONTENT : EXAMPLE_MARKUP;
 render();
 ensureLogoPng().then(function () { render(); });
 

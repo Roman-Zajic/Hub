@@ -129,6 +129,83 @@
 
         .card { background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; box-shadow: var(--shadow); }
         .section-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
+
+        /* ── TIMERS WIDGET (global — visible on every module page) ──
+           Small floating pill, bottom-right, showing a live count of
+           running timers plus the soonest-to-finish one's remaining
+           time. Click it to expand into the same full detail card the
+           Timers page itself uses. Hidden entirely when there are no
+           active (running/scheduled) timers. */
+        #tmWidget {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            z-index: 500;
+            display: none;
+            align-items: center;
+            gap: 10px;
+            background: var(--teal-900);
+            color: #fff;
+            border-radius: 30px;
+            padding: 10px 18px 10px 14px;
+            box-shadow: var(--shadow-md);
+            cursor: pointer;
+            font-family: var(--font);
+            transition: background 130ms;
+        }
+        #tmWidget:hover { background: var(--teal-700); }
+        #tmWidget.show { display: flex; }
+        #tmWidget .tm-w-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); flex-shrink: 0; animation: tmw-pulse 1.6s ease-in-out infinite; }
+        @keyframes tmw-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+        #tmWidget .tm-w-time { font-variant-numeric: tabular-nums; font-weight: 700; font-size: 0.9375rem; }
+        #tmWidget .tm-w-label { font-size: 0.75rem; color: var(--teal-100); max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        #tmWidget .tm-w-count { font-size: 0.6875rem; font-weight: 700; background: rgba(255,255,255,.18); border-radius: 20px; padding: 2px 8px; }
+
+        /* Reuses the same detail-modal visual language defined in
+           timers.html so the widget's expanded view looks identical to
+           opening a card from the Timers page itself — but this markup
+           lives here so it works from ANY module page. */
+        #tmWidgetOverlay { display: none; position: fixed; inset: 0; z-index: 600; background: rgba(1,45,44,0.5); align-items: center; justify-content: center; }
+        #tmWidgetOverlay.open { display: flex; }
+        #tmWidgetShell {
+            background: var(--surface-card); border-radius: 14px; border: 1px solid var(--border);
+            box-shadow: var(--shadow-md); width: 420px; max-width: 92vw; padding: 32px; position: relative;
+            display: flex; flex-direction: column; align-items: center; gap: 18px;
+            transition: width 200ms ease, height 200ms ease, border-radius 200ms ease;
+        }
+        #tmWidgetShell.maximized { width: 100vw; height: 100vh; max-width: 100vw; border-radius: 0; justify-content: center; }
+        #tmWidgetShell .tm-w-close, #tmWidgetShell .tm-w-max {
+            position: absolute; top: 14px; width: 34px; height: 34px; padding: 0 !important;
+            display: inline-flex; align-items: center; justify-content: center;
+            border-radius: 50%; background: var(--surface-card); box-shadow: var(--shadow);
+        }
+        #tmWidgetShell .tm-w-close { right: 14px; }
+        #tmWidgetShell .tm-w-max { right: 56px; }
+        #tmWidgetShell .tm-w-type {
+            font-size: 0.625rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+            background: rgba(0,130,130,.12); color: var(--teal-700); padding: 3px 10px; border-radius: 20px;
+        }
+        #tmWidgetShell .tm-w-name { font-size: 1.75rem; font-weight: 700; color: var(--ink); text-align: center; cursor: text; }
+        #tmWidgetShell .tm-w-clock { font-size: 4.5rem; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1; cursor: text; }
+        #tmWidgetShell.maximized .tm-w-clock { font-size: 8rem; }
+        #tmWidgetShell .tm-w-sub { font-size: 0.875rem; color: var(--text-muted); }
+        #tmWidgetShell .tm-w-progress-wrap { width: 100%; max-width: 320px; }
+        #tmWidgetShell .tm-w-progress-track { height: 7px; background: var(--surface-in); border-radius: 4px; overflow: hidden; }
+        #tmWidgetShell .tm-w-progress-fill { height: 100%; background: var(--amber); transition: width 0.4s linear; border-radius: 4px; }
+        #tmWidgetShell .tm-w-progress-fill.phase-break { background: var(--teal-400); }
+        #tmWidgetShell .tm-w-actions { display: flex; gap: 10px; align-items: center; }
+        #tmWidgetShell .tm-w-icon-btn { width: 34px !important; height: 34px !important; padding: 0 !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; }
+        #tmWidgetShell .tm-w-icon-btn svg { width: 15px; height: 15px; }
+        #tmWidgetShell .tm-w-sound-on  { color: var(--amber); border-color: var(--amber); }
+        #tmWidgetShell .tm-w-sound-off { color: var(--text-muted); }
+        #tmWidgetOtherList { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+        #tmWidgetOtherList .tm-w-other-row {
+            display: flex; align-items: center; justify-content: space-between; gap: 8px;
+            font-size: 0.75rem; color: var(--text-muted); padding: 6px 10px;
+            border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+        }
+        #tmWidgetOtherList .tm-w-other-row:hover { border-color: var(--teal-700); color: var(--text); }
+        .tm-w-inline-input { font-family: var(--font); outline: none; border: none; border-bottom: 2px solid var(--amber); background: transparent; border-radius: 0; text-align: center; }
     </style>
     {% block extra_css %}{% endblock %}
 </head>
@@ -163,5 +240,291 @@
             <div class="content-area">{% block content %}{% endblock %}</div>
         </main>
     </div>
+
+    <!-- ── TIMERS WIDGET markup (global) ── -->
+    <div id="tmWidget" onclick="tmOpenWidget()">
+        <span class="tm-w-dot"></span>
+        <span class="tm-w-time" id="tmWidgetTime">--:--</span>
+        <span class="tm-w-label" id="tmWidgetLabel"></span>
+        <span class="tm-w-count" id="tmWidgetCount" style="display:none"></span>
+    </div>
+
+    <div id="tmWidgetOverlay" onclick="tmWidgetOverlayClick(event)">
+        <div id="tmWidgetShell">
+            <button class="btn btn-outline btn-sm tm-w-max" onclick="tmToggleMaximize()" title="Maximize">
+                <svg viewBox="0 0 18 18" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="12" rx="1"></rect></svg>
+            </button>
+            <button class="btn btn-outline btn-sm tm-w-close" onclick="tmCloseWidget()">&#x2715;</button>
+            <div class="tm-w-type" id="tmWidgetType"></div>
+            <div class="tm-w-name" id="tmWidgetName" title="Click to rename"></div>
+            <div class="tm-w-clock" id="tmWidgetClock" title="Click to edit">--:--</div>
+            <div class="tm-w-sub" id="tmWidgetSub"></div>
+            <div class="tm-w-progress-wrap" id="tmWidgetProgressWrap">
+                <div class="tm-w-progress-track"><div class="tm-w-progress-fill" id="tmWidgetProgressFill" style="width:0%"></div></div>
+            </div>
+            <div class="tm-w-actions" id="tmWidgetActions"></div>
+            <div id="tmWidgetOtherList"></div>
+        </div>
+    </div>
+
+    <script>
+    // ═══════════════════════════════════════════════════════════════
+    //  GLOBAL TIMERS POLL LOOP — runs on every module page. This is the
+    //  ONLY place that polls /api/timers/list, so alarm sounds fire
+    //  exactly once no matter which page happens to be open (see the
+    //  comment in timers.py's list_route). Other pages (timers.html)
+    //  just listen for the 'timers:update' CustomEvent this dispatches.
+    // ═══════════════════════════════════════════════════════════════
+    (function () {
+        var latest = [];
+        var focusedId = null;   // which timer the expanded widget popup is showing, if open
+        var audioCtx = null;
+        var tmwEditing = false; // true while an inline name/time input in the widget has focus
+
+        var ICON_PLAY  = '<svg viewBox="0 0 18 18" fill="currentColor"><polygon points="5,3 15,9 5,15"></polygon></svg>';
+        var ICON_PAUSE = '<svg viewBox="0 0 18 18" fill="currentColor"><rect x="4" y="3" width="4" height="12"></rect><rect x="10" y="3" width="4" height="12"></rect></svg>';
+        var ICON_STOP  = '<svg viewBox="0 0 18 18" fill="currentColor"><rect x="4" y="4" width="10" height="10"></rect></svg>';
+        var ICON_BELL_ON  = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8a5 5 0 0 1 10 0c0 3 1 4 1 4H3s1-1 1-4Z"></path><path d="M7.5 14a1.5 1.5 0 0 0 3 0"></path></svg>';
+        var ICON_BELL_OFF = '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8a5 5 0 0 1 10 0c0 3 1 4 1 4H3s1-1 1-4Z"></path><path d="M7.5 14a1.5 1.5 0 0 0 3 0"></path><line x1="2" y1="2" x2="16" y2="16"></line></svg>';
+
+        // Browsers block audio until a real user gesture happens on the
+        // page. Any click anywhere unlocks it for the rest of the
+        // session (this listener then removes itself).
+        function unlockAudio() {
+            if (audioCtx) return;
+            try {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                window.__timersSoundReady = true;
+                window.dispatchEvent(new CustomEvent('timers:sound-ready'));
+            } catch (e) { /* ignore */ }
+        }
+        document.addEventListener('click', unlockAudio, { once: true });
+
+        function beep() {
+            if (!audioCtx) return;
+            var t0 = audioCtx.currentTime;
+            [0, 0.18, 0.36].forEach(function (delay) {
+                var osc = audioCtx.createOscillator();
+                var gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.value = 880;
+                gain.gain.setValueAtTime(0.0001, t0 + delay);
+                gain.gain.exponentialRampToValueAtTime(0.25, t0 + delay + 0.01);
+                gain.gain.exponentialRampToValueAtTime(0.0001, t0 + delay + 0.15);
+                osc.connect(gain).connect(audioCtx.destination);
+                osc.start(t0 + delay);
+                osc.stop(t0 + delay + 0.16);
+            });
+        }
+
+        function fmtClock(totalSeconds) {
+            totalSeconds = Math.max(0, Math.round(totalSeconds));
+            var h = Math.floor(totalSeconds / 3600), m = Math.floor((totalSeconds % 3600) / 60), s = totalSeconds % 60;
+            var p2 = function (n) { return n < 10 ? '0' + n : '' + n; };
+            return h > 0 ? (h + ':' + p2(m) + ':' + p2(s)) : (p2(m) + ':' + p2(s));
+        }
+
+        function parseDurationInput(str) {
+            str = (str || '').trim();
+            if (!str) return null;
+            if (str.indexOf(':') === -1) {
+                var mins = parseFloat(str);
+                return isNaN(mins) ? null : Math.round(mins * 60);
+            }
+            var parts = str.split(':').map(function (p) { return parseInt(p, 10); });
+            if (parts.some(isNaN)) return null;
+            var seconds = 0;
+            for (var i = 0; i < parts.length; i++) seconds = seconds * 60 + parts[i];
+            return seconds;
+        }
+
+        function isActive(t) { return t.status === 'running' || t.status === 'scheduled'; }
+
+        function pickHeadline(timers) {
+            var active = timers.filter(isActive);
+            if (!active.length) return null;
+            var withRemaining = active.filter(function (t) { return t.remaining_seconds !== undefined; });
+            withRemaining.sort(function (a, b) { return a.remaining_seconds - b.remaining_seconds; });
+            return withRemaining[0] || active[0];
+        }
+
+        function renderPill() {
+            var pill = document.getElementById('tmWidget');
+            var active = latest.filter(isActive);
+            if (!active.length) { pill.classList.remove('show'); return; }
+            pill.classList.add('show');
+            var head = pickHeadline(latest);
+            document.getElementById('tmWidgetTime').textContent = head.remaining_seconds !== undefined ? fmtClock(head.remaining_seconds) : (head.config && head.config.time) || '';
+            document.getElementById('tmWidgetLabel').textContent = head.name;
+            var countEl = document.getElementById('tmWidgetCount');
+            if (active.length > 1) { countEl.style.display = 'inline-block'; countEl.textContent = '+' + (active.length - 1) + ' more'; }
+            else { countEl.style.display = 'none'; }
+        }
+
+        function progressPct(t) {
+            if (t.phase_seconds) return Math.min(100, (t.elapsed_seconds / t.phase_seconds) * 100);
+            return 0;
+        }
+
+        var TYPE_LABELS = { countdown: 'Countdown', pomodoro: 'Pomodoro', alarm: 'Alarm' };
+
+        function findTimer(id) { return latest.find(function (x) { return x.id === id; }); }
+
+        function cardTimeAndSub(t) {
+            if (t.type === 'countdown') return { time: fmtClock(t.remaining_seconds), sub: '' };
+            if (t.type === 'pomodoro') return { time: fmtClock(t.remaining_seconds), sub: (t.phase === 'work' ? 'Work' : 'Break') };
+            if (t.type === 'alarm') return { time: t.config.time, sub: '' };
+            return { time: '--:--', sub: '' };
+        }
+
+        function renderExpanded() {
+            if (!focusedId || tmwEditing) return;
+            var t = findTimer(focusedId);
+            if (!t) { tmCloseWidget(); return; }
+            var isCountLike = (t.type === 'countdown' || t.type === 'pomodoro');
+            var tv = cardTimeAndSub(t);
+
+            document.getElementById('tmWidgetType').textContent = TYPE_LABELS[t.type];
+            document.getElementById('tmWidgetName').textContent = t.name;
+            document.getElementById('tmWidgetClock').textContent = tv.time;
+            document.getElementById('tmWidgetSub').textContent = tv.sub + (tv.sub ? '  \u2014  ' : '') + t.status;
+
+            document.getElementById('tmWidgetProgressWrap').style.display = isCountLike ? 'block' : 'none';
+            if (isCountLike) {
+                var fill = document.getElementById('tmWidgetProgressFill');
+                fill.style.width = progressPct(t) + '%';
+                fill.className = 'tm-w-progress-fill' + (t.phase === 'break' ? ' phase-break' : '');
+            }
+
+            var actions = document.getElementById('tmWidgetActions');
+            actions.innerHTML = '';
+            function mkBtn(html, cls, title, fn) {
+                var b = document.createElement('button');
+                b.className = cls + ' tm-w-icon-btn'; b.innerHTML = html; b.title = title; b.onclick = fn;
+                return b;
+            }
+            if (isCountLike) {
+                actions.appendChild(t.status === 'running'
+                    ? mkBtn(ICON_PAUSE, 'btn btn-primary', 'Pause', function () { tmAction(t.id, 'pause'); })
+                    : mkBtn(ICON_PLAY, 'btn btn-primary', t.status === 'paused' ? 'Resume' : 'Start', function () { tmAction(t.id, 'start'); }));
+                actions.appendChild(mkBtn(ICON_STOP, 'btn btn-outline', 'Stop', function () { tmAction(t.id, 'stop'); }));
+            } else {
+                actions.appendChild((t.status === 'stopped' || t.status === 'completed')
+                    ? mkBtn(ICON_PLAY, 'btn btn-primary', 'Enable', function () { tmAction(t.id, 'enable'); })
+                    : mkBtn(ICON_STOP, 'btn btn-outline', 'Disable', function () { tmAction(t.id, 'stop'); }));
+            }
+            actions.appendChild(mkBtn(t.sound_enabled ? ICON_BELL_ON : ICON_BELL_OFF, 'btn btn-outline' + (t.sound_enabled ? ' tm-w-sound-on' : ' tm-w-sound-off'), 'Toggle sound', function () { tmToggleSound(t.id); }));
+
+            var otherList = document.getElementById('tmWidgetOtherList');
+            var others = latest.filter(function (x) { return x.id !== t.id && isActive(x); });
+            otherList.innerHTML = others.map(function (o) {
+                var timeStr = o.remaining_seconds !== undefined ? fmtClock(o.remaining_seconds) : (o.config.time || '');
+                return '<div class="tm-w-other-row" onclick="tmFocus(\'' + o.id + '\')"><span>' + o.name + '</span><span>' + timeStr + '</span></div>';
+            }).join('');
+        }
+
+        window.tmOpenWidget = function () {
+            var head = pickHeadline(latest);
+            if (!head) return;
+            focusedId = head.id;
+            renderExpanded();
+            document.getElementById('tmWidgetOverlay').classList.add('open');
+        };
+        window.tmCloseWidget = function () {
+            document.getElementById('tmWidgetOverlay').classList.remove('open');
+            document.getElementById('tmWidgetShell').classList.remove('maximized');
+            focusedId = null;
+        };
+        window.tmWidgetOverlayClick = function (e) { if (e.target.id === 'tmWidgetOverlay') tmCloseWidget(); };
+        window.tmToggleMaximize = function () { document.getElementById('tmWidgetShell').classList.toggle('maximized'); };
+        window.tmFocus = function (id) { focusedId = id; renderExpanded(); };
+        window.tmAction = function (id, action) { fetch('/api/timers/' + id + '/' + action, { method: 'POST' }); };
+        window.tmToggleSound = function (id) {
+            var t = findTimer(id);
+            if (!t) return;
+            fetch('/api/timers/' + id + '/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sound_enabled: !t.sound_enabled }) });
+        };
+
+        // ── Inline (no-popup) edit for the widget's name/time, mirroring
+        // timers.html's behavior exactly — editing a running countdown/
+        // pomodoro's time adjusts its current remaining/elapsed time, not
+        // the originally configured duration. ──
+        function beginNameEdit() {
+            if (tmwEditing) return;
+            var t = findTimer(focusedId);
+            if (!t) return;
+            tmwEditing = true;
+            var displayEl = document.getElementById('tmWidgetName');
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'tm-w-inline-input';
+            input.style.font = 'inherit'; input.style.fontWeight = '700'; input.style.fontSize = '1.75rem'; input.style.width = '100%';
+            input.value = t.name;
+            displayEl.replaceWith(input);
+            input.focus(); input.select();
+            function finish(commit) {
+                tmwEditing = false;
+                var val = input.value.trim();
+                input.replaceWith(displayEl);
+                if (commit && val && val !== t.name) {
+                    fetch('/api/timers/' + t.id + '/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: val }) })
+                        .then(poll);
+                } else {
+                    renderExpanded();
+                }
+            }
+            input.addEventListener('keydown', function (e) { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+            input.addEventListener('blur', function () { finish(true); });
+        }
+
+        function beginTimeEdit() {
+            if (tmwEditing) return;
+            var t = findTimer(focusedId);
+            if (!t) return;
+            tmwEditing = true;
+            var displayEl = document.getElementById('tmWidgetClock');
+            var input = document.createElement('input');
+            input.className = 'tm-w-inline-input';
+            input.style.font = 'inherit'; input.style.fontWeight = '700'; input.style.width = '100%';
+            input.style.fontSize = document.getElementById('tmWidgetShell').classList.contains('maximized') ? '8rem' : '4.5rem';
+            if (t.type === 'alarm') { input.type = 'time'; input.value = t.config.time; }
+            else { input.type = 'text'; input.inputMode = 'numeric'; input.value = fmtClock(t.remaining_seconds); }
+            displayEl.replaceWith(input);
+            input.focus(); input.select();
+            function finish(commit) {
+                tmwEditing = false;
+                var raw = input.value;
+                input.replaceWith(displayEl);
+                if (!commit) { renderExpanded(); return; }
+                if (t.type === 'alarm') {
+                    if (!raw) { renderExpanded(); return; }
+                    fetch('/api/timers/' + t.id + '/edit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ config: { time: raw } }) }).then(poll);
+                } else {
+                    var seconds = parseDurationInput(raw);
+                    if (seconds === null) { renderExpanded(); return; }
+                    fetch('/api/timers/' + t.id + '/set_remaining', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ seconds: seconds }) }).then(poll);
+                }
+            }
+            input.addEventListener('keydown', function (e) { if (e.key === 'Enter') finish(true); if (e.key === 'Escape') finish(false); });
+            input.addEventListener('blur', function () { finish(true); });
+        }
+
+        document.getElementById('tmWidgetName').addEventListener('click', beginNameEdit);
+        document.getElementById('tmWidgetClock').addEventListener('click', beginTimeEdit);
+
+        function poll() {
+            return fetch('/api/timers/list').then(function (r) { return r.json(); }).then(function (data) {
+                latest = data.timers || [];
+                (data.events || []).forEach(function (ev) { if (ev.sound) beep(); });
+                renderPill();
+                if (!tmwEditing) renderExpanded();
+                window.dispatchEvent(new CustomEvent('timers:update', { detail: data }));
+            }).catch(function () { /* Timers module not installed, or a transient network error — stay quiet */ });
+        }
+
+        poll();
+        setInterval(poll, 1000);
+    })();
+    </script>
 </body>
 </html>

@@ -19,6 +19,7 @@
     }
     .nav-controls { display: flex; gap: 4px; align-items: center; margin-left: auto; }
     .change-count { font-size: 0.8125rem; color: var(--text-muted); font-weight: 600; margin-right: 8px; }
+    .save-status { font-size: 0.6875rem; color: var(--teal-400); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; }
 
     /* ── Input area ─────────────────────────────────────────── */
     .input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; flex: 1; min-height: 0; }
@@ -97,6 +98,7 @@
     <div class="compare-actions">
         <button class="btn btn-primary" onclick="runCompare()">Compare</button>
         <button class="btn btn-outline" onclick="resetCompare()">New Comparison</button>
+        <span class="save-status" id="saveStatus"></span>
 
         <div class="nav-controls" id="diffNav" style="display:none">
             <span class="change-count" id="changeStat"></span>
@@ -109,11 +111,11 @@
     <div class="input-grid" id="inputArea">
         <div class="input-box">
             <label>Original</label>
-            <textarea id="leftText"  class="compare-textarea" placeholder="Paste original code here…"></textarea>
+            <textarea id="leftText"  class="compare-textarea" placeholder="Paste original code here…" oninput="scheduleSave()"></textarea>
         </div>
         <div class="input-box">
             <label>Modified</label>
-            <textarea id="rightText" class="compare-textarea" placeholder="Paste modified code here…"></textarea>
+            <textarea id="rightText" class="compare-textarea" placeholder="Paste modified code here…" oninput="scheduleSave()"></textarea>
         </div>
     </div>
 
@@ -130,6 +132,10 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsdiff/5.1.0/diff.min.js"></script>
 <script>
+    // ── Server-persisted content (Compare Data/content.json — see compare.py) ──
+    const initialLeft  = {{ left | tojson }};
+    const initialRight = {{ right | tojson }};
+
     // ── State ────────────────────────────────────────────────
     let changes      = [];   // [{leftRow, rightRow}]
     let activeChange = -1;
@@ -139,6 +145,34 @@
     const rightPanel = document.getElementById('rightPanel');
     const leftDiff   = document.getElementById('leftDiff');
     const rightDiff  = document.getElementById('rightDiff');
+    const leftTextEl  = document.getElementById('leftText');
+    const rightTextEl = document.getElementById('rightText');
+    const saveStatusEl = document.getElementById('saveStatus');
+
+    // Restore whatever was saved before the app was last closed.
+    leftTextEl.value  = initialLeft;
+    rightTextEl.value = initialRight;
+
+    // ── Autosave (debounced, same shape as audio_notes.html) ───
+    let saveTimer = null;
+    function scheduleSave() {
+        saveStatusEl.textContent = 'Saving\u2026';
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveCompareData, 800);
+    }
+    function saveCompareData() {
+        clearTimeout(saveTimer);
+        fetch('/api/compare/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ left: leftTextEl.value, right: rightTextEl.value })
+        }).then(function () {
+            saveStatusEl.textContent = 'Saved';
+            setTimeout(function () { saveStatusEl.textContent = ''; }, 1500);
+        }).catch(function () {
+            saveStatusEl.textContent = 'Save failed';
+        });
+    }
 
     // ── Scroll sync ──────────────────────────────────────────
     // Use a single flag to prevent infinite mutual triggering
@@ -187,8 +221,8 @@
 
     // ── Core diff ────────────────────────────────────────────
     function runCompare() {
-        const oldText = document.getElementById('leftText').value;
-        const newText = document.getElementById('rightText').value;
+        const oldText = leftTextEl.value;
+        const newText = rightTextEl.value;
 
         leftDiff.innerHTML  = '';
         rightDiff.innerHTML = '';

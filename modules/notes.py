@@ -324,6 +324,17 @@ def preview_note():
     # Match ``` followed by anything (including newlines) until the next ```
     content = re.sub(r'```[\s\S]*?```', extract_code, content)
 
+    # 1.2. H1 collapse-state marker: "#+ Heading" starts expanded (same as
+    # plain "# Heading" — this is just the explicit form), "#- Heading"
+    # starts collapsed. Rewritten here into the attr_list syntax python-
+    # markdown understands ("# Heading {: .collapsed}"), which attr_list
+    # (enabled below) turns into class="collapsed" on the rendered <h1>;
+    # attachH1Sections() in notes.html reads that class to pick the
+    # section's default state. Done after code-block extraction so a "#-"
+    # or "#+" typed inside a code sample is never mistaken for a marker.
+    content = re.sub(r'^#\+ +(.+)$', r'# \1', content, flags=re.MULTILINE)
+    content = re.sub(r'^#- +(.+)$', r'# \1 {: .collapsed}', content, flags=re.MULTILINE)
+
     # 1.5. Convert [[wiki links]] into a custom "note:" scheme link, so the
     # front-end can intercept clicks and jump between notes. Inline
     # `single-backtick` code spans are protected first, so literal [[ ]]
@@ -369,8 +380,16 @@ def preview_note():
         content = content.replace(f"__MAGIC_CODE_BLOCK_{i}__", f"\n\n{code}\n\n")
 
     # 5. Render to HTML
-    extensions = ['fenced_code', 'tables', 'extra', 'toc', ChecklistExtension(), 'admonition']
-    html = markdown.markdown(content, extensions=extensions)
+    # attr_list lets a heading opt into starting collapsed, e.g.
+    # "# Heading {: .collapsed}" -> <h1 class="collapsed">Heading</h1>.
+    # attachH1Sections() in notes.html reads that class to decide the
+    # section's default expanded/collapsed state (plain "# Heading" with
+    # no marker still defaults to expanded, same as before).
+    extensions = ['fenced_code', 'tables', 'extra', 'toc', ChecklistExtension(), 'admonition', 'attr_list']
+    # toc_depth=1 restricts [TOC] to H1 headings only — H2/H3 etc. are left
+    # out of the generated table of contents.
+    extension_configs = {'toc': {'toc_depth': 1}}
+    html = markdown.markdown(content, extensions=extensions, extension_configs=extension_configs)
 
     # External links (http/https) open in a new tab by default. Internal
     # note: links are left alone — the front-end intercepts those clicks

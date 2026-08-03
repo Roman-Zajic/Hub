@@ -288,7 +288,7 @@ def _gh_headers(token):
 def _gh_get_tree(owner, repo, branch, token):
     import requests
     url = f'{GITHUB_API}/repos/{owner}/{repo}/git/trees/{branch}'
-    r = requests.get(url, headers=_gh_headers(token), params={'recursive': '1'}, timeout=30)
+    r = requests.get(url, headers=_gh_headers(token), params={'recursive': '1'}, timeout=30, verify=False)
     if r.status_code == 404:
         raise RuntimeError(f'Repo or branch not found ({owner}/{repo}@{branch}). Check Settings.')
     if r.status_code == 401:
@@ -304,7 +304,7 @@ def _gh_get_tree(owner, repo, branch, token):
 def _gh_get_blob(owner, repo, sha, token):
     import requests
     url = f'{GITHUB_API}/repos/{owner}/{repo}/git/blobs/{sha}'
-    r = requests.get(url, headers=_gh_headers(token), timeout=30)
+    r = requests.get(url, headers=_gh_headers(token), timeout=30, verify=False)
     r.raise_for_status()
     data = r.json()
     content = data.get('content', '')
@@ -323,7 +323,7 @@ def _gh_put_file(owner, repo, path, branch, token, text, message, sha=None):
     }
     if sha:
         body['sha'] = sha
-    r = requests.put(url, headers=_gh_headers(token), json=body, timeout=30)
+    r = requests.put(url, headers=_gh_headers(token), json=body, timeout=30, verify=False)
     if not r.ok:
         raise RuntimeError(f'GitHub rejected the update for "{path}": {r.status_code} {r.text[:200]}')
     return r.json()['content']['sha']
@@ -333,7 +333,7 @@ def _gh_delete_file(owner, repo, path, branch, token, sha, message):
     import requests
     url = f'{GITHUB_API}/repos/{owner}/{repo}/contents/{path}'
     body = {'message': message, 'sha': sha, 'branch': branch}
-    r = requests.delete(url, headers=_gh_headers(token), json=body, timeout=30)
+    r = requests.delete(url, headers=_gh_headers(token), json=body, timeout=30, verify=False)
     if not r.ok:
         raise RuntimeError(f'GitHub rejected the delete for "{path}": {r.status_code} {r.text[:200]}')
 

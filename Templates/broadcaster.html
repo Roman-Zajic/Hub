@@ -1,0 +1,914 @@
+{% extends 'layout.html' %}
+{% block module_name %}Broadcaster{% endblock %}
+
+{% block extra_css %}
+<style>
+.bc-root { display: flex; flex-direction: column; gap: 0; min-height: 100%; }
+
+/* ── Collapsible section (same pattern as Time Monitor / Data Analysis) ── */
+.section {
+    border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-card);
+    box-shadow: var(--shadow); overflow: hidden; margin-bottom: 10px; flex-shrink: 0;
+}
+.section-body { display: none; }
+.section.expanded .section-body { display: block; }
+.section-head {
+    display: flex; align-items: center; gap: 10px; padding: 13px 18px; cursor: pointer; user-select: none;
+    background: var(--surface-card); transition: background 130ms; border-bottom: 1px solid transparent;
+    min-height: 56px; box-sizing: border-box;
+}
+.section-head:hover { background: var(--surface-in); }
+.section.expanded .section-head { border-bottom-color: var(--border); }
+.section-title { font-size: 0.9375rem; font-weight: 600; color: var(--text); white-space: nowrap; }
+.section-head-actions { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.section-chevron { width: 20px; height: 20px; color: var(--teal-400); flex-shrink: 0; transition: transform 200ms ease; }
+.section.expanded .section-chevron { transform: rotate(180deg); }
+.section-inner { padding: 16px 18px; display: flex; flex-direction: column; gap: 14px; }
+
+/* ── Button sizing — every small button and icon button in this module
+   is exactly 30px tall, matching the icon-button convention used in
+   Time Monitor / Timers (.nav-arrow-btn / .tm-icon-btn are 30x30). ── */
+.bc-root .btn.btn-sm { height: 30px; box-sizing: border-box; }
+.bc-icon-btn { width: 30px !important; height: 30px !important; padding: 0 !important; flex: 0 0 auto !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; }
+.bc-icon-btn svg { width: 14px; height: 14px; }
+
+/* Compact 30px-tall inputs/selects — the plain .input class (from
+   layout.html) inherits the page's 1.6 line-height and comes out ~40px
+   tall, which is what made the element-fields row look mismatched
+   against the 30px buttons next to it. */
+.bc-compact { height: 30px; box-sizing: border-box; padding: 0 8px; font-size: 0.8125rem; line-height: 30px; }
+select.bc-compact { padding: 0 6px; }
+
+/* ── Live Preview + Sound Board side by side ─────────────────────── */
+.bc-top-row { display: flex; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
+.bc-top-row .section { flex: 1; min-width: 0; margin-bottom: 0; }
+
+.bc-status-pill {
+    height: 30px; box-sizing: border-box; display: inline-flex; align-items: center;
+    font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+    padding: 0 10px; border-radius: 20px; line-height: 1;
+}
+.bc-status-pill.live { background: rgba(196,30,58,.10); color: var(--red); }
+.bc-status-pill.off { background: var(--surface-in); color: var(--text-muted); }
+
+.bc-preview-wrap {
+    width: 460px; max-width: 100%; background: #000; border-radius: var(--r); overflow: hidden;
+    border: 1px solid var(--border); box-shadow: var(--shadow); aspect-ratio: 16/9; display: flex;
+}
+.bc-preview-wrap.fullscreen { width: 100%; height: 100%; aspect-ratio: auto; }
+.bc-preview-wrap img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.bc-current-scene { font-size: 0.75rem; color: var(--text-muted); }
+.bc-current-scene strong { color: var(--text); }
+.bc-error-msg { font-size: 0.75rem; color: var(--red); line-height: 1.5; }
+.bc-record-row { display: flex; align-items: center; gap: 8px; }
+.bc-rec-status { font-size: 0.75rem; font-weight: 600; color: var(--red); font-variant-numeric: tabular-nums; }
+
+/* ── Full screen preview overlay ─────────────────────────────────── */
+.bc-fullscreen-overlay {
+    display: none; position: fixed; inset: 0; z-index: 600;
+    background: var(--surface-page); padding: 20px; flex-direction: column; gap: 14px;
+}
+.bc-fullscreen-overlay.open { display: flex; }
+.bc-fullscreen-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+.bc-fullscreen-body { flex: 1; min-height: 0; display: flex; }
+
+/* ── Scenes grid ──────────────────────────────────────────────────── */
+.bc-scene-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.bc-scene-card {
+    border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-card);
+    box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column;
+    transition: border-color 130ms;
+}
+.bc-scene-card.current { border-color: var(--teal-700); box-shadow: 0 0 0 2px rgba(0,130,130,.18); }
+.bc-scene-card-thumb {
+    height: 100px; background: var(--surface-in); display: flex; align-items: center; justify-content: center;
+    color: var(--teal-400); font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    background-size: cover; background-position: center;
+}
+.bc-scene-card-body { padding: 10px 12px; }
+.bc-scene-card-name { font-size: 0.875rem; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bc-scene-card-actions { display: flex; gap: 6px; padding: 0 12px 12px; }
+.bc-scene-card-actions .btn { flex: 1; }
+.bc-add-scene-btn {
+    border: 1px dashed var(--teal-700); border-radius: var(--r); background: none; color: var(--text-muted);
+    cursor: pointer; min-height: 146px; display: flex; align-items: center; justify-content: center;
+    font-size: 0.8125rem; font-weight: 600; font-family: var(--font); transition: background 130ms, color 130ms;
+}
+.bc-add-scene-btn:hover { background: var(--surface-in); color: var(--teal-700); }
+
+/* ── Sound board ──────────────────────────────────────────────────── */
+.bc-sound-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+.bc-sound-tile {
+    position: relative; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-card);
+    box-shadow: var(--shadow); padding: 16px 10px; cursor: pointer; text-align: center;
+    font-size: 0.8125rem; font-weight: 600; color: var(--text); transition: border-color 130ms, background 130ms;
+}
+.bc-sound-tile:hover { border-color: var(--teal-700); background: var(--surface-in); }
+.bc-sound-tile:active { background: var(--teal-100); }
+.bc-sound-tile .bc-sound-del {
+    position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; border-radius: 50%;
+    background: var(--surface-in); color: var(--text-muted); border: none; cursor: pointer;
+    display: none; align-items: center; justify-content: center; font-size: 0.625rem;
+}
+.bc-sound-tile:hover .bc-sound-del { display: inline-flex; }
+.bc-add-sound-tile {
+    border: 1px dashed var(--teal-700); border-radius: var(--r); background: none; color: var(--text-muted);
+    cursor: pointer; padding: 16px 10px; font-size: 0.8125rem; font-weight: 600; font-family: var(--font);
+    transition: background 130ms, color 130ms;
+}
+.bc-add-sound-tile:hover { background: var(--surface-in); color: var(--teal-700); }
+
+/* ── Setup grid ───────────────────────────────────────────────────── */
+.bc-setup-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 24px; }
+.field-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.06em; }
+.field-row { display: flex; flex-direction: column; }
+.bc-toggle-inline { display: flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--text); }
+.bc-toggle-inline input { accent-color: var(--teal-700); width: 15px; height: 15px; }
+
+/* ── Modal (Add/Edit Scene) ──────────────────────────────────────── */
+.overlay { display: none; position: fixed; inset: 0; z-index: 200; background: rgba(1,45,44,0.32); align-items: center; justify-content: center; }
+.overlay.open { display: flex; }
+.modal { background: var(--surface-card); border-radius: 12px; width: 600px; max-width: 96vw; max-height: 92vh; display: flex; flex-direction: column; box-shadow: var(--shadow-md); border: 1px solid var(--border); }
+.modal-head { display: flex; align-items: flex-start; padding: 14px 20px; border-bottom: 1px solid var(--border); gap: 12px; }
+.modal-title { font-weight: 600; font-size: 0.9375rem; color: var(--text); flex: 1; }
+.modal-body { flex: 1; overflow-y: auto; padding: 14px 20px; display: flex; flex-direction: column; gap: 10px; }
+.modal-foot { padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; }
+.bc-row-2col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+/* ── Layout designer (drag/resize element boxes) ─────────────────── */
+.bc-designer-block { display: flex; flex-direction: column; gap: 8px; }
+.bc-designer-toolbar { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.bc-canvas-wrap {
+    background: var(--surface-in); border: 1px solid var(--border); border-radius: 8px;
+    position: relative; overflow: hidden; user-select: none;
+    width: 100%; max-width: 440px; aspect-ratio: 16/9; margin: 0 auto;
+}
+.bc-canvas-wrap[title] { cursor: default; }
+.bc-box {
+    position: absolute; border: 2px solid var(--teal-400); background: rgba(0,130,130,.14);
+    box-sizing: border-box; cursor: move; min-width: 20px; min-height: 20px;
+}
+.bc-box.selected { border-color: var(--amber); background: rgba(225,160,30,.16); z-index: 5; }
+.bc-box-label {
+    position: absolute; top: 0; left: 0; background: var(--teal-700); color: #fff; font-size: 0.625rem;
+    font-weight: 700; padding: 2px 6px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.bc-box.selected .bc-box-label { background: var(--amber); color: var(--ink); }
+.bc-box-del {
+    position: absolute; top: 2px; right: 2px; width: 16px; height: 16px; border-radius: 50%; border: none;
+    background: rgba(1,45,44,.55); color: #fff; font-size: 0.5625rem; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center;
+}
+.bc-box-resize {
+    position: absolute; right: -4px; bottom: -4px; width: 12px; height: 12px; border-radius: 3px;
+    background: var(--teal-700); cursor: nwse-resize;
+}
+.bc-box.selected .bc-box-resize { background: var(--amber); }
+
+.bc-element-fields { display: none; border: 1px solid var(--border); border-radius: 8px; padding: 10px; gap: 8px; flex-direction: column; }
+.bc-element-fields.show { display: flex; }
+.bc-element-fields-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.bc-element-fields-row label { font-size: 0.75rem; color: var(--text-muted); white-space: nowrap; }
+.bc-num-input { width: 52px; }
+.bc-empty-hint { font-size: 0.75rem; color: var(--text-muted); text-align: center; padding: 4px; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bc-root">
+
+    <!-- ════════════════════════════════════════════════════════
+         LIVE PREVIEW  +  SOUND BOARD  (side by side)
+    ════════════════════════════════════════════════════════ -->
+    <div class="bc-top-row">
+
+        <div class="section expanded" id="sec-preview">
+            <div class="section-head" onclick="toggleSection('preview')">
+                <span class="section-title">Live Preview</span>
+                <div class="section-head-actions">
+                    <span class="bc-status-pill off" id="statusPill">Off Air</span>
+                    <button class="btn btn-primary btn-sm" id="toggleBtn" onclick="event.stopPropagation(); toggleBroadcast()">Start Broadcast</button>
+                    <button type="button" class="btn btn-outline btn-sm bc-icon-btn" title="Full screen" onclick="event.stopPropagation(); openPreviewFullscreen()">
+                        <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="12" rx="1"></rect></svg>
+                    </button>
+                    <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+                </div>
+            </div>
+            <div class="section-body">
+                <div class="section-inner">
+                    <div class="bc-preview-wrap" id="previewWrapEl">
+                        <img id="previewImg" src="/broadcaster/preview.mjpg" alt="Live preview">
+                    </div>
+                    <div class="bc-record-row">
+                        <button class="btn btn-outline btn-sm" id="recordBtn" onclick="toggleRecord()" disabled>Record</button>
+                        <span class="bc-rec-status" id="recStatus"></span>
+                    </div>
+                    <div class="bc-current-scene">Scene: <strong id="currentSceneLabel">None</strong></div>
+                    <div class="bc-error-msg" id="errorMsg"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section expanded" id="sec-sounds">
+            <div class="section-head" onclick="toggleSection('sounds')">
+                <span class="section-title">Sound Board</span>
+                <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+            </div>
+            <div class="section-body">
+                <div class="section-inner">
+                    <div class="bc-sound-grid" id="soundGrid"></div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         SCENES
+    ════════════════════════════════════════════════════════ -->
+    <div class="section expanded" id="sec-scenes">
+        <div class="section-head" onclick="toggleSection('scenes')">
+            <span class="section-title">Scenes</span>
+            <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+        </div>
+        <div class="section-body">
+            <div class="section-inner">
+                <div class="bc-scene-grid" id="sceneGrid"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ════════════════════════════════════════════════════════
+         SETUP
+    ════════════════════════════════════════════════════════ -->
+    <div class="section" id="sec-setup">
+        <div class="section-head" onclick="toggleSection('setup')">
+            <span class="section-title">Setup</span>
+            <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+        </div>
+        <div class="section-body">
+            <div class="section-inner">
+                <div class="bc-setup-grid">
+                    <div class="field-row">
+                        <div class="field-label">Camera</div>
+                        <select class="input" id="cfgCamera"></select>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-label">Monitor (for Desktop boxes)</div>
+                        <select class="input" id="cfgMonitor"></select>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-label">Mic-injection device (sound board)</div>
+                        <select class="input" id="cfgMicDevice">
+                            <option value="">Auto-detect (CABLE Input)</option>
+                        </select>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-label">Quality</div>
+                        <select class="input" id="cfgQuality">
+                            <option value="low">Low (640x360, 24fps)</option>
+                            <option value="balanced" selected>Balanced (1280x720, 30fps)</option>
+                            <option value="high">High (1920x1080, 30fps)</option>
+                        </select>
+                    </div>
+                </div>
+                <label class="bc-toggle-inline"><input type="checkbox" id="cfgMirror"> Mirror camera (flip horizontally)</label>
+                <div>
+                    <button class="btn btn-primary btn-sm" onclick="saveConfig()">Save Setup</button>
+                    <span class="bc-error-msg" id="setupSaveStatus" style="color:var(--teal-400)"></span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<!-- ── Full screen preview overlay ── -->
+<div class="bc-fullscreen-overlay" id="previewFullscreenOverlay">
+    <div class="bc-fullscreen-head">
+        <span class="section-title">Live Preview</span>
+        <button type="button" class="btn btn-outline btn-sm" onclick="closePreviewFullscreen()">Exit Full Screen</button>
+    </div>
+    <div class="bc-fullscreen-body" id="previewFullscreenBody"></div>
+</div>
+
+<!-- ── Add/Edit Scene modal ── -->
+<div class="overlay" id="sceneOverlay" onclick="sceneOverlayClick(event)">
+    <div class="modal">
+        <div class="modal-head">
+            <div class="modal-title" id="sceneModalTitle">New Scene</div>
+            <button class="btn btn-outline btn-sm" onclick="closeSceneModal()">&#x2715;</button>
+        </div>
+        <div class="modal-body">
+            <input type="text" id="fSceneName" class="input" placeholder="Scene name (e.g. Welcome Slide)">
+
+            <div class="field-row" id="templatePickerRow" style="display:none">
+                <div class="field-label">Start from template (optional)</div>
+                <select class="input" id="fTemplatePicker" onchange="applyTemplateToModal()">
+                    <option value="">Blank scene</option>
+                </select>
+            </div>
+
+            <div class="bc-designer-block">
+                <div class="bc-designer-toolbar">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="materialFileInput.click()">Upload Image</button>
+                    <input type="file" id="materialFileInput" accept="image/*" style="display:none">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="addElementBox()">Add Box</button>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="saveAsTemplate()">Save as Template</button>
+                </div>
+                <div class="bc-canvas-wrap" id="canvasWrap" title="Alt+click to select a box hidden underneath"></div>
+            </div>
+
+            <div class="bc-element-fields" id="elementFields">
+                <div class="bc-element-fields-row">
+                    <label>Source</label>
+                    <select class="input bc-compact" id="fElementSource" style="flex:1;min-width:140px"></select>
+                    <button type="button" class="btn btn-outline btn-sm bc-icon-btn" title="Refresh window list" onclick="refreshWindowOptions()">
+                        <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="2 3 2 8 7 8"></polyline><path d="M3.5 11.5A6 6 0 1 0 3 6"></path></svg>
+                    </button>
+                    <label class="bc-toggle-inline"><input type="checkbox" id="fElementBorder" checked> Border</label>
+                    <button type="button" class="btn btn-outline btn-sm bc-icon-btn" title="Delete box" onclick="deleteSelectedElement()">
+                        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="4" y1="4" x2="14" y2="14"></line><line x1="14" y1="4" x2="4" y2="14"></line></svg>
+                    </button>
+                </div>
+                <div class="bc-element-fields-row">
+                    <label>X</label><input type="number" class="input bc-compact bc-num-input" id="fElX" min="0" max="99">
+                    <label>Y</label><input type="number" class="input bc-compact bc-num-input" id="fElY" min="0" max="99">
+                    <label>W</label><input type="number" class="input bc-compact bc-num-input" id="fElW" min="5" max="100">
+                    <label>H</label><input type="number" class="input bc-compact bc-num-input" id="fElH" min="5" max="100">
+                    <span style="font-size:0.75rem;color:var(--text-muted)">% of frame</span>
+                </div>
+                <div class="bc-element-fields-row">
+                    <button type="button" class="btn btn-outline btn-sm" onclick="fillFrameSelectedElement()">Fill Frame</button>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="bringSelectedToFront()">Bring to Front</button>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="sendSelectedToBack()">Send to Back</button>
+                </div>
+            </div>
+            <div class="bc-empty-hint" id="noElementsHint"></div>
+
+            <div class="bc-row-2col">
+                <div class="field-row">
+                    <div class="field-label">Transition into this scene</div>
+                    <select class="input" id="fTransition">
+                        {% for t in transitions %}<option value="{{ t }}">{{ t }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="field-row">
+                    <div class="field-label">Duration (seconds)</div>
+                    <input type="number" class="input" id="fTransitionDuration" min="0.1" max="3" step="0.1" value="0.4">
+                </div>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn-danger" id="sceneDeleteBtn" style="display:none" onclick="deleteSceneFromModal()">Delete</button>
+            <div style="flex:1"></div>
+            <button class="btn btn-outline" onclick="closeSceneModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="submitSceneModal()">Save</button>
+        </div>
+    </div>
+</div>
+
+<script>
+var scenes = {{ scenes|tojson }};
+var materials = {{ materials|tojson }};
+var sounds = {{ sounds|tojson }};
+var templates = {{ templates|tojson }};
+var config = {{ config|tojson }};
+var openWindows = [];
+var currentSceneId = null;
+var editingSceneId = null;   // set when the modal is editing an existing scene, else null (creating)
+
+// Layout designer state — the modal's own working copy of elements,
+// independent of `scenes` until Save is clicked.
+var modalElements = [];
+var selectedElementId = null;
+var dragState = null;   // {id, mode:'move'|'resize', startX, startY, startEl}
+
+function toggleSection(id){ document.getElementById('sec-'+id).classList.toggle('expanded'); }
+function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function uid(){ return Math.random().toString(16).slice(2,10); }
+
+// ═══════════════════════════════════════════════════════════════
+//  MASTER CONTROL / STATUS POLL
+// ═══════════════════════════════════════════════════════════════
+function toggleBroadcast(){
+    var btn = document.getElementById('toggleBtn');
+    btn.disabled = true;
+    fetch('/api/broadcaster/toggle', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){ applyStatus(d); })
+        .finally(function(){ btn.disabled = false; });
+}
+
+var recordingStartedAt = null;   // epoch ms from the server, or null
+
+function applyStatus(d){
+    var pill = document.getElementById('statusPill');
+    var btn = document.getElementById('toggleBtn');
+    pill.textContent = d.active ? 'Live' : 'Off Air';
+    pill.className = 'bc-status-pill ' + (d.active ? 'live' : 'off');
+    btn.textContent = d.active ? 'Stop Broadcast' : 'Start Broadcast';
+    document.getElementById('errorMsg').textContent = d.error || '';
+    if (d.current_scene_id){
+        currentSceneId = d.current_scene_id;
+        var s = scenes.find(function(x){ return x.id === currentSceneId; });
+        document.getElementById('currentSceneLabel').textContent = s ? s.name : 'None';
+    }
+
+    var recordBtn = document.getElementById('recordBtn');
+    recordBtn.disabled = !d.active;
+    recordBtn.textContent = d.recording_active ? 'Stop Recording' : 'Record';
+    recordingStartedAt = d.recording_active ? d.recording_started_at : null;
+    if (!d.recording_active) document.getElementById('recStatus').textContent = '';
+
+    renderScenes();
+}
+
+function pollStatus(){
+    fetch('/api/broadcaster/status').then(function(r){ return r.json(); }).then(applyStatus);
+}
+setInterval(pollStatus, 2000);
+
+function toggleRecord(){
+    var btn = document.getElementById('recordBtn');
+    btn.disabled = true;
+    fetch('/api/broadcaster/record/toggle', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){ if (d.status === 'error') alert(d.message); })
+        .finally(function(){ pollStatus(); });
+}
+
+function updateRecTimer(){
+    if (recordingStartedAt == null) return;
+    var secs = Math.max(0, Math.floor((Date.now() - recordingStartedAt) / 1000));
+    var m = Math.floor(secs / 60), s = secs % 60;
+    document.getElementById('recStatus').textContent = '\u25CF ' + m + ':' + (s < 10 ? '0' : '') + s;
+}
+setInterval(updateRecTimer, 500);
+
+// ── Full screen preview (moves the real node so there's only ever one
+//    MJPEG stream connection, same technique as Data Analysis's Input/
+//    Clean Data full screen) ──
+var previewHomeParent = null;
+function openPreviewFullscreen(){
+    var wrap = document.getElementById('previewWrapEl');
+    previewHomeParent = wrap.parentNode;
+    wrap.classList.add('fullscreen');
+    document.getElementById('previewFullscreenBody').appendChild(wrap);
+    document.getElementById('previewFullscreenOverlay').classList.add('open');
+}
+function closePreviewFullscreen(){
+    var wrap = document.getElementById('previewWrapEl');
+    wrap.classList.remove('fullscreen');
+    if (previewHomeParent) previewHomeParent.appendChild(wrap);
+    document.getElementById('previewFullscreenOverlay').classList.remove('open');
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SCENES
+// ═══════════════════════════════════════════════════════════════
+// A scene's "background" isn't a separate concept any more — it's just
+// whichever box happens to cover (almost) the whole frame. Used only to
+// pick a reasonable thumbnail for the scene card.
+function findBackgroundLikeElement(elements){
+    return (elements || []).find(function(e){ return e.w_pct >= 90 && e.h_pct >= 90; }) || null;
+}
+
+function sourceLabel(source){
+    if (source === 'camera') return 'Camera';
+    if (source === 'desktop') return 'Desktop';
+    if (source.indexOf('window:') === 0) return source.slice(7);
+    return source;
+}
+
+function renderScenes(){
+    var grid = document.getElementById('sceneGrid');
+    grid.innerHTML = scenes.map(function(s){
+        var bg = findBackgroundLikeElement(s.elements);
+        var thumbStyle = '', thumbLabel = 'Custom Layout';
+        if (bg){
+            if (bg.source === 'camera' || bg.source === 'desktop' || bg.source.indexOf('window:') === 0){
+                thumbLabel = sourceLabel(bg.source);
+            } else {
+                thumbLabel = ''; thumbStyle = ' style="background-image:url(/broadcaster/materials/' + encodeURIComponent(bg.source) + ')"';
+            }
+        } else if (!s.elements || !s.elements.length){
+            thumbLabel = 'Empty';
+        }
+        return '<div class="bc-scene-card' + (s.id === currentSceneId ? ' current' : '') + '">' +
+            '<div class="bc-scene-card-thumb"' + thumbStyle + '>' + escHtml(thumbLabel) + '</div>' +
+            '<div class="bc-scene-card-body">' +
+                '<div class="bc-scene-card-name" title="' + escHtml(s.name) + '">' + escHtml(s.name) + '</div>' +
+            '</div>' +
+            '<div class="bc-scene-card-actions">' +
+                '<button class="btn btn-primary btn-sm" onclick="switchScene(\'' + s.id + '\')">Switch</button>' +
+                '<button class="btn btn-outline btn-sm bc-icon-btn" title="Edit" onclick="openSceneModal(\'' + s.id + '\')">' +
+                    '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l5 5-9 9H2v-5z"></path></svg>' +
+                '</button>' +
+            '</div>' +
+        '</div>';
+    }).join('') + '<button type="button" class="bc-add-scene-btn" onclick="openSceneModal(null)">+ Add Scene</button>';
+}
+
+function switchScene(id){
+    fetch('/api/broadcaster/scenes/' + id + '/switch', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(){ currentSceneId = id; pollStatus(); });
+}
+
+function populateElementSourceSelect(){
+    var sel = document.getElementById('fElementSource');
+    var current = sel.value;
+    var windowOpts = openWindows.map(function(t){ return '<option value="window:' + escHtml(t) + '">' + escHtml(t) + '</option>'; }).join('');
+    var materialOpts = materials.map(function(m){ return '<option value="' + escHtml(m) + '">' + escHtml(m) + '</option>'; }).join('');
+    sel.innerHTML = '<option value="camera">Camera</option><option value="desktop">Desktop</option>' +
+        (windowOpts ? '<optgroup label="Windows">' + windowOpts + '</optgroup>' : '') +
+        (materialOpts ? '<optgroup label="Images">' + materialOpts + '</optgroup>' : '');
+    if (current) sel.value = current;
+}
+
+function refreshWindowOptions(){
+    fetch('/api/broadcaster/windows').then(function(r){ return r.json(); }).then(function(d){
+        openWindows = d || [];
+        populateElementSourceSelect();
+    });
+}
+
+document.getElementById('materialFileInput').addEventListener('change', function(e){
+    var file = e.target.files[0];
+    if (!file) return;
+    var form = new FormData();
+    form.append('file', file);
+    fetch('/api/broadcaster/materials/upload', {method:'POST', body:form})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d.status === 'error'){ alert(d.message); return; }
+            materials.push(d.filename);
+            populateElementSourceSelect();
+            if (selectedElementId){
+                document.getElementById('fElementSource').value = d.filename;
+                document.getElementById('fElementSource').dispatchEvent(new Event('change'));
+            }
+        });
+    materialFileInput.value = '';
+});
+
+// ── Layout designer ──────────────────────────────────────────────
+function renderCanvas(){
+    var wrap = document.getElementById('canvasWrap');
+    wrap.innerHTML = '';
+    modalElements.forEach(function(el){
+        var box = document.createElement('div');
+        box.className = 'bc-box' + (el.id === selectedElementId ? ' selected' : '');
+        box.style.left = el.x_pct + '%';
+        box.style.top = el.y_pct + '%';
+        box.style.width = el.w_pct + '%';
+        box.style.height = el.h_pct + '%';
+        box.dataset.id = el.id;
+
+        var label = document.createElement('div');
+        label.className = 'bc-box-label';
+        label.textContent = sourceLabel(el.source);
+        box.appendChild(label);
+
+        var del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'bc-box-del';
+        del.innerHTML = '&#x2715;';
+        del.onclick = function(e){ e.stopPropagation(); modalElements = modalElements.filter(function(x){ return x.id !== el.id; }); if (selectedElementId===el.id) selectedElementId=null; renderCanvas(); syncElementFields(); };
+        box.appendChild(del);
+
+        var handle = document.createElement('div');
+        handle.className = 'bc-box-resize';
+        handle.addEventListener('mousedown', function(e){ e.stopPropagation(); startDrag(e, el.id, 'resize'); });
+        box.appendChild(handle);
+
+        // Alt+click cycles selection to whatever box is stacked underneath
+        // this point instead of always grabbing the topmost one — the fix
+        // for boxes that are fully covered by another and otherwise
+        // unreachable by a normal click.
+        box.addEventListener('mousedown', function(e){
+            if (e.altKey){ e.preventDefault(); e.stopPropagation(); cycleSelectionAt(e.clientX, e.clientY); return; }
+            startDrag(e, el.id, 'move');
+        });
+        wrap.appendChild(box);
+    });
+    document.getElementById('noElementsHint').textContent = modalElements.length ? '' : 'Click "Add Box" to place the camera, desktop, a window, or an image. Stretch a box to fill the frame to use it as a background.';
+}
+
+function cycleSelectionAt(clientX, clientY){
+    var wrap = document.getElementById('canvasWrap');
+    var rect = wrap.getBoundingClientRect();
+    var px = (clientX - rect.left) / rect.width * 100;
+    var py = (clientY - rect.top) / rect.height * 100;
+    var overlap = modalElements.filter(function(el){
+        return px >= el.x_pct && px <= el.x_pct + el.w_pct && py >= el.y_pct && py <= el.y_pct + el.h_pct;
+    });
+    if (!overlap.length) return;
+    overlap.reverse(); // topmost (last in z-order) first
+    var idx = overlap.findIndex(function(x){ return x.id === selectedElementId; });
+    var next = overlap[(idx + 1) % overlap.length];
+    selectedElementId = next.id;
+    renderCanvas();
+    syncElementFields();
+}
+
+function startDrag(e, id, mode){
+    e.preventDefault();
+    selectedElementId = id;
+    var el = modalElements.find(function(x){ return x.id === id; });
+    dragState = {id: id, mode: mode, startClientX: e.clientX, startClientY: e.clientY, startEl: Object.assign({}, el)};
+    renderCanvas();
+    syncElementFields();
+}
+
+document.addEventListener('mousemove', function(e){
+    if (!dragState) return;
+    var wrap = document.getElementById('canvasWrap');
+    var rect = wrap.getBoundingClientRect();
+    var dxPct = (e.clientX - dragState.startClientX) / rect.width * 100;
+    var dyPct = (e.clientY - dragState.startClientY) / rect.height * 100;
+    var el = modalElements.find(function(x){ return x.id === dragState.id; });
+    if (!el) return;
+    if (dragState.mode === 'move'){
+        el.x_pct = Math.max(0, Math.min(99, dragState.startEl.x_pct + dxPct));
+        el.y_pct = Math.max(0, Math.min(99, dragState.startEl.y_pct + dyPct));
+    } else {
+        el.w_pct = Math.max(5, Math.min(100 - el.x_pct, dragState.startEl.w_pct + dxPct));
+        el.h_pct = Math.max(5, Math.min(100 - el.y_pct, dragState.startEl.h_pct + dyPct));
+    }
+    renderCanvas();
+    syncElementFields();
+});
+document.addEventListener('mouseup', function(){ dragState = null; });
+
+document.getElementById('canvasWrap').addEventListener('mousedown', function(e){
+    if (e.target === this){ selectedElementId = null; renderCanvas(); syncElementFields(); }
+});
+
+function addElementBox(){
+    var el = {id: uid(), source: 'camera', x_pct: 35, y_pct: 35, w_pct: 30, h_pct: 30, border: true};
+    modalElements.push(el);
+    selectedElementId = el.id;
+    renderCanvas();
+    syncElementFields();
+}
+
+function syncElementFields(){
+    var fields = document.getElementById('elementFields');
+    var el = modalElements.find(function(x){ return x.id === selectedElementId; });
+    if (!el){ fields.classList.remove('show'); return; }
+    fields.classList.add('show');
+    var srcSel = document.getElementById('fElementSource');
+    if (el.source.indexOf('window:') === 0 && !srcSel.querySelector('option[value="' + CSS.escape(el.source) + '"]')){
+        // The saved window isn't in the currently-fetched list (e.g. it's
+        // not open right now) — add it anyway so the field doesn't just
+        // silently blank out the selection.
+        var opt = document.createElement('option');
+        opt.value = el.source; opt.textContent = el.source.slice(7) + ' (not currently open)';
+        srcSel.appendChild(opt);
+    }
+    srcSel.value = el.source;
+    document.getElementById('fElementBorder').checked = el.border !== false;
+    document.getElementById('fElX').value = Math.round(el.x_pct);
+    document.getElementById('fElY').value = Math.round(el.y_pct);
+    document.getElementById('fElW').value = Math.round(el.w_pct);
+    document.getElementById('fElH').value = Math.round(el.h_pct);
+}
+
+['fElementSource','fElementBorder','fElX','fElY','fElW','fElH'].forEach(function(id){
+    document.getElementById(id).addEventListener('change', function(){
+        var el = modalElements.find(function(x){ return x.id === selectedElementId; });
+        if (!el) return;
+        el.source = document.getElementById('fElementSource').value;
+        el.border = document.getElementById('fElementBorder').checked;
+        el.x_pct = parseFloat(document.getElementById('fElX').value) || 0;
+        el.y_pct = parseFloat(document.getElementById('fElY').value) || 0;
+        el.w_pct = parseFloat(document.getElementById('fElW').value) || 5;
+        el.h_pct = parseFloat(document.getElementById('fElH').value) || 5;
+        renderCanvas();
+    });
+});
+
+function deleteSelectedElement(){
+    modalElements = modalElements.filter(function(x){ return x.id !== selectedElementId; });
+    selectedElementId = null;
+    renderCanvas();
+    syncElementFields();
+}
+
+function fillFrameSelectedElement(){
+    var el = modalElements.find(function(x){ return x.id === selectedElementId; });
+    if (!el) return;
+    el.x_pct = 0; el.y_pct = 0; el.w_pct = 100; el.h_pct = 100; el.border = false;
+    renderCanvas();
+    syncElementFields();
+}
+
+function bringSelectedToFront(){
+    var idx = modalElements.findIndex(function(x){ return x.id === selectedElementId; });
+    if (idx === -1) return;
+    var el = modalElements.splice(idx, 1)[0];
+    modalElements.push(el);
+    renderCanvas();
+}
+
+function sendSelectedToBack(){
+    var idx = modalElements.findIndex(function(x){ return x.id === selectedElementId; });
+    if (idx === -1) return;
+    var el = modalElements.splice(idx, 1)[0];
+    modalElements.unshift(el);
+    renderCanvas();
+}
+
+// ── Templates ─────────────────────────────────────────────────────
+function populateTemplateSelect(){
+    var sel = document.getElementById('fTemplatePicker');
+    sel.innerHTML = '<option value="">Blank scene</option>' + templates.map(function(t){
+        return '<option value="' + t.id + '">' + escHtml(t.name) + '</option>';
+    }).join('');
+}
+
+function applyTemplateToModal(){
+    var id = document.getElementById('fTemplatePicker').value;
+    if (!id) return;
+    var t = templates.find(function(x){ return x.id === id; });
+    if (!t) return;
+    modalElements = (t.elements || []).map(function(e){ return Object.assign({}, e, {id: uid()}); });
+    selectedElementId = null;
+    renderCanvas();
+    syncElementFields();
+}
+
+function saveAsTemplate(){
+    var name = prompt('Save this layout as a template named:');
+    if (name === null) return;
+    name = name.trim();
+    if (!name) return;
+    fetch('/api/broadcaster/templates', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: name, elements: modalElements})})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d.status === 'error'){ alert(d.message); return; }
+            templates.push(d.template);
+            populateTemplateSelect();
+            alert('Saved template "' + name + '".');
+        });
+}
+
+// ── Scene modal open/close/submit ───────────────────────────────
+function openSceneModal(id){
+    editingSceneId = id;
+    populateTemplateSelect();
+    var s = id ? scenes.find(function(x){ return x.id === id; }) : null;
+    document.getElementById('sceneModalTitle').textContent = s ? 'Edit Scene' : 'New Scene';
+    document.getElementById('sceneDeleteBtn').style.display = s ? 'inline-flex' : 'none';
+    document.getElementById('templatePickerRow').style.display = s ? 'none' : 'flex';
+    document.getElementById('fTemplatePicker').value = '';
+    document.getElementById('fSceneName').value = s ? s.name : '';
+    modalElements = ((s && s.elements) || []).map(function(e){ return Object.assign({}, e); });
+    selectedElementId = null;
+    renderCanvas();
+    document.getElementById('fTransition').value = (s && s.transition) || 'crossfade';
+    document.getElementById('fTransitionDuration').value = (s && s.transition_duration) || 0.4;
+    document.getElementById('sceneOverlay').classList.add('open');
+    refreshWindowOptions();  // async — populateElementSourceSelect() also runs once this resolves
+    populateElementSourceSelect();
+    syncElementFields();
+}
+function closeSceneModal(){ document.getElementById('sceneOverlay').classList.remove('open'); }
+function sceneOverlayClick(e){ if (e.target === document.getElementById('sceneOverlay')) closeSceneModal(); }
+
+function submitSceneModal(){
+    var payload = {
+        name: document.getElementById('fSceneName').value.trim() || 'Scene',
+        elements: modalElements,
+        transition: document.getElementById('fTransition').value,
+        transition_duration: parseFloat(document.getElementById('fTransitionDuration').value) || 0.4,
+    };
+    var url = editingSceneId ? '/api/broadcaster/scenes/' + editingSceneId : '/api/broadcaster/scenes';
+    fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d.status === 'error'){ alert(d.message); return; }
+            if (editingSceneId){
+                var idx = scenes.findIndex(function(x){ return x.id === editingSceneId; });
+                if (idx !== -1) scenes[idx] = d.scene;
+            } else {
+                scenes.push(d.scene);
+            }
+            closeSceneModal();
+            renderScenes();
+        });
+}
+
+function deleteSceneFromModal(){
+    if (!editingSceneId) return;
+    if (!confirm('Delete this scene?')) return;
+    fetch('/api/broadcaster/scenes/' + editingSceneId + '/delete', {method:'POST'})
+        .then(function(){
+            scenes = scenes.filter(function(x){ return x.id !== editingSceneId; });
+            closeSceneModal();
+            renderScenes();
+        });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SOUND BOARD
+// ═══════════════════════════════════════════════════════════════
+function renderSounds(){
+    var grid = document.getElementById('soundGrid');
+    grid.innerHTML = sounds.map(function(name){
+        var label = name.replace(/\.wav$/i, '');
+        return '<div class="bc-sound-tile" onclick="playSound(\'' + escHtml(name) + '\')">' +
+            '<button type="button" class="bc-sound-del" title="Delete" onclick="event.stopPropagation(); deleteSound(\'' + escHtml(name) + '\')">&#x2715;</button>' +
+            escHtml(label) +
+        '</div>';
+    }).join('') + '<button type="button" class="bc-add-sound-tile" onclick="soundFileInput.click()">+ Add Sound (.wav)</button>' +
+        '<input type="file" id="soundFileInput" accept="audio/wav" style="display:none">';
+    document.getElementById('soundFileInput').addEventListener('change', function(e){
+        var file = e.target.files[0];
+        if (!file) return;
+        var form = new FormData();
+        form.append('file', file);
+        fetch('/api/broadcaster/sounds/upload', {method:'POST', body:form})
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+                if (d.status === 'error'){ alert(d.message); return; }
+                sounds.push(d.filename);
+                renderSounds();
+            });
+    });
+}
+
+function playSound(name){
+    fetch('/api/broadcaster/sounds/' + encodeURIComponent(name) + '/play', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){ if (d.status === 'error') alert(d.message); });
+}
+
+function deleteSound(name){
+    if (!confirm('Delete "' + name + '"?')) return;
+    fetch('/api/broadcaster/sounds/' + encodeURIComponent(name) + '/delete', {method:'POST'})
+        .then(function(){ sounds = sounds.filter(function(x){ return x !== name; }); renderSounds(); });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  SETUP
+// ═══════════════════════════════════════════════════════════════
+function qualityFromConfig(cfg){
+    if (cfg.output_width === 640) return 'low';
+    if (cfg.output_width === 1920) return 'high';
+    return 'balanced';
+}
+
+function loadDevicesIntoSetup(){
+    fetch('/api/broadcaster/devices').then(function(r){ return r.json(); }).then(function(d){
+        document.getElementById('cfgCamera').innerHTML = d.cameras.map(function(c){
+            return '<option value="' + c.index + '">' + escHtml(c.label) + '</option>';
+        }).join('') || '<option value="0">Camera 0</option>';
+
+        document.getElementById('cfgMonitor').innerHTML = d.monitors.map(function(m){
+            return '<option value="' + m.index + '">' + escHtml(m.label) + '</option>';
+        }).join('') || '<option value="1">Monitor 1</option>';
+
+        var micSel = document.getElementById('cfgMicDevice');
+        micSel.innerHTML = '<option value="">Auto-detect (CABLE Input)</option>' + d.audio_outputs.map(function(a){
+            return '<option value="' + a.index + '">' + escHtml(a.label) + '</option>';
+        }).join('');
+
+        document.getElementById('cfgCamera').value = config.camera_device_index;
+        document.getElementById('cfgMonitor').value = config.monitor_index;
+        micSel.value = config.mic_inject_device_index != null ? config.mic_inject_device_index : '';
+        document.getElementById('cfgQuality').value = qualityFromConfig(config);
+        document.getElementById('cfgMirror').checked = config.mirror_camera !== false;
+    });
+}
+
+function saveConfig(){
+    var micVal = document.getElementById('cfgMicDevice').value;
+    var payload = {
+        camera_device_index: parseInt(document.getElementById('cfgCamera').value, 10),
+        monitor_index: parseInt(document.getElementById('cfgMonitor').value, 10),
+        mic_inject_device_index: micVal === '' ? null : parseInt(micVal, 10),
+        quality: document.getElementById('cfgQuality').value,
+        mirror_camera: document.getElementById('cfgMirror').checked,
+    };
+    fetch('/api/broadcaster/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            config = d.config;
+            var el = document.getElementById('setupSaveStatus');
+            el.textContent = 'Saved \u2014 restart broadcast for changes to take effect.';
+            setTimeout(function(){ el.textContent = ''; }, 4000);
+        });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════════════════════
+renderScenes();
+renderSounds();
+loadDevicesIntoSetup();
+pollStatus();
+</script>
+{% endblock %}

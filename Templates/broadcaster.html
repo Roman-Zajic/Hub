@@ -59,9 +59,16 @@ select.bc-compact { padding: 0 6px; }
 .bc-preview-wrap img { width: 100%; height: 100%; object-fit: contain; display: block; }
 .bc-current-scene { font-size: 0.75rem; color: var(--text-muted); }
 .bc-current-scene strong { color: var(--text); }
+.bc-hint-line { font-size: 0.75rem; color: var(--text-muted); }
 .bc-error-msg { font-size: 0.75rem; color: var(--red); line-height: 1.5; }
 .bc-record-row { display: flex; align-items: center; gap: 8px; }
 .bc-rec-status { font-size: 0.75rem; font-weight: 600; color: var(--red); font-variant-numeric: tabular-nums; }
+
+/* ── Mic passthrough status/toggle (Sound Board header) ──────────── */
+.bc-passthrough-row { display: flex; align-items: center; gap: 10px; }
+.bc-passthrough-status { font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+.bc-passthrough-status.on { color: var(--teal-700); }
+.bc-passthrough-status.off { color: var(--text-muted); }
 
 /* ── Full screen preview overlay ─────────────────────────────────── */
 .bc-fullscreen-overlay {
@@ -72,8 +79,24 @@ select.bc-compact { padding: 0 6px; }
 .bc-fullscreen-head { display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
 .bc-fullscreen-body { flex: 1; min-height: 0; display: flex; }
 
+/* ── Hotkey badges (scenes + sounds) ─────────────────────────────── */
+.bc-hotkey-row { display: flex; align-items: center; gap: 6px; justify-content: center; width: 100%; min-width: 0; }
+.bc-hotkey-badge {
+    white-space: nowrap; text-align: center;
+    font-size: 0.6875rem; font-weight: 700; color: var(--teal-700); background: var(--teal-100);
+    border-radius: 20px; padding: 3px 10px; font-variant-numeric: tabular-nums;
+}
+.bc-hotkey-btn {
+    flex: 0 0 auto; width: 20px; height: 20px; padding: 0; border-radius: 5px;
+    border: 1px solid var(--border); background: var(--surface-card); color: var(--text-muted);
+    cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+    transition: border-color 130ms, color 130ms, background 130ms;
+}
+.bc-hotkey-btn:hover { border-color: var(--teal-700); color: var(--teal-700); background: var(--surface-in); }
+.bc-hotkey-btn svg { width: 10px; height: 10px; display: block; }
+
 /* ── Scenes grid ──────────────────────────────────────────────────── */
-.bc-scene-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.bc-scene-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
 .bc-scene-card {
     border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-card);
     box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column;
@@ -85,7 +108,7 @@ select.bc-compact { padding: 0 6px; }
     color: var(--teal-400); font-size: 0.6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
     background-size: cover; background-position: center;
 }
-.bc-scene-card-body { padding: 10px 12px; }
+.bc-scene-card-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; overflow: hidden; min-width: 0; }
 .bc-scene-card-name { font-size: 0.875rem; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bc-scene-card-actions { display: flex; gap: 6px; padding: 0 12px 12px; }
 .bc-scene-card-actions .btn { flex: 1; }
@@ -97,14 +120,16 @@ select.bc-compact { padding: 0 6px; }
 .bc-add-scene-btn:hover { background: var(--surface-in); color: var(--teal-700); }
 
 /* ── Sound board ──────────────────────────────────────────────────── */
-.bc-sound-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+.bc-sound-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(176px, 1fr)); gap: 10px; }
 .bc-sound-tile {
     position: relative; border: 1px solid var(--border); border-radius: var(--r); background: var(--surface-card);
-    box-shadow: var(--shadow); padding: 16px 10px; cursor: pointer; text-align: center;
-    font-size: 0.8125rem; font-weight: 600; color: var(--text); transition: border-color 130ms, background 130ms;
+    box-shadow: var(--shadow); padding: 14px 10px 10px; cursor: pointer; text-align: center;
+    display: flex; flex-direction: column; align-items: stretch; gap: 6px; overflow: hidden; min-width: 0;
+    transition: border-color 130ms, background 130ms;
 }
 .bc-sound-tile:hover { border-color: var(--teal-700); background: var(--surface-in); }
 .bc-sound-tile:active { background: var(--teal-100); }
+.bc-sound-name { font-size: 0.8125rem; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .bc-sound-tile .bc-sound-del {
     position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; border-radius: 50%;
     background: var(--surface-in); color: var(--text-muted); border: none; cursor: pointer;
@@ -177,6 +202,8 @@ select.bc-compact { padding: 0 6px; }
 {% block content %}
 <div class="bc-root">
 
+    <div class="bc-error-msg" id="hotkeyWarning" style="display:none;margin-bottom:10px"></div>
+
     <!-- ════════════════════════════════════════════════════════
          LIVE PREVIEW  +  SOUND BOARD  (side by side)
     ════════════════════════════════════════════════════════ -->
@@ -187,8 +214,9 @@ select.bc-compact { padding: 0 6px; }
                 <span class="section-title">Live Preview</span>
                 <div class="section-head-actions">
                     <span class="bc-status-pill off" id="statusPill">Off Air</span>
-                    <button class="btn btn-primary btn-sm" id="toggleBtn" onclick="event.stopPropagation(); toggleBroadcast()">Start Broadcast</button>
-                    <button type="button" class="btn btn-outline btn-sm bc-icon-btn" title="Full screen" onclick="event.stopPropagation(); openPreviewFullscreen()">
+                    <button class="btn btn-primary btn-sm" id="toggleBtn" onclick="event.stopPropagation(); toggleBroadcast()">Start Presentation</button>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="event.stopPropagation(); openOutputWindow()">Open Output Window</button>
+                    <button type="button" class="btn btn-outline btn-sm bc-icon-btn" title="Full screen (in-page)" onclick="event.stopPropagation(); openPreviewFullscreen()">
                         <svg viewBox="0 0 18 18" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="12" rx="1"></rect></svg>
                     </button>
                     <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
@@ -212,7 +240,11 @@ select.bc-compact { padding: 0 6px; }
         <div class="section expanded" id="sec-sounds">
             <div class="section-head" onclick="toggleSection('sounds')">
                 <span class="section-title">Sound Board</span>
-                <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+                <div class="section-head-actions">
+                    <span class="bc-passthrough-status off" id="passthroughStatus">Mic Passthrough: Off</span>
+                    <button class="btn btn-outline btn-sm" id="passthroughBtn" onclick="event.stopPropagation(); togglePassthrough()">Enable Mic Passthrough</button>
+                    <svg class="section-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"></polyline></svg>
+                </div>
             </div>
             <div class="section-body">
                 <div class="section-inner">
@@ -258,9 +290,15 @@ select.bc-compact { padding: 0 6px; }
                         <select class="input" id="cfgMonitor"></select>
                     </div>
                     <div class="field-row">
-                        <div class="field-label">Mic-injection device (sound board)</div>
+                        <div class="field-label">Mic-injection device (sound board / passthrough output)</div>
                         <select class="input" id="cfgMicDevice">
                             <option value="">Auto-detect (CABLE Input)</option>
+                        </select>
+                    </div>
+                    <div class="field-row">
+                        <div class="field-label">Physical microphone (passthrough source)</div>
+                        <select class="input" id="cfgMicSource">
+                            <option value="">Default input device</option>
                         </select>
                     </div>
                     <div class="field-row">
@@ -269,10 +307,16 @@ select.bc-compact { padding: 0 6px; }
                             <option value="low">Low (640x360, 24fps)</option>
                             <option value="balanced" selected>Balanced (1280x720, 30fps)</option>
                             <option value="high">High (1920x1080, 30fps)</option>
+                            <option value="ultra">Ultra (2560x1440, 24fps — best for documents/text)</option>
                         </select>
                     </div>
                 </div>
                 <label class="bc-toggle-inline"><input type="checkbox" id="cfgMirror"> Mirror camera (flip horizontally)</label>
+                <div class="bc-error-msg" style="color:var(--text-muted)">
+                    Set your microphone in Teams (or any other app) to "CABLE Output (VB-Audio Virtual Cable)" once —
+                    then enable Mic Passthrough from the Sound Board panel above and you'll never need to switch
+                    audio devices again to play a sound effect.
+                </div>
                 <div>
                     <button class="btn btn-primary btn-sm" onclick="saveConfig()">Save Setup</button>
                     <span class="bc-error-msg" id="setupSaveStatus" style="color:var(--teal-400)"></span>
@@ -372,6 +416,7 @@ select.bc-compact { padding: 0 6px; }
 var scenes = {{ scenes|tojson }};
 var materials = {{ materials|tojson }};
 var sounds = {{ sounds|tojson }};
+var soundHotkeys = {{ sound_hotkeys|tojson }};
 var templates = {{ templates|tojson }};
 var config = {{ config|tojson }};
 var openWindows = [];
@@ -386,7 +431,103 @@ var dragState = null;   // {id, mode:'move'|'resize', startX, startY, startEl}
 
 function toggleSection(id){ document.getElementById('sec-'+id).classList.toggle('expanded'); }
 function escHtml(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function escAttr(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 function uid(){ return Math.random().toString(16).slice(2,10); }
+
+// ── Hotkey formatting/capture (shared by scenes + sounds) ─────────────
+function formatHotkey(hk){
+    if (!hk) return 'No hotkey';
+    return hk.split('+').map(function(p){ return p.charAt(0).toUpperCase() + p.slice(1); }).join('+');
+}
+
+// Best-effort mapping from a browser KeyboardEvent to the string format
+// the Python "keyboard" package expects (e.g. "ctrl+alt+1"). Uses e.code
+// (the PHYSICAL key, unaffected by modifiers) rather than e.key for
+// digits/letters/function keys — with Shift held, e.key reports the
+// shifted character (Shift+1 -> "!") instead of the key that was
+// actually pressed, which is what we want captured here.
+function keyEventToHotkeyString(e){
+    var key = e.key;
+    if (['Control','Alt','Shift','Meta','OS'].indexOf(key) !== -1) return null;
+    var parts = [];
+    if (e.ctrlKey) parts.push('ctrl');
+    if (e.altKey) parts.push('alt');
+    if (e.shiftKey) parts.push('shift');
+    if (e.metaKey) parts.push('windows');
+
+    var code = e.code || '';
+    var digitMatch = code.match(/^Digit([0-9])$/);
+    var letterMatch = code.match(/^Key([A-Za-z])$/);
+    var fMatch = code.match(/^F([1-9]|1[0-9]|2[0-4])$/);
+    var mainKey;
+    if (digitMatch) mainKey = digitMatch[1];
+    else if (letterMatch) mainKey = letterMatch[1].toLowerCase();
+    else if (fMatch) mainKey = code.toLowerCase();
+    else if (code === 'Space') mainKey = 'space';
+    else if (/^[a-zA-Z]$/.test(key)) mainKey = key.toLowerCase();
+    else if (/^[0-9]$/.test(key)) mainKey = key;
+    else mainKey = key.toLowerCase();
+
+    parts.push(mainKey);
+    return parts.join('+');
+}
+
+function beginHotkeyCapture(url, labelEl, onSaved){
+    var original = labelEl.textContent;
+    labelEl.textContent = 'Press keys… (Esc to cancel)';
+
+    function cleanup(){ document.removeEventListener('keydown', handler, true); }
+    function handler(e){
+        e.preventDefault();
+        if (e.key === 'Escape'){ cleanup(); labelEl.textContent = original; return; }
+        var hk = keyEventToHotkeyString(e);
+        if (!hk) return; // a bare modifier keydown — keep listening for the real key
+        cleanup();
+        fetch(url, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({hotkey: hk}) })
+            .then(function(r){ return r.json(); })
+            .then(function(d){
+                if (d.status === 'error'){ alert(d.message); labelEl.textContent = original; return; }
+                onSaved(d.hotkey);
+            });
+    }
+    document.addEventListener('keydown', handler, true);
+}
+
+function startHotkeyCaptureForScene(sceneId){
+    var el = document.querySelector('.bc-scene-card[data-id="'+sceneId+'"] [data-role="hotkey-label"]');
+    if (!el) return;
+    beginHotkeyCapture('/api/broadcaster/scenes/'+sceneId+'/hotkey', el, function(hk){
+        var s = scenes.find(function(x){ return x.id === sceneId; });
+        if (s) s.hotkey = hk;
+        renderScenes();
+    });
+}
+function clearHotkeyForScene(sceneId){
+    fetch('/api/broadcaster/scenes/'+sceneId+'/hotkey', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({hotkey: null}) })
+        .then(function(r){ return r.json(); })
+        .then(function(){
+            var s = scenes.find(function(x){ return x.id === sceneId; });
+            if (s) s.hotkey = null;
+            renderScenes();
+        });
+}
+
+function startHotkeyCaptureForSound(name){
+    var el = document.querySelector('.bc-sound-tile[data-name="'+CSS.escape(name)+'"] [data-role="hotkey-label"]');
+    if (!el) return;
+    beginHotkeyCapture('/api/broadcaster/sounds/'+encodeURIComponent(name)+'/hotkey', el, function(hk){
+        soundHotkeys[name] = hk;
+        renderSounds();
+    });
+}
+function clearHotkeyForSound(name){
+    fetch('/api/broadcaster/sounds/'+encodeURIComponent(name)+'/hotkey', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({hotkey: null}) })
+        .then(function(r){ return r.json(); })
+        .then(function(){
+            soundHotkeys[name] = null;
+            renderSounds();
+        });
+}
 
 // ═══════════════════════════════════════════════════════════════
 //  MASTER CONTROL / STATUS POLL
@@ -407,7 +548,7 @@ function applyStatus(d){
     var btn = document.getElementById('toggleBtn');
     pill.textContent = d.active ? 'Live' : 'Off Air';
     pill.className = 'bc-status-pill ' + (d.active ? 'live' : 'off');
-    btn.textContent = d.active ? 'Stop Broadcast' : 'Start Broadcast';
+    btn.textContent = d.active ? 'Stop Presentation' : 'Start Presentation';
     document.getElementById('errorMsg').textContent = d.error || '';
     if (d.current_scene_id){
         currentSceneId = d.current_scene_id;
@@ -420,6 +561,12 @@ function applyStatus(d){
     recordBtn.textContent = d.recording_active ? 'Stop Recording' : 'Record';
     recordingStartedAt = d.recording_active ? d.recording_started_at : null;
     if (!d.recording_active) document.getElementById('recStatus').textContent = '';
+
+    applyPassthroughStatus(d.passthrough_active);
+
+    var hkWarn = document.getElementById('hotkeyWarning');
+    hkWarn.textContent = d.hotkeys_error || '';
+    hkWarn.style.display = d.hotkeys_error ? 'block' : 'none';
 
     renderScenes();
 }
@@ -446,9 +593,37 @@ function updateRecTimer(){
 }
 setInterval(updateRecTimer, 500);
 
-// ── Full screen preview (moves the real node so there's only ever one
-//    MJPEG stream connection, same technique as Data Analysis's Input/
-//    Clean Data full screen) ──
+// ── Mic passthrough ─────────────────────────────────────────────────
+function togglePassthrough(){
+    var btn = document.getElementById('passthroughBtn');
+    btn.disabled = true;
+    fetch('/api/broadcaster/passthrough/toggle', {method:'POST'})
+        .then(function(r){ return r.json(); })
+        .then(function(d){
+            if (d.status === 'error') alert(d.message || 'Could not toggle mic passthrough.');
+            applyPassthroughStatus(d.active);
+        })
+        .finally(function(){ btn.disabled = false; });
+}
+
+function applyPassthroughStatus(active){
+    var statusEl = document.getElementById('passthroughStatus');
+    var btn = document.getElementById('passthroughBtn');
+    statusEl.textContent = 'Mic Passthrough: ' + (active ? 'On' : 'Off');
+    statusEl.className = 'bc-passthrough-status ' + (active ? 'on' : 'off');
+    btn.textContent = active ? 'Disable Mic Passthrough' : 'Enable Mic Passthrough';
+}
+
+// ── Output window (share THIS in Teams) ──────────────────────────────
+function openOutputWindow(){
+    window.open('/broadcaster/output', 'broadcasterOutput', 'width=1280,height=720,menubar=no,toolbar=no,location=no,status=no');
+}
+
+// ── Full screen preview (in-page — moves the real node so there's only
+//    ever one MJPEG stream connection, same technique as Data Analysis's
+//    Input/Clean Data full screen). This is separate from the Output
+//    Window — use this one for glancing at the composite yourself, use
+//    the Output Window for what you actually share. ──
 var previewHomeParent = null;
 function openPreviewFullscreen(){
     var wrap = document.getElementById('previewWrapEl');
@@ -495,10 +670,17 @@ function renderScenes(){
         } else if (!s.elements || !s.elements.length){
             thumbLabel = 'Empty';
         }
-        return '<div class="bc-scene-card' + (s.id === currentSceneId ? ' current' : '') + '">' +
+        return '<div class="bc-scene-card' + (s.id === currentSceneId ? ' current' : '') + '" data-id="' + s.id + '">' +
             '<div class="bc-scene-card-thumb"' + thumbStyle + '>' + escHtml(thumbLabel) + '</div>' +
             '<div class="bc-scene-card-body">' +
                 '<div class="bc-scene-card-name" title="' + escHtml(s.name) + '">' + escHtml(s.name) + '</div>' +
+                '<div class="bc-hotkey-row">' +
+                    '<span class="bc-hotkey-badge" data-role="hotkey-label">' + escHtml(formatHotkey(s.hotkey)) + '</span>' +
+                    '<button type="button" class="bc-hotkey-btn" title="Change hotkey" onclick="event.stopPropagation(); startHotkeyCaptureForScene(\'' + s.id + '\')">' +
+                        '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l5 5-9 9H2v-5z"></path></svg>' +
+                    '</button>' +
+                    (s.hotkey ? '<button type="button" class="bc-hotkey-btn" title="Clear hotkey" onclick="event.stopPropagation(); clearHotkeyForScene(\'' + s.id + '\')">&#x2715;</button>' : '') +
+                '</div>' +
             '</div>' +
             '<div class="bc-scene-card-actions">' +
                 '<button class="btn btn-primary btn-sm" onclick="switchScene(\'' + s.id + '\')">Switch</button>' +
@@ -819,9 +1001,17 @@ function renderSounds(){
     var grid = document.getElementById('soundGrid');
     grid.innerHTML = sounds.map(function(name){
         var label = name.replace(/\.wav$/i, '');
-        return '<div class="bc-sound-tile" onclick="playSound(\'' + escHtml(name) + '\')">' +
+        var hk = soundHotkeys[name];
+        return '<div class="bc-sound-tile" data-name="' + escAttr(name) + '" onclick="playSound(\'' + escHtml(name) + '\')">' +
             '<button type="button" class="bc-sound-del" title="Delete" onclick="event.stopPropagation(); deleteSound(\'' + escHtml(name) + '\')">&#x2715;</button>' +
-            escHtml(label) +
+            '<div class="bc-sound-name" title="' + escAttr(label) + '">' + escHtml(label) + '</div>' +
+            '<div class="bc-hotkey-row">' +
+                '<span class="bc-hotkey-badge" data-role="hotkey-label">' + escHtml(formatHotkey(hk)) + '</span>' +
+                '<button type="button" class="bc-hotkey-btn" title="Change hotkey" onclick="event.stopPropagation(); startHotkeyCaptureForSound(\'' + escAttr(name) + '\')">' +
+                    '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l5 5-9 9H2v-5z"></path></svg>' +
+                '</button>' +
+                (hk ? '<button type="button" class="bc-hotkey-btn" title="Clear hotkey" onclick="event.stopPropagation(); clearHotkeyForSound(\'' + escAttr(name) + '\')">&#x2715;</button>' : '') +
+            '</div>' +
         '</div>';
     }).join('') + '<button type="button" class="bc-add-sound-tile" onclick="soundFileInput.click()">+ Add Sound (.wav)</button>' +
         '<input type="file" id="soundFileInput" accept="audio/wav" style="display:none">';
@@ -835,6 +1025,7 @@ function renderSounds(){
             .then(function(d){
                 if (d.status === 'error'){ alert(d.message); return; }
                 sounds.push(d.filename);
+                soundHotkeys[d.filename] = d.hotkey || null;
                 renderSounds();
             });
     });
@@ -849,7 +1040,11 @@ function playSound(name){
 function deleteSound(name){
     if (!confirm('Delete "' + name + '"?')) return;
     fetch('/api/broadcaster/sounds/' + encodeURIComponent(name) + '/delete', {method:'POST'})
-        .then(function(){ sounds = sounds.filter(function(x){ return x !== name; }); renderSounds(); });
+        .then(function(){
+            sounds = sounds.filter(function(x){ return x !== name; });
+            delete soundHotkeys[name];
+            renderSounds();
+        });
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -858,6 +1053,7 @@ function deleteSound(name){
 function qualityFromConfig(cfg){
     if (cfg.output_width === 640) return 'low';
     if (cfg.output_width === 1920) return 'high';
+    if (cfg.output_width === 2560) return 'ultra';
     return 'balanced';
 }
 
@@ -876,9 +1072,15 @@ function loadDevicesIntoSetup(){
             return '<option value="' + a.index + '">' + escHtml(a.label) + '</option>';
         }).join('');
 
+        var micSrcSel = document.getElementById('cfgMicSource');
+        micSrcSel.innerHTML = '<option value="">Default input device</option>' + (d.audio_inputs || []).map(function(a){
+            return '<option value="' + a.index + '">' + escHtml(a.label) + '</option>';
+        }).join('');
+
         document.getElementById('cfgCamera').value = config.camera_device_index;
         document.getElementById('cfgMonitor').value = config.monitor_index;
         micSel.value = config.mic_inject_device_index != null ? config.mic_inject_device_index : '';
+        micSrcSel.value = config.mic_passthrough_source_device_index != null ? config.mic_passthrough_source_device_index : '';
         document.getElementById('cfgQuality').value = qualityFromConfig(config);
         document.getElementById('cfgMirror').checked = config.mirror_camera !== false;
     });
@@ -886,10 +1088,12 @@ function loadDevicesIntoSetup(){
 
 function saveConfig(){
     var micVal = document.getElementById('cfgMicDevice').value;
+    var micSrcVal = document.getElementById('cfgMicSource').value;
     var payload = {
         camera_device_index: parseInt(document.getElementById('cfgCamera').value, 10),
         monitor_index: parseInt(document.getElementById('cfgMonitor').value, 10),
         mic_inject_device_index: micVal === '' ? null : parseInt(micVal, 10),
+        mic_passthrough_source_device_index: micSrcVal === '' ? null : parseInt(micSrcVal, 10),
         quality: document.getElementById('cfgQuality').value,
         mirror_camera: document.getElementById('cfgMirror').checked,
     };
@@ -898,7 +1102,7 @@ function saveConfig(){
         .then(function(d){
             config = d.config;
             var el = document.getElementById('setupSaveStatus');
-            el.textContent = 'Saved \u2014 restart broadcast for changes to take effect.';
+            el.textContent = 'Saved \u2014 restart the presentation for changes to take effect.';
             setTimeout(function(){ el.textContent = ''; }, 4000);
         });
 }

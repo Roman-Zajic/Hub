@@ -78,6 +78,16 @@ DEBUG_SHOW_CALENDAR_COLUMNS = False
 # as that type. Below this, the column falls back to 'text'.
 TYPE_DETECTION_MIN_RATIO = 0.6
 
+# Type detection only needs to look at a representative sample of a
+# column, not every row — on a 5k+ row paste, running all 4 candidate
+# parsers (including the date parser's multi-format strptime loop) against
+# every single value in every column was the actual cost of "Process".
+# 300 values, spread evenly across the column (not just the first 300
+# rows, in case the data is sorted/grouped), classifies a column just as
+# reliably in practice. Columns with fewer rows than this are unaffected —
+# every value is still checked.
+TYPE_DETECTION_SAMPLE_SIZE = 300
+
 # ── Standard Calendar ────────────────────────────────────────────────
 # Plain Gregorian calendar. Week-start convention below uses
 # 0=Sunday, 1=Monday, ..., 6=Saturday (kept the same convention as the
@@ -120,10 +130,18 @@ _DATE_FORMATS = [
 _TIME_RE = re.compile(r'^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?$')
 _NUM_CORE_RE = re.compile(r'^[+-]?\d+(\.\d+)?$')
 
+# Cheap pre-check before the 14-format strptime loop in _try_parse_date.
+# strptime is slow enough that running it on every value of every column
+# (including columns that are obviously text or plain numbers) was a
+# major share of processing time on large pastes. Anything that doesn't
+# even look date-shaped — no digit at all, or characters no date format
+# could ever contain — is rejected here in effectively zero time instead.
+_DATE_CANDIDATE_RE = re.compile(r'^(?=.*\d)[0-9A-Za-z,./\- ]{4,24}$')
+
 
 def _try_parse_date(s):
     s = (s or '').strip()
-    if not s:
+    if not s or not _DATE_CANDIDATE_RE.match(s):
         return None
     for fmt in _DATE_FORMATS:
         try:
@@ -178,14 +196,28 @@ def _try_parse_number(s):
     return -abs(v) if neg else v
 
 
+def _sample_for_detection(non_empty_values, sample_size=TYPE_DETECTION_SAMPLE_SIZE):
+    """Evenly-spread sample across the column, not just the first N rows —
+    a sorted/grouped paste (e.g. all dates for one employee together)
+    would otherwise bias a first-N sample toward one narrow slice of the
+    data."""
+    n = len(non_empty_values)
+    if n <= sample_size:
+        return non_empty_values
+    step = n / sample_size
+    return [non_empty_values[int(i * step)] for i in range(sample_size)]
+
+
 def _detect_column_type(values):
     non_empty = [v for v in values if v.strip() != '']
-    total = len(non_empty)
-    if total == 0:
+    if not non_empty:
         return 'text'
 
+    sample = _sample_for_detection(non_empty)
+    sample_total = len(sample)
+
     counts = {'date': 0, 'time': 0, 'percentage': 0, 'number': 0}
-    for v in non_empty:
+    for v in sample:
         if _try_parse_date(v) is not None:
             counts['date'] += 1
         if _try_parse_time(v) is not None:
@@ -197,7 +229,7 @@ def _detect_column_type(values):
 
     best_type, best_ratio = 'text', 0.0
     for t in ('date', 'time', 'percentage', 'number'):  # priority order
-        ratio = counts[t] / total
+        ratio = counts[t] / sample_total
         if ratio > best_ratio and ratio >= TYPE_DETECTION_MIN_RATIO:
             best_type, best_ratio = t, ratio
     return best_type
@@ -243,6 +275,28 @@ def _standardize_cell(raw, coltype):
         return {'v': raw, 't': 'number', 'd': disp, 's': v}
 
     return {'v': raw, 't': 'text', 'd': raw, 's': raw.lower()}
+
+
+def _standardize_cell_cached(raw, coltype, cache):
+    """Same result as _standardize_cell(raw, coltype), memoized per column.
+    Real-world pastes repeat the same rank/activity/date/quantity across
+    many rows — re-running the same parse/format work for every repeat was
+    wasted effort on large pastes. Always returns a fresh dict (never the
+    cached tuple's dict directly), since callers mutate/pop keys per-row
+    (see the 'dt' pop in _process_tsv below) and a shared dict would leak
+    that mutation across every row using the same raw value."""
+    if raw == '':
+        return {'v': raw, 't': coltype, 'd': '', 's': ''}
+    cached = cache.get(raw)
+    if cached is None:
+        cell = _standardize_cell(raw, coltype)
+        cached = (cell['t'], cell['d'], cell['s'], cell.get('dt'))
+        cache[raw] = cached
+    t, d, s, dt = cached
+    result = {'v': raw, 't': t, 'd': d, 's': s}
+    if dt is not None:
+        result['dt'] = dt  # dt (datetime) is immutable — safe to share the same object across rows
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -345,12 +399,17 @@ def _process_tsv(text):
         for ci in range(len(headers))
     ]
 
+    # One memoization cache per column — repeated raw values (a rank, an
+    # activity code, a date, a quantity) only get parsed/formatted once,
+    # however many rows repeat them.
+    col_caches = [dict() for _ in range(len(headers))]
+
     out_rows = []
     for r in raw_rows:
         row = {}
         for ci in range(len(headers)):
             raw_v = r[ci].strip() if ci < len(r) else ''
-            row[f'c{ci}'] = _standardize_cell(raw_v, col_types[ci])
+            row[f'c{ci}'] = _standardize_cell_cached(raw_v, col_types[ci], col_caches[ci])
         out_rows.append(row)
 
     # Calendar extension columns — one set per date-type column.
@@ -373,11 +432,17 @@ def _process_tsv(text):
                 'hidden': not DEBUG_SHOW_CALENDAR_COLUMNS,
             })
 
+        # Bucket computation is also memoized per distinct date, since the
+        # same calendar day commonly repeats across many rows.
+        bucket_cache = {}
         for row in out_rows:
             dt = row[key].get('dt')
             if dt is not None:
-                sy, sm, sw = _standard_bucket(dt)
-                ey_y, ey_m, ey_w = _ey_bucket(dt)
+                cached = bucket_cache.get(dt)
+                if cached is None:
+                    cached = _standard_bucket(dt) + _ey_bucket(dt)
+                    bucket_cache[dt] = cached
+                sy, sm, sw, ey_y, ey_m, ey_w = cached
             else:
                 sy = sm = sw = ey_y = ey_m = ey_w = ''
             row[f'{key}__std_year'] = {'v': sy, 't': 'text', 'd': sy, 's': sy}

@@ -238,6 +238,8 @@
     .preview-area a:hover { color: var(--teal-900); }
     .preview-area a.note-link { text-decoration: none; border-bottom: 1px dashed var(--teal-400); cursor: pointer; }
     .preview-area a.note-link:hover { color: var(--teal-900); border-bottom-color: var(--teal-900); }
+    .preview-area a.local-file-link { text-decoration: none; border-bottom: 1px dashed var(--amber); cursor: pointer; }
+    .preview-area a.local-file-link:hover { color: var(--amber); border-bottom-color: var(--amber); }
 
     .admonition { padding: 16px; margin: 0; border-radius: 0; border-left: 4px solid var(--teal-700); background: var(--surface-in); box-shadow: var(--shadow); color: var(--ink); }
     .admonition p { margin: 0 0 10px; }
@@ -398,6 +400,15 @@
     </div>
 </div>
 
+<script>
+    // Deliberately not enabling bare single $...$ inline math — that
+    // clashes with plain dollar amounts like "$100 and $200" appearing
+    // anywhere in a note.
+    window.MathJax = {
+        tex: { inlineMath: [['\\(', '\\)']], displayMath: [['$$', '$$'], ['\\[', '\\]']] }
+    };
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/3.2.2/es5/tex-mml-chtml.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script>
     const files = {{ files|tojson }};
@@ -872,6 +883,8 @@
                 attachChecklistToggles();
                 attachCopyButtons();
                 attachNoteLinks();
+                attachLocalFileLinks();
+                typesetMath();
                 if (searchQuery) {
                     const firstMatch = highlightMatches(elPreview, searchQuery);
                     if (opts.scrollToMatch && firstMatch) {
@@ -1019,6 +1032,24 @@
                 }
             };
         });
+    }
+
+    function attachLocalFileLinks() {
+        // Browsers can't launch a desktop app for a local path directly
+        // (see notes_sync.py) — the href here already points at
+        // /notes_sync/file, which sends the file back as a download.
+        elPreview.querySelectorAll('a[href^="localfile:"]').forEach(a => {
+            const encodedPath = a.getAttribute('href').slice('localfile:'.length);
+            a.classList.add('local-file-link');
+            a.href = '/notes_sync/file?path=' + encodedPath;
+            a.title = "Browsers can't open a desktop app directly — this downloads the file instead; open it from your Downloads folder.";
+        });
+    }
+
+    function typesetMath() {
+        if (window.MathJax && MathJax.typesetPromise) {
+            MathJax.typesetPromise([elPreview]).catch(() => {});
+        }
     }
 
     function loadNote(fullPath, el) {

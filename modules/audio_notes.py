@@ -31,6 +31,7 @@ import re
 import threading
 import time as time_module
 import traceback
+import urllib.request
 import uuid
 import wave
 from datetime import datetime, timedelta
@@ -192,14 +193,27 @@ def _normalize_for_hallucination_check(text):
 # _capture_loop/_process_and_emit for why switching to it mid-call is now
 # safe for anything already queued under the previous model.
 AVAILABLE_MODELS = [
-    ('tiny.en', 'Tiny (English) — fastest, roughest'),
-    ('base', 'Base — fast Whisper'),
-    ('small', 'Small — balanced, multilingual'),
-    ('distil-small.en', 'Distil Small (English) — default, fast + better than base'),
-    ('distil-medium.en', 'Distil Medium (English) — balanced'),
-    ('medium', 'Medium — slower, multilingual'),
+    ('tiny.en', 'Tiny (English)'),
+    # 'base' is the plain multilingual checkpoint (not 'base.en') — see
+    # _model_is_english_only() below, which is what actually decides
+    # whether 'en' is forced at transcribe time: it only special-cases
+    # names containing 'distil' or ending in '.en', so 'base' here is
+    # treated as multilingual.
+    ('base', 'Base (Multilingual)'),
+    ('small', 'Small (Multilingual)'),
+    ('distil-small.en', 'Distil Small (English)'),
+    ('distil-medium.en', 'Distil Medium (English)'),
+    ('medium', 'Medium (Multilingual)'),
 ]
 DEFAULT_MODEL = 'distil-small.en'
+
+# ── Boot self-kick ─────────────────────────────────────────────────
+# See _self_kick_boot_capture() below for what this does and why. Port
+# must match app.py's app.run(..., port=5001) — update both together if
+# that ever changes.
+SELF_KICK_URL = 'http://127.0.0.1:5001/api/audio_notes/poll'
+SELF_KICK_MAX_ATTEMPTS = 30
+SELF_KICK_RETRY_SECONDS = 1.0
 
 # ── File paths ───────────────────────────────────────────────────────
 DATA_FOLDER = os.path.join(os.getcwd(), 'Audio Notes Data')
@@ -427,6 +441,45 @@ def on_load():
     # _ensure_boot_capture_started(), called from audio_notes_view() and
     # poll_route() below — both of which only ever run inside a real Flask
     # request thread, never at process startup.
+    #
+    # That deferral previously meant capture stayed idle after every
+    # restart until a person happened to open the Audio Notes page in a
+    # browser — the defaults said "on", but nothing was actually
+    # listening. _self_kick_boot_capture() closes that gap automatically.
+    threading.Thread(target=_self_kick_boot_capture, daemon=True).start()
+
+
+def _self_kick_boot_capture():
+    """Fires a plain HTTP GET at this module's own /api/audio_notes/poll
+    endpoint shortly after the process starts, purely so
+    _ensure_boot_capture_started() runs from inside a genuine Flask
+    request-handling thread — the exact same thread context a manual
+    browser visit or button click produces — instead of never running at
+    all until someone happens to open this module's page.
+
+    This is NOT the same as calling into WASAPI directly from this
+    background thread, and does not weaken the crash-safety rule
+    documented on _mic_active above: this thread only ever performs a
+    plain outbound HTTP request. app.py runs the dev server with
+    threaded=True, so Werkzeug hands that request to its own
+    connection-handling thread, which is what actually runs the route
+    (and, inside it, _ensure_boot_capture_started() /
+    _sync_system_capture()) — indistinguishable, from Flask's point of
+    view, from a real page load.
+
+    Retries for a while since the HTTP server isn't listening yet at the
+    moment this thread starts (on_load() runs during blueprint
+    registration, well before app.run() is reached in app.py)."""
+    for _ in range(SELF_KICK_MAX_ATTEMPTS):
+        try:
+            urllib.request.urlopen(SELF_KICK_URL, timeout=3)
+            return  # success — _ensure_boot_capture_started() has now run
+        except Exception:
+            time_module.sleep(SELF_KICK_RETRY_SECONDS)
+    _log_error(f'self-kick: could not reach {SELF_KICK_URL} after '
+               f'{SELF_KICK_MAX_ATTEMPTS} attempts — capture was not '
+               f'auto-started this run; opening the Audio Notes page '
+               f'manually will still start it.')
 
 
 def _ensure_boot_capture_started():
@@ -436,7 +489,9 @@ def _ensure_boot_capture_started():
     request thread rather than from on_load()'s background thread — see
     the crash-safety note on _mic_active above for why that distinction
     matters. Safe to call on every request after the first: it no-ops
-    immediately once the one-time sync has run."""
+    immediately once the one-time sync has run. Normally triggered
+    automatically by _self_kick_boot_capture() a few seconds after
+    startup, without needing anyone to open the page."""
     global _boot_capture_synced
     if _boot_capture_synced:
         return
@@ -449,6 +504,30 @@ def _ensure_boot_capture_started():
         _sync_system_capture()
     except Exception:
         _log_error('boot capture sync')
+
+
+def _watchdog_resync_capture():
+    """Cheap self-healing check — call this from any real Flask request
+    thread (poll_route below calls it every ~1s while the page is open,
+    same safety rule as _ensure_boot_capture_started). If a source is
+    toggled on but its capture thread has silently died (an unhandled
+    exception surviving past _capture_loop's own try/except, a vanished
+    audio device, etc.), this restarts it; if a source is toggled off but
+    its thread is somehow still running, this stops it. Both
+    _sync_mic_capture()/_sync_system_capture() — and the _start_*/_stop_*
+    functions underneath them — already no-op almost instantly when
+    nothing needs to change, so calling this on every poll is cheap. This
+    is what was silently missing mic (or system) utterances / tags after
+    a capture thread died partway through a session with no visible
+    error."""
+    try:
+        _sync_mic_capture()
+    except Exception:
+        _log_error('watchdog: mic resync')
+    try:
+        _sync_system_capture()
+    except Exception:
+        _log_error('watchdog: system resync')
 
 
 # ── Error logging (never let a logging failure crash the caller) ─────
@@ -1214,23 +1293,42 @@ def _capture_loop(label, stop_event, is_system, out_queue, max_utterance_seconds
 # _merge_worker_loop fixes both problems by being the only thing that
 # transcribes: a single thread that looks at the oldest pending item from
 # each queue and only ever processes the one with the earlier start_dt.
-# If only one queue currently has something, that item is only "safe" to
-# process once it's older than _MAX_QUEUE_DELAY — the worst-case time an
-# utterance can sit being captured before _capture_loop is forced to flush
-# it (VAD_MAX_UTTERANCE_SECONDS + VAD_HANGOVER_SECONDS, plus a small
-# safety margin). Until then, the other source could still, in principle,
-# produce an utterance that started even earlier, so the lone item waits.
-# In normal back-and-forth conversation both queues have something to
-# compare almost all the time, so this rarely adds any real latency — the
-# worst case only shows up after one source goes completely silent for a
-# stretch.
+#
+# If only one queue currently has something, that item is processed
+# IMMEDIATELY (no wait at all) whenever the OTHER source isn't actually
+# capturing right now (toggled off, or its capture thread died) — there is
+# then no possibility of it ever producing an earlier-starting item, so
+# there's nothing to wait for. This is the common case: most of the time
+# only one of Mic/System is actually producing speech (e.g. System Audio
+# is on but nothing is currently playing through it), and that used to
+# mean every utterance sat in the queue for up to
+# VAD_MAX_UTTERANCE_SECONDS + VAD_HANGOVER_SECONDS (~28s) before
+# transcription even started, purely to guard against a source that
+# wasn't producing anything anyway.
+#
+# If the other source genuinely IS active, a lone item still waits — but
+# only for CROSS_SOURCE_MERGE_GRACE_SECONDS, not the old, fully
+# worst-case-safe ~28s. That short grace period is enough to smooth over
+# the normal case (a quick reply on one source arriving slightly ahead of
+# a still-flushing short utterance on the other), at the cost of no longer
+# guaranteeing perfect chronological order in the rare case where BOTH
+# sources are mid-way through a long (many-second) utterance at once —
+# favoring near-real-time delivery, per the tradeoff this app wants.
 #
 # Runs for the whole lifetime of the process (started once, from
 # on_load(), like _warm_model) rather than being tied to Mic/System being
 # toggled on/off — it simply idles when both queues are empty, and keeps
 # draining whatever's left even after a source is switched off, so
 # nothing already captured is ever discarded.
-_MAX_QUEUE_DELAY = VAD_MAX_UTTERANCE_SECONDS + VAD_HANGOVER_SECONDS + 0.5
+CROSS_SOURCE_MERGE_GRACE_SECONDS = 1.2
+
+
+def _mic_thread_alive():
+    return bool(_mic_capture_thread and _mic_capture_thread.is_alive())
+
+
+def _system_thread_alive():
+    return bool(_system_capture_thread and _system_capture_thread.is_alive())
 
 
 def _dequeue_nowait(q):
@@ -1258,21 +1356,31 @@ def _merge_worker_loop():
             else:
                 item, sys_head = sys_head, None
         elif mic_head is not None or sys_head is not None:
-            head = mic_head if mic_head is not None else sys_head
-            age = (datetime.now() - head[3]).total_seconds()
-            if age >= _MAX_QUEUE_DELAY:
-                # Old enough that the other (currently empty) queue could
-                # not possibly still produce anything that started earlier.
+            is_mic_head = mic_head is not None
+            head = mic_head if is_mic_head else sys_head
+            # Is the OTHER source even capable of producing something
+            # right now? If not (toggled off, or its thread died), there
+            # is nothing to wait for — process immediately.
+            opposite_capturing = _system_thread_alive() if is_mic_head else _mic_thread_alive()
+            if not opposite_capturing:
                 item = head
-                if mic_head is not None:
+                if is_mic_head:
                     mic_head = None
                 else:
                     sys_head = None
             else:
-                time_module.sleep(0.15)
-                continue
+                age = (datetime.now() - head[3]).total_seconds()
+                if age >= CROSS_SOURCE_MERGE_GRACE_SECONDS:
+                    item = head
+                    if is_mic_head:
+                        mic_head = None
+                    else:
+                        sys_head = None
+                else:
+                    time_module.sleep(0.05)
+                    continue
         else:
-            time_module.sleep(0.15)
+            time_module.sleep(0.05)
             continue
 
         raw, channels, rate, start_dt, end_dt, is_system, model_name, wants_textarea, wants_file = item
@@ -1578,13 +1686,18 @@ def audio_notes_view():
 def poll_route():
     global _pending_chunks
     _ensure_boot_capture_started()
+    _watchdog_resync_capture()
     with _lock:
         pending = ''.join(_pending_chunks)
         _pending_chunks = []
+    mic_thread_alive = bool(_mic_capture_thread and _mic_capture_thread.is_alive())
+    system_thread_alive = bool(_system_capture_thread and _system_capture_thread.is_alive())
     return jsonify({
         'pending': pending,
         'mic_active': _mic_active,
         'system_active': _system_active,
+        'mic_thread_alive': mic_thread_alive,
+        'system_thread_alive': system_thread_alive,
         'mic_processing': _mic_processing,
         'system_processing': _system_processing,
         'mic_queue_depth': _mic_queue.qsize(),

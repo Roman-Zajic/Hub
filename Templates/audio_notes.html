@@ -35,6 +35,18 @@
         white-space: nowrap;
     }
 
+    /* Vertical divider between toolbar button-groups performing different
+       kinds of tasks (sources vs. outputs vs. one-off actions), same
+       pattern as email.html's .tb-sep. */
+    .an-toolbar-sep {
+        width: 2px;
+        height: 28px;
+        background: var(--teal-400);
+        opacity: .6;
+        border-radius: 1px;
+        flex-shrink: 0;
+    }
+
     .btn-toggle {
         display: inline-flex; align-items: center; gap: 8px;
         /* Text buttons get their height from the font's line-height (1x
@@ -94,16 +106,40 @@
     }
     .btn-toggle-output.active:hover { background: var(--teal-900); border-color: var(--teal-900); }
 
+    /* Fixed width, always reserved (whether or not there's queue text to
+       show) — otherwise a button visibly resizes every time its queue
+       depth badge appears/disappears or changes digit count. */
     .an-queue-badge {
         font-size: 0.6875rem;
         opacity: .85;
         white-space: nowrap;
+        display: inline-block;
+        width: 66px;
+        text-align: left;
+        flex-shrink: 0;
+    }
+    /* Reserved width cut ~20% (66px -> 53px) — used on the Mic/System
+       badges specifically, alongside .an-btn-compact below. */
+    .an-queue-badge.compact {
+        width: 53px;
+    }
+
+    /* Mic/System buttons only — tighter horizontal padding and inter-icon
+       gap than the standard .btn/.btn-toggle sizing, so the pair reads
+       about 20% narrower overall than Text Area/File/Record/etc. */
+    .an-btn-compact {
+        padding: 9px 13px;
+        gap: 4px;
     }
 
     .an-rec-time {
         font-variant-numeric: tabular-nums;
         font-size: 0.8125rem;
         white-space: nowrap;
+        display: inline-block;
+        width: 40px;
+        text-align: left;
+        flex-shrink: 0;
     }
 
     /* Drag-over highlight on the textarea itself */
@@ -127,12 +163,16 @@
         background: var(--surface-card); border: 1px solid var(--border);
         border-radius: 6px; padding: 7px 10px; outline: none; cursor: pointer;
         transition: border-color 130ms;
-        /* Sized to fit the longest option label in full (currently the
-           Distil Large v3 entry, ~62 characters) so the select never
-           truncates whichever model is selected. +4ch buffer covers the
-           built-in dropdown arrow and proportional-font width variance
-           that a plain ch-based estimate doesn't fully account for. */
-        width: 66ch;
+        /* Sized to fit the longest option label in full ("Distil Medium
+           (English)", 24ch) so the select never truncates whichever model
+           is selected. +3ch buffer covers the built-in dropdown arrow and
+           proportional-font width variance a plain ch-based estimate
+           doesn't fully account for. overflow/text-overflow stay on as a
+           harmless safety net if a longer label is ever added later. */
+        width: 27ch;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
     }
     .an-model-select:hover { border-color: var(--teal-700); }
     .an-model-select:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
@@ -178,20 +218,23 @@
 <div class="an-root">
 
     <div class="an-toolbar">
-        <!-- LEFT: Capture toggles + Output toggles -->
+        <!-- Capture sources (Mic / System) -->
         <div class="an-button-group">
-            <button class="btn btn-outline btn-toggle{{ ' active' if mic_active else '' }}" id="micBtn" onclick="toggleMic()" title="Microphone capture on/off">
+            <button class="btn btn-outline btn-toggle an-btn-compact{{ ' active' if mic_active else '' }}" id="micBtn" onclick="toggleMic()" title="Microphone capture on/off">
                 <span class="an-dot"></span> Mic
                 <span class="an-spinner" aria-hidden="true"></span>
-                <span class="an-queue-badge" id="micQueue"></span>
+                <span class="an-queue-badge compact" id="micQueue"></span>
             </button>
-            <button class="btn btn-outline btn-toggle{{ ' active' if system_active else '' }}" id="sysBtn" onclick="toggleSystem()" title="System audio capture on/off">
+            <button class="btn btn-outline btn-toggle an-btn-compact{{ ' active' if system_active else '' }}" id="sysBtn" onclick="toggleSystem()" title="System audio capture on/off">
                 <span class="an-dot"></span> System
                 <span class="an-spinner" aria-hidden="true"></span>
-                <span class="an-queue-badge" id="sysQueue"></span>
+                <span class="an-queue-badge compact" id="sysQueue"></span>
             </button>
         </div>
 
+        <div class="an-toolbar-sep"></div>
+
+        <!-- Output destinations (Text Area / File) -->
         <div class="an-button-group">
             <button class="btn btn-outline btn-toggle btn-toggle-output{{ ' active' if output_textarea_enabled else '' }}" id="textareaBtn" onclick="toggleOutputTextarea()" title="Show transcribed text in the textarea below (from either source)">
                 Text Area
@@ -203,7 +246,34 @@
             </button>
         </div>
 
-        <!-- CENTER: Model picker -->
+        <div class="an-toolbar-sep"></div>
+
+        <!-- Sandbox text utilities -->
+        <div class="an-button-group">
+            <button class="btn btn-outline" onclick="copyNotes(this)">Copy</button>
+            <button class="btn btn-danger" onclick="clearNotes()">Clear</button>
+        </div>
+
+        <div class="an-toolbar-sep"></div>
+
+        <!-- Recording (mic + system -> WAV) + one-off file transcription -->
+        <div class="an-button-group">
+            <button class="btn btn-outline btn-toggle{{ ' active' if recording_active else '' }}" id="recordBtn" onclick="toggleRecord()" title="Records mic + system audio together into WAV">
+                <span class="an-dot"></span> Record
+                <span class="an-rec-time" id="recTime"></span>
+            </button>
+            <button class="btn btn-outline" onclick="triggerUpload()">Upload File</button>
+            <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none" onchange="handleFileInput(event)">
+        </div>
+
+        <span class="an-upload-status" id="uploadStatus">
+            <span class="an-spinner" aria-hidden="true"></span> Transcribing file&hellip;
+        </span>
+        <span class="an-status" id="saveStatus"></span>
+
+        <div class="an-spacer"></div>
+
+        <!-- Model picker (right-aligned) -->
         <div class="an-model-picker">
             <label for="modelSelect">Model</label>
             <select class="an-model-select" id="modelSelect" onchange="changeModel()">
@@ -215,22 +285,6 @@
                 <span class="an-spinner" aria-hidden="true"></span> Loading model&hellip;
             </span>
         </div>
-
-        <div class="an-spacer"></div>
-
-        <!-- RIGHT: Record + Upload -->
-        <button class="btn btn-outline btn-toggle{{ ' active' if recording_active else '' }}" id="recordBtn" onclick="toggleRecord()" title="Records mic + system audio together into WAV">
-            <span class="an-dot"></span> Record
-            <span class="an-rec-time" id="recTime"></span>
-        </button>
-        <span class="an-upload-status" id="uploadStatus">
-            <span class="an-spinner" aria-hidden="true"></span> Transcribing file&hellip;
-        </span>
-        <span class="an-status" id="saveStatus"></span>
-        <button class="btn btn-outline" onclick="triggerUpload()">Upload File</button>
-        <input type="file" id="fileInput" accept="audio/*,video/*" style="display:none" onchange="handleFileInput(event)">
-        <button class="btn btn-outline" onclick="copyNotes(this)">Copy</button>
-        <button class="btn btn-danger" onclick="clearNotes()">Clear</button>
     </div>
 
     <div class="an-textarea-wrap">
@@ -269,9 +323,19 @@
     // first-download) load happens lazily on the server the next time a
     // capture thread needs to transcribe something, and is reflected via
     // the "model_loading" flag picked up by pollTranscript() below.
+    function updateModelSelectTitle() {
+        // The select box itself is sized to the shortest option label and
+        // ellipsizes longer ones (see .an-model-select) — the title
+        // attribute is what makes the full name available on hover.
+        var opt = modelSelect.options[modelSelect.selectedIndex];
+        modelSelect.title = opt ? opt.textContent : '';
+    }
+    updateModelSelectTitle();
+
     function changeModel() {
         var model = modelSelect.value;
         modelSelect.disabled = true;
+        updateModelSelectTitle();
         fetch('/api/audio_notes/model', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -494,6 +558,6 @@
             });
     }
 
-    setInterval(pollTranscript, 1000);
+    setInterval(pollTranscript, 300);
 </script>
 {% endblock %}

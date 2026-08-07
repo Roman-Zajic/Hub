@@ -131,29 +131,26 @@
         .section-label { font-size: 0.6875rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 12px; }
 
         /* ── TIMERS WIDGET (global — visible on every module page) ──
-           Small floating pill, bottom-right, showing a live count of
-           running timers plus the soonest-to-finish one's remaining
-           time. Click it to expand into the same full detail card the
-           Timers page itself uses. Hidden entirely when there are no
-           active (running/scheduled) timers. */
+           Lives in the navbar, pushed to the far right, showing a live
+           count of running timers plus the soonest-to-finish one's
+           remaining time. Click it to expand into the same full detail
+           card the Timers page itself uses. Hidden entirely when there
+           are no active (running/scheduled) timers. */
         #tmWidget {
-            position: fixed;
-            right: 20px;
-            bottom: 20px;
-            z-index: 500;
+            margin-left: auto;
+            flex-shrink: 0;
             display: none;
             align-items: center;
             gap: 10px;
-            background: var(--teal-900);
+            background: rgba(255,255,255,.08);
             color: #fff;
             border-radius: 30px;
-            padding: 10px 18px 10px 14px;
-            box-shadow: var(--shadow-md);
+            padding: 6px 16px 6px 12px;
             cursor: pointer;
             font-family: var(--font);
             transition: background 130ms;
         }
-        #tmWidget:hover { background: var(--teal-700); }
+        #tmWidget:hover { background: rgba(255,255,255,.18); }
         #tmWidget.show { display: flex; }
         #tmWidget .tm-w-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); flex-shrink: 0; animation: tmw-pulse 1.6s ease-in-out infinite; }
         @keyframes tmw-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
@@ -227,6 +224,14 @@
         <span class="nav-brand-text">financial models</span>
         <div class="nav-pipe"></div>
         <div class="nav-module-title">{% block module_name %}{% endblock %}</div>
+
+        <!-- ── TIMERS WIDGET markup (global) ── -->
+        <div id="tmWidget" onclick="tmOpenWidget()">
+            <span class="tm-w-dot"></span>
+            <span class="tm-w-time" id="tmWidgetTime">--:--</span>
+            <span class="tm-w-label" id="tmWidgetLabel"></span>
+            <span class="tm-w-count" id="tmWidgetCount" style="display:none"></span>
+        </div>
     </header>
 
     <div class="app-body">
@@ -239,14 +244,6 @@
         <main class="main-view">
             <div class="content-area">{% block content %}{% endblock %}</div>
         </main>
-    </div>
-
-    <!-- ── TIMERS WIDGET markup (global) ── -->
-    <div id="tmWidget" onclick="tmOpenWidget()">
-        <span class="tm-w-dot"></span>
-        <span class="tm-w-time" id="tmWidgetTime">--:--</span>
-        <span class="tm-w-label" id="tmWidgetLabel"></span>
-        <span class="tm-w-count" id="tmWidgetCount" style="display:none"></span>
     </div>
 
     <div id="tmWidgetOverlay" onclick="tmWidgetOverlayClick(event)">

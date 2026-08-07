@@ -51,11 +51,13 @@ import json
 import os
 import re
 import threading
+import urllib.parse
 from datetime import datetime
+from html import escape as _html_escape
 
 import markdown
 from markdown_checklist.extension import ChecklistExtension
-from flask import Blueprint, render_template, request, jsonify
+from flask import Blueprint, render_template, request, jsonify, send_from_directory
 
 # ── Module metadata (read by app.py's auto-discovery) ───────────────
 NAV_LABEL = 'Notes (Sync)'
@@ -91,6 +93,27 @@ GITHUB_API = 'https://api.github.com'
 _META_RE = re.compile(r'\n?<!--meta:created=(?P<created>[^|]*)\|modified=(?P<modified>.*?)-->\s*\Z', re.DOTALL)
 
 _WIKILINK_RE = re.compile(r'\[\[(.+?)\]\]')
+
+# ── Local-file links ─────────────────────────────────────────────────
+# See the matching comment in notes.py — a browser cannot launch a
+# desktop app for a local path, so any markdown link that looks like one
+# is routed through /notes_sync/file, which sends it back as a download
+# instead.
+_LOCAL_PATH_RE = re.compile(r'^(?:[A-Za-z]:[\\/]|\\\\|file:///?)', re.IGNORECASE)
+_MD_LINK_RE = re.compile(r'\[([^\[\]]+)\]\(([^()]+)\)')
+
+
+def _convert_local_file_link(match):
+    label, target = match.group(1), match.group(2).strip()
+    if not _LOCAL_PATH_RE.match(target):
+        return match.group(0)
+    raw_path = target
+    if raw_path.lower().startswith('file:///'):
+        raw_path = urllib.parse.unquote(raw_path[8:])
+    elif raw_path.lower().startswith('file://'):
+        raw_path = urllib.parse.unquote(raw_path[7:])
+    encoded = urllib.parse.quote(raw_path, safe='')
+    return f'[{label}](localfile:{encoded})'
 
 
 def _resolve_wikilink_target(raw_target, all_paths):
@@ -288,7 +311,7 @@ def _gh_headers(token):
 def _gh_get_tree(owner, repo, branch, token):
     import requests
     url = f'{GITHUB_API}/repos/{owner}/{repo}/git/trees/{branch}'
-    r = requests.get(url, headers=_gh_headers(token), params={'recursive': '1'}, timeout=30, verify=False)
+    r = requests.get(url, headers=_gh_headers(token), params={'recursive': '1'}, timeout=30)
     if r.status_code == 404:
         raise RuntimeError(f'Repo or branch not found ({owner}/{repo}@{branch}). Check Settings.')
     if r.status_code == 401:
@@ -304,7 +327,7 @@ def _gh_get_tree(owner, repo, branch, token):
 def _gh_get_blob(owner, repo, sha, token):
     import requests
     url = f'{GITHUB_API}/repos/{owner}/{repo}/git/blobs/{sha}'
-    r = requests.get(url, headers=_gh_headers(token), timeout=30, verify=False)
+    r = requests.get(url, headers=_gh_headers(token), timeout=30)
     r.raise_for_status()
     data = r.json()
     content = data.get('content', '')
@@ -323,7 +346,7 @@ def _gh_put_file(owner, repo, path, branch, token, text, message, sha=None):
     }
     if sha:
         body['sha'] = sha
-    r = requests.put(url, headers=_gh_headers(token), json=body, timeout=30, verify=False)
+    r = requests.put(url, headers=_gh_headers(token), json=body, timeout=30)
     if not r.ok:
         raise RuntimeError(f'GitHub rejected the update for "{path}": {r.status_code} {r.text[:200]}')
     return r.json()['content']['sha']
@@ -333,7 +356,7 @@ def _gh_delete_file(owner, repo, path, branch, token, sha, message):
     import requests
     url = f'{GITHUB_API}/repos/{owner}/{repo}/contents/{path}'
     body = {'message': message, 'sha': sha, 'branch': branch}
-    r = requests.delete(url, headers=_gh_headers(token), json=body, timeout=30, verify=False)
+    r = requests.delete(url, headers=_gh_headers(token), json=body, timeout=30)
     if not r.ok:
         raise RuntimeError(f'GitHub rejected the delete for "{path}": {r.status_code} {r.text[:200]}')
 
@@ -677,6 +700,18 @@ def notes_meta():
     return jsonify({'notes': result})
 
 
+@bp.route('/notes_sync/file')
+def serve_local_file():
+    """See notes.py's serve_local_file — same idea, backs this vault's
+    localfile: links."""
+    path = request.args.get('path', '')
+    if not path or not os.path.isfile(path):
+        return 'File not found.', 404
+    directory = os.path.dirname(path) or '.'
+    filename = os.path.basename(path)
+    return send_from_directory(directory, filename, as_attachment=True)
+
+
 @bp.route('/notes_sync/graph')
 def notes_graph():
     note_files = _local_note_paths()
@@ -709,6 +744,25 @@ _ADMONITION_START_RE = re.compile(r'^!!!')
 _INDENTED_RE = re.compile(r'^(?: {4,}|\t)')
 
 
+def _add_hard_breaks(lines):
+    """Turns every single line break inside an admonition body into a real
+    <br> (via markdown's two-trailing-spaces hard-break syntax) instead of
+    being silently folded into the previous line — this is what
+    previously made a callout need a blank line between every line to
+    show a visible break. A blank line (an intentional paragraph
+    separator within the callout) is left alone."""
+    out = []
+    n = len(lines)
+    for i, line in enumerate(lines):
+        stripped = line.rstrip()
+        if stripped == '':
+            out.append(line)
+            continue
+        next_blank = (i + 1 >= n) or (lines[i + 1].strip() == '')
+        out.append(stripped if next_blank else stripped + '  ')
+    return out
+
+
 def _extract_admonitions(content, extract_other):
     lines = content.split('\n')
     out = []
@@ -733,7 +787,8 @@ def _extract_admonitions(content, extract_other):
                         break
                 else:
                     break
-            out.append(extract_other('\n'.join(block)))
+            processed = [block[0]] + _add_hard_breaks(block[1:])
+            out.append(extract_other('\n'.join(processed)))
         else:
             out.append(line)
             i += 1
@@ -761,6 +816,27 @@ def preview_note():
 
     content = re.sub(r'```[\s\S]*?```', extract_code, content)
 
+    # Protect LaTeX math the same way as the plain Notes module — see the
+    # matching comment in notes.py. \( ... \) inline, $$ ... $$ or
+    # \[ ... \] display; deliberately not bare single $...$ since that
+    # clashes with plain dollar amounts.
+    # Plain "__word__"-shaped placeholders get silently mangled here:
+    # markdown's own bold/italic parser treats the leading/trailing "__"
+    # as emphasis markup and strips it, so the literal token no longer
+    # exists by the time we try to swap the real LaTeX back in below.
+    # Private-Use-Area characters have no markdown meaning at all, so
+    # they pass through untouched.
+    _MATH_OPEN, _MATH_CLOSE = '\uE000', '\uE001'
+    math_blocks = []
+
+    def extract_math(match):
+        math_blocks.append(match.group(0))
+        return f"{_MATH_OPEN}{len(math_blocks) - 1}{_MATH_CLOSE}"
+
+    content = re.sub(r'\$\$[\s\S]+?\$\$', extract_math, content)
+    content = re.sub(r'\\\[[\s\S]+?\\\]', extract_math, content)
+    content = re.sub(r'\\\([\s\S]+?\\\)', extract_math, content)
+
     content = re.sub(r'^#\+ +(.+)$', r'# \1', content, flags=re.MULTILINE)
     content = re.sub(r'^#- +(.+)$', r'# \1 {: .collapsed}', content, flags=re.MULTILINE)
 
@@ -772,6 +848,7 @@ def preview_note():
 
     content = re.sub(r'`[^`\n]+`', extract_inline_code, content)
     content = re.sub(r'\[\[(.+?)\]\]', _convert_wiki_link, content)
+    content = _MD_LINK_RE.sub(_convert_local_file_link, content)
     for i, code in enumerate(inline_code):
         content = content.replace(f"__MAGIC_INLINE_CODE_{i}__", code)
 
@@ -805,4 +882,8 @@ def preview_note():
         r'\1 target="_blank" rel="noopener noreferrer"',
         html,
     )
+
+    for i, block in enumerate(math_blocks):
+        html = html.replace(f"{_MATH_OPEN}{i}{_MATH_CLOSE}", _html_escape(block))
+
     return jsonify({'html': html})

@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Broadcaster Output</title>
+<style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
+    #outputImg { width: 100%; height: 100%; object-fit: contain; display: block; }
+    #hint {
+        position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+        background: rgba(0,0,0,.65); color: #fff;
+        font-family: "Segoe UI", system-ui, sans-serif; font-size: 13px;
+        padding: 8px 18px; border-radius: 20px;
+        opacity: 0; transition: opacity 200ms; pointer-events: none; white-space: nowrap;
+    }
+    body.show-hint #hint { opacity: 1; }
+</style>
+</head>
+<body>
+    <img id="outputImg" src="/broadcaster/preview.mjpg" alt="">
+    <div id="hint">Press F for full screen — scenes and sounds switch via your configured hotkeys</div>
+
+    <script>
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'f' || e.key === 'F') {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(function () {});
+                } else {
+                    document.exitFullscreen();
+                }
+            }
+        });
+
+        var hintTimer = null;
+        function showHintBriefly() {
+            document.body.classList.add('show-hint');
+            clearTimeout(hintTimer);
+            hintTimer = setTimeout(function () { document.body.classList.remove('show-hint'); }, 2200);
+        }
+        document.addEventListener('mousemove', showHintBriefly);
+        showHintBriefly();
+    </script>
+</body>
+</html>

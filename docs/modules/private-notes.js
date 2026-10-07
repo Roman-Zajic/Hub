@@ -15,6 +15,7 @@ export const meta = { title: 'Private Notes' };
 
 const PN_SUBDIR = '';   // optional extra sub-folder inside the Settings folder, e.g. 'private'
 const DAILY = 'Daily';
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const CDN = {
     marked: 'https://cdn.jsdelivr.net/npm/marked@15/marked.min.js',
     d3: 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js',
@@ -151,25 +152,34 @@ const CSS = `
 .pn .pn-dashed:hover{background:var(--surface-in);color:var(--teal-700)}
 .pn .pn-dashed svg{width:15px;height:15px}
 .pn .pn-graphbar{border-top:1px solid var(--border);padding:0 10px 10px;padding-top:10px;flex-shrink:0;display:flex}
-.pn .file-list{padding:10px 8px}
-.pn .folder-header{padding:5px 8px 5px 2px;font-size:.8125rem;font-weight:700;color:var(--ink);gap:2px;user-select:none}
-.pn .folder-header:hover{background:var(--surface-in)}
-.pn .folder-header.selected-folder{background:var(--teal-100);color:var(--ink)}
-.pn .folder-header.root-header{padding-left:8px;margin:0 0 2px;border:0;text-transform:uppercase;letter-spacing:.05em;font-size:.6875rem;color:var(--teal-700)}
-.pn .folder-header.root-header.selected-folder{color:var(--ink)}
-.pn .folder-chevron{width:22px;height:22px;border-radius:4px;color:var(--teal-700);cursor:pointer}
-.pn .folder-chevron:hover{background:rgba(0,130,130,.14)}
+.pn .folder-chevron{width:18px;height:18px;color:var(--teal-700)}
 .pn .folder-chevron svg{width:18px;height:18px}
-.pn .folder-content{margin-left:11px;padding-left:10px;border-left:3px solid var(--teal-100)}
-.pn .file-item{padding:5px 8px;font-size:.75rem;font-weight:400}
+.pn .folder-header{gap:4px}
+.pn .folder-content{margin-left:16px;padding-left:12px;border-left:3px solid var(--teal-100)}
 .pn .file-item.conflict{color:var(--amber)}
 .pn .file-item.unsynced::after{content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);margin-left:6px;vertical-align:middle}
 
 .pn .editor-textarea:hover{border-color:var(--teal-700)}
 .pn .editor-textarea:focus{border-color:var(--teal-700);box-shadow:0 0 0 3px rgba(0,130,130,.15)}
-.pn .pn-footer{display:flex;gap:8px;align-items:center;padding-top:4px}
-.pn .pn-path{font-size:.6875rem;color:var(--text-muted);white-space:nowrap}
-.pn .pn-status{font-size:.625rem;color:var(--teal-400);font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-left:auto;white-space:nowrap}
+.pn .pn-banner{display:flex;align-items:center;gap:16px;padding:12px 16px;background:var(--surface-card);border:1px solid var(--border);border-radius:var(--r);box-shadow:var(--shadow);flex-shrink:0}
+.pn .pn-banner-main{flex:1;min-width:0}
+.pn .pn-title-view{display:block;font-size:1.25rem;font-weight:700;color:var(--teal-900);line-height:1.3;cursor:text;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;border-radius:4px;padding:0 4px;margin:0 -4px;transition:background 130ms}
+.pn .pn-title-view:hover:not(.static){background:var(--surface-in)}
+.pn .pn-title-view.placeholder{color:var(--text-muted);font-weight:500;font-style:italic}
+.pn .pn-title-view.static{cursor:default}
+.pn .pn-title-input{width:100%;height:34px;font-family:var(--font);font-size:1.0625rem;font-weight:600;color:var(--teal-900);background:var(--surface-in);border:1px solid var(--teal-700);border-radius:6px;padding:0 10px;outline:none;box-shadow:0 0 0 3px rgba(0,130,130,.15)}
+.pn .pn-meta{font-size:.6875rem;color:var(--text-muted);margin-top:2px}
+.pn .pn-meta:empty{display:none}
+.pn .pn-status{white-space:nowrap;font-size:.625rem;color:var(--teal-400);font-weight:600;text-transform:uppercase;letter-spacing:.06em}
+.pn .pn-banner-actions{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.pn .pn-seg{display:inline-flex;border:1px solid var(--teal-900);border-radius:6px;overflow:hidden;height:30px}
+.pn .pn-seg button{border:0;background:transparent;color:var(--teal-900);font-family:var(--font);font-size:.75rem;font-weight:600;padding:0 14px;cursor:pointer;transition:background 130ms,color 130ms}
+.pn .pn-seg button+button{border-left:1px solid var(--teal-900)}
+.pn .pn-seg button.on{background:var(--teal-900);color:#fff}
+.pn .pn-seg button:not(.on):hover{background:rgba(0,90,90,.08)}
+.pn .pn-icon-btn{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;background:var(--surface-card);color:var(--text-muted);cursor:pointer;transition:background 130ms,border-color 130ms,color 130ms}
+.pn .pn-icon-btn.danger:hover{background:var(--red);border-color:var(--red);color:#fff}
+@media (max-width:768px){.pn .pn-banner{flex-wrap:wrap}}
 .pn .pn-hint{color:var(--text-muted);font-size:.8125rem}
 
 .pn .pn-toast{position:fixed;bottom:22px;right:22px;background:var(--teal-900);color:#fff;font-size:.8125rem;font-weight:600;padding:11px 18px;border-radius:7px;box-shadow:var(--shadow-md);opacity:0;transform:translateY(8px);transition:opacity 180ms,transform 180ms;pointer-events:none;z-index:2000;max-width:min(420px,90vw)}
@@ -301,16 +311,25 @@ const TEMPLATE = `
     </div>
 
     <div class="editor-panel">
+      <div class="pn-banner">
+        <div class="pn-banner-main">
+          <span id="pn-title-view" class="pn-title-view" title="Click to rename"></span>
+          <input type="text" id="pn-title" class="pn-title-input" style="display:none" spellcheck="false" placeholder="Folder/Subfolder/note name">
+          <div class="pn-meta" id="pn-modified"></div>
+        </div>
+        <div class="pn-banner-actions" id="pn-controls" style="display:none">
+          <span class="pn-status" id="pn-status"></span>
+          <button class="btn btn-primary btn-sm" id="pn-save-btn" style="display:none">Save</button>
+          <div class="pn-seg" role="group" aria-label="Mode">
+            <button type="button" id="pn-seg-preview" class="on">Preview</button><button type="button" id="pn-seg-edit">Edit</button>
+          </div>
+          <button type="button" class="pn-icon-btn danger" id="pn-del-btn" title="Delete note" style="display:none">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+          </button>
+        </div>
+      </div>
       <textarea id="pn-editor" class="editor-textarea" style="display:none" placeholder="# Start writing…&#10;&#10;#+ Heading = expanded section, #- Heading = starts collapsed.&#10;[[Note name]] links notes. !!! warning &quot;Title&quot; + indented lines = callout."></textarea>
       <div id="pn-preview" class="preview-area" style="display:block"><div class="pn-hint">Select a note on the left, or create a new one.</div></div>
-      <div class="pn-footer">
-        <span class="pn-path" id="pn-path">Notes /</span>
-        <input type="text" id="pn-title" class="input" style="flex:1" placeholder="filename, or Folder/Subfolder/filename to nest it" title="Type a path with / to file this note into subfolders — they're created automatically.">
-        <span class="pn-status" id="pn-status"></span>
-        <button class="btn btn-primary" id="pn-save-btn" style="display:none">Save note</button>
-        <button class="btn btn-outline" id="pn-toggle-btn">Edit</button>
-        <button class="btn btn-danger" id="pn-del-btn" style="display:none">Delete</button>
-      </div>
     </div>
   </div>
 
@@ -360,8 +379,9 @@ export async function render(root, App) {
 
     const el = {
         search: $('#pn-search'), tree: $('#pn-tree'), badge: $('#pn-badge'), syncBtn: $('#pn-sync-btn'), calBtn: $('#pn-cal-btn'),
-        editor: $('#pn-editor'), preview: $('#pn-preview'), path: $('#pn-path'), title: $('#pn-title'), status: $('#pn-status'),
-        save: $('#pn-save-btn'), toggle: $('#pn-toggle-btn'), del: $('#pn-del-btn'), toast: $('#pn-toast')
+        editor: $('#pn-editor'), preview: $('#pn-preview'), title: $('#pn-title'), titleView: $('#pn-title-view'), modified: $('#pn-modified'),
+        status: $('#pn-status'), controls: $('#pn-controls'), save: $('#pn-save-btn'), del: $('#pn-del-btn'),
+        segPreview: $('#pn-seg-preview'), segEdit: $('#pn-seg-edit'), toast: $('#pn-toast')
     };
 
     // Non-fatal: if offline, notes still open (as plain text) and edit normally.
@@ -383,7 +403,7 @@ export async function render(root, App) {
     }
 
     // ── State ────────────────────────────────────────────────────────────
-    let activeFolder = '', workingDir = '', originalPath = '', isNew = false, isPreview = true;
+    let workingDir = null, originalPath = '', isNew = false, isPreview = true;
     let saveTimer = null, searchQuery = '', matching = null, searchTimer = null, syncing = false;
     let from = null, to = null;                         // applied date filter
     let calY, calM, calStart = null, calEnd = null, calCounts = {};
@@ -431,7 +451,7 @@ export async function render(root, App) {
 
         // "Notes" root row: click = make the top level the working directory
         const rootHeader = document.createElement('div');
-        rootHeader.className = 'folder-header root-header' + (workingDir === '' ? ' selected-folder' : '');
+        rootHeader.className = 'folder-header' + (workingDir === '' ? ' selected-folder' : '');
         rootHeader.textContent = 'Notes';
         rootHeader.onclick = () => selectFolder('');
         const rootContent = document.createElement('div');
@@ -442,17 +462,20 @@ export async function render(root, App) {
         if (!visible.length) {
             rootContent.insertAdjacentHTML('beforeend', `<div class="pn-empty">${matching ? 'No matching notes' : 'No notes yet. Create one, or press sync to pull from GitHub.'}</div>`);
         }
-        $('#pn-new-btn').title = 'New note in ' + (workingDir ? workingDir + '/' : 'the top level');
+        $('#pn-new-btn').title = 'New note in ' + (workingDir ? workingDir + '/' : 'the top level (click a folder to change)');
         el.tree.scrollTop = scroll;
         updateBadge();
     }
 
-    // Folder name = select as working directory (opens it if closed; a second click on the
-    // selected folder collapses it). Chevron = collapse/expand only.
+    // Folder name = pick it as the working directory (opens it if closed; a second click on the
+    // picked folder collapses it). Chevron = collapse/expand only. Opening a note never highlights its folder.
     function selectFolder(full) {
         if (full && workingDir === full) toggleFolder(full);
         else { workingDir = full; expandTo(full); }
-        if (isNew) { activeFolder = workingDir; setPathLabel(); }
+        if (isNew) {   // a note still being created follows the picked folder
+            el.title.value = (workingDir ? workingDir + '/' : '') + el.title.value.split('/').pop();
+            refreshBanner();
+        }
         buildTree();
     }
     function toggleFolder(full) { expanded.has(full) ? expanded.delete(full) : expanded.add(full); buildTree(); }
@@ -463,8 +486,10 @@ export async function render(root, App) {
 
     // Recursive: works for any folder depth (Work/Clients/Acme/…)
     function renderLevel(node, container, folder, forceOpen) {
+        // Daily/ is pinned first and listed newest → oldest (years, months, days)
+        const desc = folder === DAILY || folder.startsWith(DAILY + '/');
         Object.keys(node.children)
-            .sort((a, b) => (!folder && a === DAILY ? -1 : !folder && b === DAILY ? 1 : a.localeCompare(b)))
+            .sort((a, b) => (!folder && a === DAILY ? -1 : !folder && b === DAILY ? 1 : desc ? b.localeCompare(a) : a.localeCompare(b)))
             .forEach(name => {
                 const full = folder ? `${folder}/${name}` : name;
                 const open = forceOpen || expanded.has(full);
@@ -486,7 +511,7 @@ export async function render(root, App) {
                 renderLevel(node.children[name], content, full, forceOpen);
             });
 
-        node.items.forEach(({ path, label }) => {
+        (desc ? [...node.items].reverse() : node.items).forEach(({ path, label }) => {
             const div = document.createElement('div');
             const n = vault.notes[path];
             div.className = 'file-item' + (path === originalPath ? ' active' : '') + (n && isDirty(n) ? ' unsynced' : '') + (/\.conflict-\d{8}-\d{6}$/.test(label) ? ' conflict' : '');
@@ -567,11 +592,13 @@ export async function render(root, App) {
         isPreview = mode === 'preview';
         if (isPreview) {
             showPreview(scrollToMatch);
-            el.editor.style.display = 'none'; el.preview.style.display = 'block'; el.toggle.textContent = 'Edit';
+            el.editor.style.display = 'none'; el.preview.style.display = 'block';
         } else {
-            el.preview.style.display = 'none'; el.editor.style.display = 'block'; el.toggle.textContent = 'Preview';
+            el.preview.style.display = 'none'; el.editor.style.display = 'block';
             el.editor.focus();
         }
+        el.segPreview.classList.toggle('on', isPreview);
+        el.segEdit.classList.toggle('on', !isPreview);
     }
 
     function attachToc() {
@@ -669,19 +696,61 @@ export async function render(root, App) {
         const clean = name.split('|')[0].trim().replace(/\.md$/i, '');
         if (!confirm(`Note "${clean}" does not exist. Create it?`)) return;
         await newNote();
-        activeFolder = ''; setPathLabel();
-        el.title.value = clean;
+        el.title.value = clean;   // [[links]] are top-level paths, not relative to the picked folder
+        refreshBanner();
         el.editor.value = `# ${clean.split('/').pop()}\n\n`;
         setMode('edit');
     }
 
-    // ── Open / create / save / delete ────────────────────────────────────
-    function setPathLabel() { el.path.textContent = (activeFolder || 'Notes') + ' /'; }
+    // ── Banner: title (click to rename), mode toggle, delete ──
+    function refreshBanner() {
+        const has = isNew || !!originalPath;
+        const name = el.title.value.split('/').pop().trim();
+        el.titleView.textContent = name || (has ? 'Untitled note' : 'No note selected');
+        el.titleView.classList.toggle('placeholder', !name);
+        el.titleView.classList.toggle('static', !has);
+        el.controls.style.display = has ? 'flex' : 'none';
+        el.save.style.display = isNew ? '' : 'none';
+        el.del.style.display = originalPath ? '' : 'none';
+        if (el.title.style.display === 'none') el.modified.textContent = '';
+        el.segPreview.classList.toggle('on', isPreview);
+        el.segEdit.classList.toggle('on', !isPreview);
+    }
 
+    // The title shows only the note's name. Clicking it reveals the FULL path (folders included) to edit.
+    let titleBefore = '', cancelTitle = false;
+    function startTitleEdit() {
+        if (!(isNew || originalPath) || el.title.style.display !== 'none') return;
+        titleBefore = el.title.value;
+        el.titleView.style.display = 'none';
+        el.title.style.display = 'block';
+        el.modified.textContent = 'Full path — use / to put the note in (or move it to) a folder · Enter to confirm, Esc to cancel';
+        el.title.focus();
+        el.title.setSelectionRange(el.title.value.length, el.title.value.length);
+    }
+    async function endTitleEdit(cancel) {
+        if (el.title.style.display === 'none') return;
+        el.title.style.display = 'none';
+        el.titleView.style.display = '';
+        if (cancel) el.title.value = titleBefore;
+        else if (!isNew && originalPath && targetPath() !== originalPath) {
+            if (targetPath()) await saveNote();   // rename / move now
+            el.title.value = originalPath.replace(/\.md$/, '');   // also reverts if the name was empty or taken
+        }
+        refreshBanner();
+    }
+    el.titleView.onclick = startTitleEdit;
+    el.title.onblur = () => { const c = cancelTitle; cancelTitle = false; endTitleEdit(c); };
+    el.title.onkeydown = e => {
+        if (e.key === 'Enter') { e.preventDefault(); el.title.blur(); }
+        else if (e.key === 'Escape') { cancelTitle = true; el.title.blur(); }
+    };
+
+    // ── Open / create / save / delete ────────────────────────────────────
     async function flushSave() {
         if (!saveTimer) return;
         clearTimeout(saveTimer); saveTimer = null;
-        await saveNote();
+        await saveNote(true);
     }
 
     async function loadNote(path) {
@@ -689,52 +758,39 @@ export async function render(root, App) {
         const n = vault.notes[path];
         if (!n) return;
         isNew = false; originalPath = path;
-        const parts = path.split('/');
-        const name = parts.pop().replace(/\.md$/, '');
-        activeFolder = workingDir = parts.join('/');
-        expandTo(activeFolder);
-        el.title.value = name; el.editor.value = n.content;
-        el.status.textContent = ''; el.save.style.display = 'none'; el.del.style.display = 'flex';
-        setPathLabel();
+        expandTo(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');   // reveal it in the tree (no highlight)
+        el.title.value = path.replace(/\.md$/, ''); el.editor.value = n.content; el.status.textContent = '';
         setMode('preview', true);
-        buildTree();
+        refreshBanner(); buildTree();
     }
 
     async function newNote() {
         await flushSave();
-        isNew = true; originalPath = ''; activeFolder = workingDir;
-        el.title.value = ''; el.editor.value = '';
-        el.del.style.display = 'none'; el.save.style.display = 'flex'; el.status.textContent = '';
-        setPathLabel(); setMode('edit'); el.title.focus();
-        buildTree();
+        isNew = true; originalPath = '';
+        el.title.value = workingDir ? workingDir + '/' : '';   // starts in the picked folder
+        el.editor.value = ''; el.status.textContent = '';
+        setMode('edit'); refreshBanner(); buildTree();
+        startTitleEdit();
     }
 
-    function scheduleSave() {
-        const name = el.title.value.trim();
-        if (!name) return;
+    function scheduleSave() {   // existing notes autosave; new notes wait for Save
+        if (isNew || !originalPath) return;
         clearTimeout(saveTimer);
-        const path = targetPath();
-        if (isNew || path !== originalPath) {   // new / renamed notes need an explicit Save
-            el.save.style.display = 'flex';
-            el.status.textContent = isNew ? '' : '(Unsaved name change)';
-            saveTimer = null;
-            return;
-        }
-        el.save.style.display = 'none';
         el.status.textContent = 'Saving…';
-        saveTimer = setTimeout(() => { saveTimer = null; saveNote(); }, 800);
+        saveTimer = setTimeout(() => { saveTimer = null; saveNote(true); }, 800);
     }
     el.editor.oninput = scheduleSave;
-    el.title.oninput = scheduleSave;
 
     function targetPath() {
-        const name = el.title.value.trim().replace(/\.md$/i, '');
-        return ((activeFolder ? activeFolder + '/' : '') + name + '.md').replace(/\/+/g, '/').replace(/^\//, '');
+        const raw = el.title.value.trim().replace(/\.md$/i, '');
+        if (!raw || raw.endsWith('/')) return '';
+        return raw.split('/').map(x => x.trim()).filter(Boolean).join('/') + '.md';
     }
 
-    async function saveNote() {
-        if (!el.title.value.trim()) { alert('Please enter a filename'); el.title.focus(); return; }
-        const path = targetPath(), renamed = originalPath && path !== originalPath;
+    async function saveNote(contentOnly = false) {
+        const path = contentOnly && originalPath ? originalPath : targetPath();   // autosave never renames mid-typing
+        if (!path) { toast('Name the note first — click the title.', true); startTitleEdit(); return; }
+        const renamed = originalPath && path !== originalPath;
         if ((isNew || renamed) && vault.notes[path]) { alert(`A note named "${path}" already exists.`); return; }
 
         const now = nowStr(), content = el.editor.value, h = hash(content);
@@ -750,14 +806,11 @@ export async function render(root, App) {
             await persist();
         }
         isNew = false; originalPath = path;
-        el.title.value = path.split('/').pop().replace(/\.md$/, '');
-        activeFolder = workingDir = path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '';
-        expandTo(activeFolder);
-        el.save.style.display = 'none'; el.del.style.display = 'flex';
+        el.title.value = path.replace(/\.md$/, '');
+        expandTo(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');   // nested folders open so the note is visible
         el.status.textContent = 'Saved';
         setTimeout(() => { if (el.status.textContent === 'Saved') el.status.textContent = ''; }, 2000);
-        setPathLabel();
-        buildTree();
+        refreshBanner(); buildTree();
     }
 
     async function deleteNote() {
@@ -766,31 +819,59 @@ export async function render(root, App) {
         removeNote(originalPath);
         await persist();
         originalPath = ''; isNew = false;
-        if (workingDir && !paths().some(p => p.startsWith(workingDir + '/'))) workingDir = '';
-        activeFolder = workingDir;
+        if (workingDir && !paths().some(p => p.startsWith(workingDir + '/'))) workingDir = null;
         el.title.value = ''; el.editor.value = ''; el.status.textContent = '';
-        el.del.style.display = 'none'; el.save.style.display = 'none';
         setMode('preview');
         el.preview.innerHTML = '<div class="pn-hint">Note deleted. It will be removed from GitHub on the next sync.</div>';
-        setPathLabel(); buildTree();
+        refreshBanner(); buildTree();
+    }
+
+    // Daily notes: the newest DAILY_KEEP stay directly in Daily/; older ones are filed into
+    // Daily/Archive/<year>/<MM-Month>/ — this happens when a NEW daily note is created.
+    const DAILY_KEEP = 10;
+    const DAILY_RE = /^Daily\/(?:Archive\/)?(?:\d{4}\/\d{2}-[A-Za-z]+\/)?(\d{4})-(\d{2})-(\d{2})\.md$/;
+    const LEGACY_DAILY_RE = /^Daily\/\d{4}\/\d{2}-[A-Za-z]+\//;   // earlier layout: Daily/<year>/<month>/…
+
+    function tidyDaily() {
+        const found = Object.keys(vault.notes).map(p => ({ p, m: p.match(DAILY_RE) })).filter(x => x.m && +x.m[2] >= 1 && +x.m[2] <= 12);
+        found.sort((a, b) => b.m.slice(1).join('-').localeCompare(a.m.slice(1).join('-')));
+        let moved = 0;
+        found.forEach(({ p, m }, i) => {
+            const [, y, mo, d] = m, file = `${y}-${mo}-${d}.md`;
+            const np = i < DAILY_KEEP ? `${DAILY}/${file}` : `${DAILY}/Archive/${y}/${mo}-${MONTHS[+mo - 1]}/${file}`;
+            if (np === p || vault.notes[np]) return;
+            const n = vault.notes[p], sha = vault.deleted[np];
+            removeNote(p);
+            delete vault.deleted[np];   // moving back onto a path pending deletion → update it instead
+            vault.notes[np] = { ...n, sh: undefined, sha };
+            if (originalPath === p) { originalPath = np; el.title.value = np.replace(/\.md$/, ''); }
+            moved++;
+        });
+        return moved;
     }
 
     async function openDaily() {
         await flushSave();
-        const d = new Date(), path = `${DAILY}/${isoDate(d)}.md`;
-        if (!vault.notes[path]) {
-            const pretty = `${d.toLocaleDateString('en-US', { weekday: 'long' })}, ${pad(d.getDate())} ${d.toLocaleDateString('en-US', { month: 'long' })} ${d.getFullYear()}`;
-            const content = `# ${pretty}\n\n## Tasks\n- [ ] \n\n## Daily Notes\n\n`, now = nowStr(), h = hash(content);
-            vault.notes[path] = { content, created: now, modified: now, h, sh: undefined, sha: vault.deleted[path] };
+        const file = isoDate(new Date()) + '.md';
+        let path = paths().find(p => DAILY_RE.test(p) && p.endsWith('/' + file));
+        if (!path) {
+            const d = new Date(), now = nowStr();
+            const pretty = `${d.toLocaleDateString('en-US', { weekday: 'long' })}, ${pad(d.getDate())} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+            const content = `# ${pretty}\n\n## Tasks\n- [ ] \n\n## Daily Notes\n\n`;
+            path = `${DAILY}/${file}`;
+            vault.notes[path] = { content, created: now, modified: now, h: hash(content), sh: undefined, sha: vault.deleted[path] };
             delete vault.deleted[path];
+            const moved = tidyDaily();   // new daily note → archive whatever fell out of the last 10
             await persist();
+            if (moved) toast(`Archived ${moved} older daily note${moved > 1 ? 's' : ''} into Daily/Archive/`);
         }
         expanded.add(DAILY);
         loadNote(path);
     }
 
-    el.toggle.onclick = () => setMode(isPreview ? 'edit' : 'preview');
-    el.save.onclick = saveNote;
+    el.segPreview.onclick = () => { if (!isPreview) setMode('preview'); };
+    el.segEdit.onclick = () => { if (isPreview) setMode('edit'); };
+    el.save.onclick = () => saveNote();
     el.del.onclick = deleteNote;
     $('#pn-new-btn').onclick = newNote;
     $('#pn-daily-btn').onclick = openDaily;
@@ -804,7 +885,6 @@ export async function render(root, App) {
 
     // ── Date-range calendar ──────────────────────────────────────────────
     const overlayCal = $('#pn-cal-overlay');
-    const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 
     function openCalendar() {
         const now = new Date();
@@ -1013,6 +1093,8 @@ export async function render(root, App) {
         }
         for (const rel of Object.keys(vault.deleted)) if (!remote[rel]) delete vault.deleted[rel];
 
+        if (Object.keys(vault.notes).some(p => LEGACY_DAILY_RE.test(p))) tidyDaily();   // earlier Daily/<year>/<month> layout
+
         // 3. Push local adds/updates (sequential — parallel commits to one branch collide)
         for (const [rel, n] of Object.entries(vault.notes)) {
             if (!isDirty(n) || conflicted.has(rel)) continue;
@@ -1069,13 +1151,18 @@ export async function render(root, App) {
         } finally {
             await persist();
             syncing = false; el.syncBtn.classList.remove('spin'); el.syncBtn.disabled = false;
-            buildTree();
+            buildTree(); refreshBanner();
         }
     }
     el.syncBtn.onclick = runSync;
 
     // ── Go ───────────────────────────────────────────────────────────────
-    setPathLabel();
+    expanded.add(DAILY);   // recent daily notes are visible straight away
+    if (Object.keys(vault.notes).some(p => LEGACY_DAILY_RE.test(p))) {   // one-time: earlier Daily/<year>/<month> layout
+        const n = tidyDaily();
+        if (n) { await persist(); toast(`Reorganised ${n} daily note${n > 1 ? 's' : ''}: latest ${DAILY_KEEP} in Daily/, older in Daily/Archive/`); }
+    }
+    refreshBanner();
     buildTree();
     // First run on this browser: pull everything once so the vault isn't empty
     if (!vault.lastSynced && !Object.keys(vault.notes).length && await getCfg()) runSync();

@@ -24,10 +24,6 @@
                     <input type="password" id="set-gh-token" class="input" placeholder="ghp_...">
                 </div>
                 <div class="field">
-                    <label class="field-label">Notes Folder in Repo (optional)</label>
-                    <input type="text" id="set-gh-folder" class="input" placeholder="e.g. notes (leave empty for repo root)">
-                </div>
-                <div class="field">
                     <label class="field-label">Local Work Folder (Desktop)</label>
                     <button id="set-local-folder" class="btn btn-outline">Select Folder</button>
                     <div id="set-local-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">No folder selected</div>

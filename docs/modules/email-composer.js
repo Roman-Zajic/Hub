@@ -2,56 +2,62 @@ export const meta = {
     title: 'Email Composer'
 };
 
+/* Email Composer — same look as Notes: every class below comes from styles.css
+   (.banner, .seg, .toolbar, .split, .editor-textarea, .preview-frame, .btn-*). No CSS in this file.
+   The markup parser / email HTML generator further down is unchanged. */
+
 export async function render(root, App) {
     root.innerHTML = `
-        <div style="display: flex; flex-direction: column; height: 100%; gap: 16px;">
-            <!-- TOOLBAR -->
-            <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px; background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); padding: 10px; box-shadow: var(--shadow); flex-shrink: 0;">
-                <div style="display: flex; gap: 4px;">
-                    <button class="btn btn-outline" data-action="h1">H1</button>
-                    <button class="btn btn-outline" data-action="h2">H2</button>
-                    <button class="btn btn-outline" data-action="h3">H3</button>
-                    <button class="btn btn-outline" style="font-weight:800" data-action="bold">B</button>
-                    <button class="btn btn-outline" style="font-style:italic" data-action="italic">I</button>
-                    <button class="btn btn-outline" data-action="pill">Pill</button>
+        <div class="editor-panel fill">
+            <div class="banner">
+                <div class="banner-main">
+                    <span id="ec-title" class="banner-title static" title="Taken from the first # heading"></span>
                 </div>
-                <div style="width: 1px; height: 22px; background: var(--border); margin: 0 6px;"></div>
-                <div style="display: flex; gap: 4px;">
-                    <button class="btn btn-outline" data-action="quote">&gt; Quote</button>
-                    <button class="btn btn-outline" data-action="note">+ Note</button>
-                </div>
-                <div style="width: 1px; height: 22px; background: var(--border); margin: 0 6px;"></div>
-                <div style="display: flex; gap: 4px;">
-                    <button class="btn btn-outline" data-action="bullet">• List</button>
-                    <button class="btn btn-outline" data-action="numbered">1. List</button>
-                    <button class="btn btn-outline" data-action="table">Table</button>
-                    <button class="btn btn-outline" data-action="divider">Divider</button>
-                    <button class="btn btn-outline" data-action="link">Link</button>
-                </div>
-                <div style="width: 1px; height: 22px; background: var(--border); margin: 0 6px;"></div>
-                <div style="display: flex; gap: 4px;">
-                    <button class="btn btn-outline" data-action="logo">+ Logo</button>
-                    <button class="btn btn-outline" data-action="button">+ CTA</button>
-                    <button class="btn btn-outline" data-action="footer">+ Footer</button>
-                    <button class="btn btn-outline" data-action="calendar">+ Calendar</button>
-                    <button class="btn btn-outline" data-action="signature">+ Signature</button>
-                </div>
-                <div style="margin-left: auto; display: flex; gap: 6px;">
-                    <button class="btn btn-outline" id="ec-load-sample" title="Load built-in example">Load Sample</button>
-                    <button class="btn btn-primary" id="ec-download">Download .eml</button>
+                <div class="banner-actions">
+                    <span class="banner-status" id="ec-status"></span>
+                    <div class="seg" role="group" aria-label="View">
+                        <button type="button" data-view="edit">Edit</button><button type="button" data-view="split" class="on">Split</button><button type="button" data-view="preview">Preview</button>
+                    </div>
+                    <button class="btn btn-outline btn-sm" id="ec-load-sample" title="Load built-in example">Sample</button>
+                    <button class="btn btn-primary btn-sm" id="ec-download">Download .eml</button>
                 </div>
             </div>
 
-            <!-- EDITOR & PREVIEW GRID -->
-            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; flex: 1; min-height: 0;">
-                <div style="display: flex; flex-direction: column; background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; box-shadow: var(--shadow);">
-                    <div style="padding: 10px 16px; background: var(--surface-in); border-bottom: 1px solid var(--border); font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Markup</div>
-                    <textarea id="ec-markup" spellcheck="false" style="flex: 1; border: none; padding: 16px; font-family: monospace; font-size: 0.85rem; color: var(--ink); resize: none; outline: none; line-height: 1.6;"></textarea>
+            <div class="toolbar">
+                <div class="toolbar-group">
+                    <button class="btn btn-outline btn-sm" data-action="h1">H1</button>
+                    <button class="btn btn-outline btn-sm" data-action="h2">H2</button>
+                    <button class="btn btn-outline btn-sm" data-action="h3">H3</button>
+                    <button class="btn btn-outline btn-sm" data-action="bold" title="Bold"><b>B</b></button>
+                    <button class="btn btn-outline btn-sm" data-action="italic" title="Italic"><i>I</i></button>
+                    <button class="btn btn-outline btn-sm" data-action="pill">Pill</button>
                 </div>
-                <div style="display: flex; flex-direction: column; background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; box-shadow: var(--shadow);">
-                    <div style="padding: 10px 16px; background: var(--surface-in); border-bottom: 1px solid var(--border); font-size: 0.75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase;">Live Preview</div>
-                    <iframe id="ec-preview" style="flex: 1; border: none; background: #ECECEE; width: 100%;"></iframe>
+                <div class="toolbar-sep"></div>
+                <div class="toolbar-group">
+                    <button class="btn btn-outline btn-sm" data-action="quote">&gt; Quote</button>
+                    <button class="btn btn-outline btn-sm" data-action="note">+ Note</button>
                 </div>
+                <div class="toolbar-sep"></div>
+                <div class="toolbar-group">
+                    <button class="btn btn-outline btn-sm" data-action="bullet">• List</button>
+                    <button class="btn btn-outline btn-sm" data-action="numbered">1. List</button>
+                    <button class="btn btn-outline btn-sm" data-action="table">Table</button>
+                    <button class="btn btn-outline btn-sm" data-action="divider">Divider</button>
+                    <button class="btn btn-outline btn-sm" data-action="link">Link</button>
+                </div>
+                <div class="toolbar-sep"></div>
+                <div class="toolbar-group">
+                    <button class="btn btn-outline btn-sm" data-action="logo">+ Logo</button>
+                    <button class="btn btn-outline btn-sm" data-action="button">+ CTA</button>
+                    <button class="btn btn-outline btn-sm" data-action="footer">+ Footer</button>
+                    <button class="btn btn-outline btn-sm" data-action="calendar">+ Calendar</button>
+                    <button class="btn btn-outline btn-sm" data-action="signature">+ Signature</button>
+                </div>
+            </div>
+
+            <div class="split" id="ec-split" data-view="split">
+                <textarea id="ec-markup" class="editor-textarea" spellcheck="false" placeholder="Write your email in markup — or press Sample to see every component."></textarea>
+                <iframe id="ec-preview" class="preview-frame" title="Email preview"></iframe>
             </div>
         </div>
     `;
@@ -319,12 +325,15 @@ export async function render(root, App) {
     // ------------------------------------------------------------------
     // EDITOR LOGIC
     // ------------------------------------------------------------------
+    const $ = s => root.querySelector(s);
     const els = {
-        markup: document.getElementById('ec-markup'),
-        preview: document.getElementById('ec-preview'),
-        toolbar: document.getElementById('toolbar'),
-        btnSample: document.getElementById('ec-load-sample'),
-        btnDownload: document.getElementById('ec-download')
+        markup: $('#ec-markup'),
+        preview: $('#ec-preview'),
+        title: $('#ec-title'),
+        status: $('#ec-status'),
+        split: $('#ec-split'),
+        btnSample: $('#ec-load-sample'),
+        btnDownload: $('#ec-download')
     };
 
     // RESTORED: Exact original example markup
@@ -373,11 +382,18 @@ export async function render(root, App) {
         '[[signature: Name | Rank | Dept | Company | Cell | Email]]'
     ].join('');
 
-    let saveTimer = null;
+    // Draft is kept per device, in the same store the Notes module uses
+    const DRAFT_KEY = 'email_composer_draft';
+    let saveTimer = null, statusTimer = null;
     function scheduleSave() {
         clearTimeout(saveTimer);
-        // FIX: Using browser's native localStorage for simple text draft saving
-        saveTimer = setTimeout(() => localStorage.setItem('email_composer_draft', els.markup.value), 800);
+        els.status.textContent = 'Saving…';
+        saveTimer = setTimeout(async () => {
+            await App.Store.set(DRAFT_KEY, els.markup.value);
+            els.status.textContent = 'Draft saved';
+            clearTimeout(statusTimer);
+            statusTimer = setTimeout(() => { els.status.textContent = ''; }, 2000);
+        }, 800);
     }
 
     function extractSubject(src) {
@@ -386,12 +402,14 @@ export async function render(root, App) {
     }
 
     function updatePreview() {
-        const parsed = parseMarkup(els.markup.value);
-        els.preview.srcdoc = buildStandaloneDoc(extractSubject(els.markup.value), parsed);
-        scheduleSave();
+        const subject = extractSubject(els.markup.value);
+        els.preview.srcdoc = buildStandaloneDoc(subject, parseMarkup(els.markup.value));
+        els.title.textContent = subject || 'Untitled email';
+        els.title.classList.toggle('placeholder', !subject);
     }
+    const onChange = () => { updatePreview(); scheduleSave(); };
 
-    els.markup.addEventListener('input', updatePreview);
+    els.markup.addEventListener('input', onChange);
 
     // Toolbar logic
     function withPreservedScroll(mutate) {
@@ -399,7 +417,7 @@ export async function render(root, App) {
         mutate();
         els.markup.focus();
         els.markup.scrollTop = scrollTop;
-        updatePreview();
+        onChange();
     }
 
     function insertText(prefix, suffix = '') {
@@ -440,10 +458,18 @@ export async function render(root, App) {
         if (btn && ACTIONS[btn.dataset.action]) ACTIONS[btn.dataset.action]();
     });
 
+    // Edit | Split | Preview — phones start on Edit, wide screens on Split
+    function setView(view) {
+        els.split.dataset.view = view;
+        root.querySelectorAll('.seg [data-view]').forEach(b => b.classList.toggle('on', b.dataset.view === view));
+    }
+    root.querySelectorAll('.seg [data-view]').forEach(b => { b.onclick = () => setView(b.dataset.view); });
+    if (window.matchMedia?.('(max-width: 768px)').matches) setView('edit');
+
     els.btnSample.onclick = () => {
         if (els.markup.value.trim() && !confirm("Replace current draft?")) return;
         els.markup.value = EXAMPLE_MARKUP;
-        updatePreview();
+        onChange();
     };
 
     els.btnDownload.onclick = async () => {
@@ -459,8 +485,10 @@ export async function render(root, App) {
         URL.revokeObjectURL(a.href);
     };
 
-    // Load initial state using native localStorage
-    const saved = localStorage.getItem('email_composer_draft');
+    // Load the draft (older versions kept it in localStorage — pick that up once)
+    let saved = await App.Store.get(DRAFT_KEY);
+    if (saved === undefined || saved === null) saved = localStorage.getItem(DRAFT_KEY);
     els.markup.value = saved || EXAMPLE_MARKUP;
-    ensureLogoPng().then(updatePreview);
+    updatePreview();                           // show something immediately…
+    ensureLogoPng().then(updatePreview);       // …and again once the logo PNG is ready
 }

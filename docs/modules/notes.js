@@ -1,0 +1,1098 @@
+export const meta = { title: 'Notes' };
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Notes — browser-only port of the Python "Notes (Sync)" module.
+
+   How syncing works (the same idea git uses):
+   - Every note remembers what it looked like at the last sync: `sh` = hash of its text,
+     `sha` = GitHub's id of that file. Two questions per note, answered locally:
+         changed here?   → hash(text) ≠ sh          (amber dot; the sync button shows the count)
+         changed there?  → GitHub's id ≠ sha        (the sync button turns teal)
+     neither → nothing · here only → push · there only → pull · both → your text is kept and
+     GitHub's version is saved next to it as "<name>.conflict-<time>.md" (nothing is ever lost).
+   - GitHub is identified by its latest commit id. If it equals the id stored at the last sync,
+     nothing changed there and the sync is a single cheap request.
+   - Pushing = ONE commit holding every add/edit/delete, applied with a fast-forward-only branch
+     update. If another device pushed meanwhile, GitHub refuses and the sync simply re-runs
+     (pull the newcomer's changes, then push again) — up to 3 times.
+   - Notes live in IndexedDB (App.Store key 'notes_vault'): instant open/search/graph, works offline.
+   - Credentials come from the existing Settings modal (repo, token, folder).
+   - No CSS in this file: every class used below is defined in styles.css.
+   ───────────────────────────────────────────────────────────────────────── */
+
+const NOTES_SUBDIR = '';   // optional extra sub-folder inside the Settings folder, e.g. 'notes'
+const DAILY = 'Daily';
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const CDN = {
+    marked: 'https://cdn.jsdelivr.net/npm/marked@15/marked.min.js',
+    d3: 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js',
+    mathjax: 'https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js'
+};
+
+// ── Small utilities ──────────────────────────────────────────────────────
+const scripts = {};
+const loadScript = src => scripts[src] ??= new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = src; s.onload = ok;
+    s.onerror = () => { delete scripts[src]; fail(new Error('Could not load ' + src)); };
+    document.head.appendChild(s);
+});
+
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const pad = n => String(n).padStart(2, '0');
+const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const nowStr = () => { const d = new Date(); return `${isoDate(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const b64ToStr = b => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, '')), c => c.charCodeAt(0)));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const encRef = p => p.split('/').map(encodeURIComponent).join('/');
+
+// Git's own blob id for a text: sha1("blob <bytes>\0" + bytes). Lets us know the new GitHub sha without asking.
+async function gitBlobSha(text) {
+    const body = new TextEncoder().encode(text), head = new TextEncoder().encode(`blob ${body.length}\0`);
+    const all = new Uint8Array(head.length + body.length);
+    all.set(head); all.set(body, head.length);
+    return [...new Uint8Array(await crypto.subtle.digest('SHA-1', all))].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Fast non-crypto hash — only used to detect "did this note change since last sync".
+function hash(s) {
+    s = (s || '').trim();
+    let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+    for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 2654435761); h2 = Math.imul(h2 ^ c, 1597334677);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+// [[target]] / [[target|label]] → note path (exact → case-insensitive → filename only)
+function resolveNote(raw, paths) {
+    const t = raw.split('|')[0].trim();
+    if (!t) return null;
+    const c = /\.md$/i.test(t) ? t : t + '.md', lc = c.toLowerCase(), base = lc.split('/').pop();
+    return paths.find(p => p === c)
+        || paths.find(p => p.toLowerCase() === lc)
+        || paths.find(p => p.split('/').pop().toLowerCase() === base)
+        || null;
+}
+
+// ── Markdown → HTML (port of the Python /preview route) ──────────────────
+// Placeholders use Private-Use-Area characters: markdown has no meaning for them,
+// so they survive parsing untouched (plain "__X__" tokens get eaten as bold).
+const T = { math: ['\uE000', '\uE001'], fence: ['\uE002', '\uE003'], block: ['\uE004', '\uE005'], html: ['\uE006', '\uE007'], code: ['\uE009', '\uE00A'] };
+const COLLAPSED = '\uE008';
+const stasher = (list, [a, b]) => s => { list.push(s); return a + (list.length - 1) + b; };
+const unstash = (text, list, [a, b], fn = s => s) => text.replace(new RegExp(a + '(\\d+)' + b, 'g'), (_, i) => fn(list[i]));
+
+function renderMd(src) {
+    if (!window.marked) return `<pre>${esc(src)}</pre>`;
+    const fences = [], maths = [], blocks = [], htmls = [], codes = [];
+    const sFence = stasher(fences, T.fence), sMath = stasher(maths, T.math), sBlock = stasher(blocks, T.block),
+          sHtml = stasher(htmls, T.html), sCode = stasher(codes, T.code);
+
+    let c = src.replace(/```[\s\S]*?```/g, sFence)
+        .replace(/\$\$[\s\S]+?\$\$|\\\[[\s\S]+?\\\]|\\\([\s\S]+?\\\)/g, sMath)   // LaTeX (no bare $...$ — clashes with money)
+        .replace(/^#\+ +(.+)$/gm, '# $1')                                       // "#+ H" expanded section
+        .replace(/^#- +(.+)$/gm, `# $1${COLLAPSED}`);                           // "#- H" starts collapsed
+
+    // wiki links (inline code is protected while converting)
+    c = c.replace(/`[^`\n]+`/g, sCode)
+        .replace(/\[\[(.+?)\]\]/g, (_, i) => {
+            const [t, l] = i.split('|');
+            return `[${(l ?? t).trim()}](note:${encodeURIComponent(t.trim())})`;
+        });
+    c = unstash(c, codes, T.code);
+
+    // tables, !!! admonitions, checklists are kept out of the newline-spacing step below
+    c = c.replace(/^\|.*\|(?:\n^\|.*\|)*/gm, sBlock);
+    c = admonitions(c, (type, title, body) => {
+        const inner = window.marked.parse(unstash(body, fences, T.fence), { gfm: true, breaks: true });
+        return sHtml(`<div class="admonition ${esc(type)}">${title ? `<p class="admonition-title">${esc(title)}</p>` : ''}${inner}</div>`);
+    });
+    c = c.replace(/^[-*+] +\[[ xX]\].*(?:\n^[-*+] +\[[ xX]\].*)*/gm, sBlock);
+
+    // Every line break is a paragraph; each extra blank line becomes one visible <br> (same look as the Python app)
+    c = c.replace(/\n+/g, m => '\n\n' + '<br>'.repeat(m.length - 1) + '\n\n');
+
+    c = unstash(c, blocks, T.block, b => `\n\n${b}\n\n`);
+    c = unstash(c, fences, T.fence, b => `\n\n${b}\n\n`);
+
+    let html = window.marked.parse(c, { gfm: true });
+    html = html.replace(new RegExp(`<p>(${T.html[0]}\\d+${T.html[1]})</p>`, 'g'), '$1');
+    html = unstash(html, htmls, T.html);
+    return unstash(html, maths, T.math, esc);
+}
+
+function admonitions(text, emit) {
+    const lines = text.split('\n'), out = [], indented = /^(?: {4,}|\t)/;
+    let i = 0;
+    while (i < lines.length) {
+        const m = lines[i].match(/^!!!\s+(\w+)(?:\s+"(.*)")?\s*$/);
+        if (!m) { out.push(lines[i++]); continue; }
+        i++;
+        const body = [];
+        while (i < lines.length) {
+            if (indented.test(lines[i])) body.push(lines[i++].replace(/^(?: {4}|\t)/, ''));
+            else if (!lines[i].trim()) {
+                let j = i;
+                while (j < lines.length && !lines[j].trim()) j++;
+                if (j < lines.length && indented.test(lines[j])) { while (i < j) { body.push(''); i++; } }
+                else break;
+            } else break;
+        }
+        const type = m[1].toLowerCase();
+        out.push(emit(type, m[2] ?? type[0].toUpperCase() + type.slice(1), body.join('\n')));
+    }
+    return out.join('\n');
+}
+
+const TEMPLATE = `
+<div class="notes-layout">
+  <div class="file-panel">
+    <div class="panel-search">
+      <input type="text" id="nt-search" class="input" placeholder="Search notes…">
+      <button type="button" class="tool-btn" id="nt-cal-btn" title="Filter by date">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+      </button>
+      <button type="button" class="tool-btn" id="nt-sync-btn" title="Sync with GitHub">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        <span class="badge" id="nt-badge"></span>
+      </button>
+    </div>
+    <div class="file-list" id="nt-tree"></div>
+    <div class="action-row">
+      <button class="btn-dashed" id="nt-new-btn">+ New note</button>
+      <button class="btn-dashed" id="nt-daily-btn">Daily note</button>
+    </div>
+    <div class="panel-footer">
+      <button class="btn-dashed" id="nt-graph-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="6" rx="1"/><rect x="9" y="15" width="6" height="6" rx="1"/><line x1="9" y1="6" x2="15" y2="6"/><line x1="6" y1="9" x2="10" y2="16"/><line x1="18" y1="9" x2="14" y2="16"/></svg>
+        Graph view
+      </button>
+    </div>
+  </div>
+
+  <div class="editor-panel">
+    <div class="banner">
+      <div class="banner-main">
+        <span id="nt-title-view" class="banner-title" title="Click to rename"></span>
+        <input type="text" id="nt-title" class="banner-title-input" style="display:none" spellcheck="false" placeholder="Folder/Subfolder/note name">
+      </div>
+      <div class="banner-actions" id="nt-controls" style="display:none">
+        <span class="banner-status" id="nt-status"></span>
+        <button class="btn btn-primary btn-sm" id="nt-save-btn" style="display:none">Save</button>
+        <div class="seg" role="group" aria-label="Mode">
+          <button type="button" id="nt-seg-preview" class="on">Preview</button><button type="button" id="nt-seg-edit">Edit</button>
+        </div>
+        <button type="button" class="btn-icon danger" id="nt-del-btn" title="Delete note" style="display:none">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
+        </button>
+      </div>
+    </div>
+    <textarea id="nt-editor" class="editor-textarea" style="display:none" placeholder="# Start writing…&#10;&#10;#+ Heading = expanded section, #- Heading = starts collapsed.&#10;[[Note name]] links notes. !!! warning &quot;Title&quot; + indented lines = callout."></textarea>
+    <div id="nt-preview" class="preview-area markdown" style="display:block"><div class="hint">Select a note on the left, or create a new one.</div></div>
+  </div>
+</div>
+
+<div class="toast" id="nt-toast"></div>
+
+<div class="modal-overlay" id="nt-cal-overlay">
+  <div class="modal-card modal-sm">
+    <div class="modal-header">
+      <div><div class="cal-title">Filter by date</div><div class="cal-sub" id="nt-cal-label"></div></div>
+      <button class="modal-close" id="nt-cal-x">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="cal-nav">
+        <button class="btn btn-outline btn-sm" id="nt-cal-prev">&#8249;</button>
+        <span class="cal-month" id="nt-cal-month"></span>
+        <button class="btn btn-outline btn-sm" id="nt-cal-next">&#8250;</button>
+      </div>
+      <div class="cal-grid" id="nt-cal-grid"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline btn-sm" id="nt-cal-clear">Clear</button>
+      <button class="btn btn-primary btn-sm" id="nt-cal-apply">Apply</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="nt-graph-overlay">
+  <div class="modal-card modal-fill">
+    <button class="modal-close graph-close" id="nt-graph-x">&times;</button>
+    <div class="graph-wrap" id="nt-graph-wrap"></div>
+  </div>
+</div>`;
+
+// ── Module entry ─────────────────────────────────────────────────────────
+let keyHandler = null, focusHandler = null;   // one global Ctrl+S / focus handler at a time, even if the module re-renders
+
+export async function render(root, App) {
+    root.innerHTML = TEMPLATE;
+    const $ = s => root.querySelector(s);
+    const S = App.Store;
+
+    const el = {
+        search: $('#nt-search'), tree: $('#nt-tree'), badge: $('#nt-badge'), syncBtn: $('#nt-sync-btn'), calBtn: $('#nt-cal-btn'),
+        editor: $('#nt-editor'), preview: $('#nt-preview'), title: $('#nt-title'), titleView: $('#nt-title-view'),
+        status: $('#nt-status'), controls: $('#nt-controls'), save: $('#nt-save-btn'), del: $('#nt-del-btn'),
+        segPreview: $('#nt-seg-preview'), segEdit: $('#nt-seg-edit'), toast: $('#nt-toast')
+    };
+
+    // Non-fatal: if offline, notes still open (as plain text) and edit normally.
+    loadScript(CDN.marked).then(() => { if (isPreview && originalPath) showPreview(); }).catch(() => {});
+
+    // ── Vault (all notes, in memory, mirrored to IndexedDB) ──────────────
+    // notes[path] = { content, created, modified, h: hash(content), sh: hash at last sync, sha: GitHub blob sha }
+    // deleted[path] = blob sha of a note deleted locally, waiting for the next sync to delete it on GitHub
+    let stored = await S.get('notes_vault');
+    if (!stored) { stored = await S.get('pn_vault'); if (stored) await S.set('notes_vault', stored); }   // renamed module: keep existing local notes
+    const vault = stored || { notes: {}, deleted: {}, lastSynced: null };
+    const persist = () => S.set('notes_vault', vault);
+    const paths = () => Object.keys(vault.notes).sort();
+    const isDirty = n => n.h !== n.sh;
+    const pendingCount = () => Object.values(vault.notes).filter(isDirty).length + Object.keys(vault.deleted).length;
+
+    function removeNote(path) {
+        const n = vault.notes[path];
+        if (n?.sha) vault.deleted[path] = n.sha;
+        delete vault.notes[path];
+    }
+
+    // ── State ────────────────────────────────────────────────────────────
+    let workingDir = null, originalPath = '', isNew = false, isPreview = true;
+    let saveTimer = null, searchQuery = '', matching = null, searchTimer = null, syncing = false;
+    let from = null, to = null;                         // applied date filter
+    let remoteChanged = false;                          // GitHub has a newer commit than our last sync
+    let calY, calM, calStart = null, calEnd = null, calCounts = {};
+    const expanded = new Set();
+
+    // ── Toast ────────────────────────────────────────────────────────────
+    let toastTimer = null;
+    function toast(msg, error) {
+        el.toast.textContent = msg;
+        el.toast.classList.toggle('error', !!error);
+        el.toast.classList.add('show');
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => el.toast.classList.remove('show'), error ? 5000 : 2600);
+    }
+
+    // ── Sync badge ───────────────────────────────────────────────────────
+    function relTime(iso) {
+        const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+        if (s < 60) return 'just now';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+        return Math.floor(s / 86400) + 'd ago';
+    }
+    function updateBadge() {
+        const n = pendingCount();
+        el.badge.textContent = n > 99 ? '99+' : n;
+        el.badge.style.display = n ? 'flex' : 'none';
+        el.syncBtn.classList.toggle('active', remoteChanged);   // teal = GitHub has news for you
+        el.syncBtn.title = 'Sync with GitHub — ' + [
+            n ? `${n} local change${n > 1 ? 's' : ''} to push` : 'nothing to push',
+            remoteChanged ? 'GitHub has new changes to pull' : 'no new changes on GitHub',
+            vault.lastSynced ? 'last synced ' + relTime(vault.lastSynced) : 'never synced'
+        ].join(' · ');
+    }
+
+    // ── File tree ────────────────────────────────────────────────────────
+    const CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
+
+    function buildTree() {
+        const scroll = el.tree.scrollTop;
+        el.tree.innerHTML = '';
+        const visible = paths().filter(p => !matching || matching.has(p));
+        const rootNode = { children: {}, items: [] };
+        visible.forEach(path => {
+            const parts = path.split('/');
+            let node = rootNode;
+            for (let i = 0; i < parts.length - 1; i++) node = (node.children[parts[i]] ??= { children: {}, items: [] });
+            node.items.push({ path, label: parts.at(-1).replace(/\.md$/, '') });
+        });
+
+        // "Notes" root row: click = make the top level the working directory
+        const rootHeader = document.createElement('div');
+        rootHeader.className = 'folder-header' + (workingDir === '' ? ' selected-folder' : '');
+        rootHeader.textContent = 'Notes';
+        rootHeader.onclick = () => selectFolder('');
+        const rootContent = document.createElement('div');
+        rootContent.className = 'folder-content expanded';
+        el.tree.append(rootHeader, rootContent);
+
+        renderLevel(rootNode, rootContent, '', !!matching);
+        if (!visible.length) {
+            rootContent.insertAdjacentHTML('beforeend', `<div class="list-empty">${matching ? 'No matching notes' : 'No notes yet. Create one, or press sync to pull from GitHub.'}</div>`);
+        }
+        $('#nt-new-btn').title = 'New note in ' + (workingDir ? workingDir + '/' : 'the top level (click a folder to change)');
+        el.tree.scrollTop = scroll;
+        updateBadge();
+    }
+
+    // Folder name = pick it as the working directory (opens it if closed; a second click on the
+    // picked folder collapses it). Chevron = collapse/expand only. Opening a note never highlights its folder.
+    function selectFolder(full) {
+        if (full && workingDir === full) toggleFolder(full);
+        else { workingDir = full; expandTo(full); }
+        if (isNew) {   // a note still being created follows the picked folder
+            el.title.value = (workingDir ? workingDir + '/' : '') + el.title.value.split('/').pop();
+            refreshBanner();
+        }
+        buildTree();
+    }
+    function toggleFolder(full) { expanded.has(full) ? expanded.delete(full) : expanded.add(full); buildTree(); }
+    function expandTo(folder) {
+        const parts = folder ? folder.split('/') : [];
+        parts.forEach((_, i) => expanded.add(parts.slice(0, i + 1).join('/')));
+    }
+
+    // Recursive: works for any folder depth (Work/Clients/Acme/…)
+    function renderLevel(node, container, folder, forceOpen) {
+        // Daily/ is pinned first and listed newest → oldest (years, months, days)
+        const desc = folder === DAILY || folder.startsWith(DAILY + '/');
+        Object.keys(node.children)
+            .sort((a, b) => (!folder && a === DAILY ? -1 : !folder && b === DAILY ? 1 : desc ? b.localeCompare(a) : a.localeCompare(b)))
+            .forEach(name => {
+                const full = folder ? `${folder}/${name}` : name;
+                const open = forceOpen || expanded.has(full);
+                const header = document.createElement('div');
+                header.className = 'folder-header' + (open ? ' expanded' : '') + (workingDir === full ? ' selected-folder' : '');
+                header.title = full;
+                const chevron = document.createElement('span');
+                chevron.className = 'folder-chevron';
+                chevron.innerHTML = CHEVRON;
+                chevron.onclick = e => { e.stopPropagation(); toggleFolder(full); };
+                const label = document.createElement('span');
+                label.textContent = name;
+                header.append(chevron, label);
+                header.onclick = () => selectFolder(full);
+
+                const content = document.createElement('div');
+                content.className = 'folder-content' + (open ? ' expanded' : '');
+                container.append(header, content);
+                renderLevel(node.children[name], content, full, forceOpen);
+            });
+
+        (desc ? [...node.items].reverse() : node.items).forEach(({ path, label }) => {
+            const div = document.createElement('div');
+            const n = vault.notes[path];
+            div.className = 'file-item' + (path === originalPath ? ' active' : '') + (n && isDirty(n) ? ' unsynced' : '') + (/\.conflict-\d{8}-\d{6}$/.test(label) ? ' conflict' : '');
+            div.innerHTML = matching && searchQuery ? highlightText(label, searchQuery) : esc(label);
+            div.title = path + (n && isDirty(n) ? ' (unsynced)' : '');
+            div.dataset.path = path;
+            div.onclick = e => { e.stopPropagation(); loadNote(path); };
+            container.appendChild(div);
+        });
+    }
+
+    const highlightText = (text, q) => esc(text).replace(new RegExp('(' + escRe(esc(q)) + ')', 'ig'), '<mark>$1</mark>');
+
+    // ── Search (instant, in memory) + date filter ────────────────────────
+    function runSearch(q) {
+        searchQuery = q;
+        if (!q && !from && !to) matching = null;
+        else {
+            const ql = q.toLowerCase();
+            matching = new Set();
+            for (const [p, n] of Object.entries(vault.notes)) {
+                const d = (n.modified || '').slice(0, 10);
+                if ((from || to) && (!d || (from && d < from) || (to && d > to))) continue;
+                if (ql && !(p.toLowerCase().includes(ql) || n.content.toLowerCase().includes(ql))) continue;
+                matching.add(p);
+            }
+        }
+        buildTree();
+        refreshHighlight();
+    }
+    el.search.oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => runSearch(el.search.value.trim()), 150); };
+
+    function highlightMatches(rootEl, q) {
+        if (!q) return null;
+        const ql = q.toLowerCase(), walker = document.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT), nodes = [];
+        let nd, first = null;
+        while ((nd = walker.nextNode())) if (nd.nodeValue.toLowerCase().includes(ql)) nodes.push(nd);
+        nodes.forEach(node => {
+            const text = node.nodeValue, lower = text.toLowerCase(), frag = document.createDocumentFragment();
+            let last = 0, idx;
+            while ((idx = lower.indexOf(ql, last)) !== -1) {
+                if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+                const m = document.createElement('mark');
+                m.className = 'search-hit'; m.textContent = text.slice(idx, idx + q.length);
+                frag.appendChild(m); first ||= m; last = idx + q.length;
+            }
+            if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+            node.parentNode.replaceChild(frag, node);
+        });
+        return first;
+    }
+    function refreshHighlight() {
+        if (!isPreview) return;
+        el.preview.querySelectorAll('mark.search-hit').forEach(m => m.replaceWith(document.createTextNode(m.textContent)));
+        el.preview.normalize();
+        if (searchQuery) highlightMatches(el.preview, searchQuery);
+    }
+
+    // ── Preview / edit ───────────────────────────────────────────────────
+    function showPreview(scrollToMatch) {
+        el.preview.innerHTML = renderMd(el.editor.value);
+        el.preview.querySelectorAll('a').forEach(a => {
+            const href = a.getAttribute('href') || '';
+            if (href.startsWith('note:')) {
+                a.classList.add('note-link');
+                if (!resolveNote(decodeURIComponent(href.slice(5)), paths())) a.classList.add('note-missing');
+            } else if (/^https?:/i.test(href)) { a.target = '_blank'; a.rel = 'noopener noreferrer'; }
+        });
+        attachToc(); attachSections(); attachChecklists(); attachCopyButtons();
+        if (/\\\(|\\\[|\$\$/.test(el.editor.value)) typesetMath();
+        if (searchQuery) {
+            const first = highlightMatches(el.preview, searchQuery);
+            if (scrollToMatch && first) first.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+    }
+
+    function setMode(mode, scrollToMatch) {
+        isPreview = mode === 'preview';
+        if (isPreview) {
+            showPreview(scrollToMatch);
+            el.editor.style.display = 'none'; el.preview.style.display = 'block';
+        } else {
+            el.preview.style.display = 'none'; el.editor.style.display = 'block';
+            el.editor.focus();
+        }
+        el.segPreview.classList.toggle('on', isPreview);
+        el.segEdit.classList.toggle('on', !isPreview);
+    }
+
+    function attachToc() {
+        const p = [...el.preview.querySelectorAll('p')].find(x => x.textContent.trim() === '[TOC]');
+        if (!p) return;
+        const box = document.createElement('div'), ul = document.createElement('ul');
+        box.className = 'toc';
+        box.innerHTML = '<span class="toctitle">Table of Contents</span>';
+        el.preview.querySelectorAll('h1').forEach(h => {
+            const li = document.createElement('li'), a = document.createElement('a');
+            a.href = '#'; a.textContent = h.textContent.replace(COLLAPSED, '');
+            a.onclick = e => { e.preventDefault(); h.closest('.h1-section')?.classList.add('expanded'); h.scrollIntoView({ behavior: 'smooth', block: 'start' }); };
+            li.appendChild(a); ul.appendChild(li);
+        });
+        box.appendChild(ul);
+        p.replaceWith(box);
+    }
+
+    // Everything from one <h1> to the next becomes a collapsible section
+    function attachSections() {
+        const nodes = [...el.preview.childNodes], frag = document.createDocumentFragment();
+        let body = null;
+        nodes.forEach(node => {
+            if (node.nodeType === 1 && node.tagName === 'H1') {
+                const collapsed = node.textContent.includes(COLLAPSED);
+                if (collapsed) node.innerHTML = node.innerHTML.replace(COLLAPSED, '');
+                const section = document.createElement('div');
+                section.className = 'h1-section' + (collapsed ? '' : ' expanded');
+                const header = document.createElement('div');
+                header.className = 'h1-header';
+                header.innerHTML = '<svg class="h1-chevron" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="4 7 9 12 14 7"/></svg>';
+                header.appendChild(node);
+                header.onclick = () => section.classList.toggle('expanded');
+                body = document.createElement('div');
+                body.className = 'h1-body';
+                section.append(header, body);
+                frag.appendChild(section);
+            } else (body || frag).appendChild(node);
+        });
+        el.preview.innerHTML = '';
+        el.preview.appendChild(frag);
+    }
+
+    // Clicking a rendered checkbox flips the Nth "- [ ]" line in the source
+    function attachChecklists() {
+        el.preview.querySelectorAll('input[type="checkbox"]').forEach((box, idx) => {
+            box.disabled = false;
+            box.addEventListener('change', () => {
+                const lines = el.editor.value.split('\n'), re = /^(\s*[-*+]\s+\[)([ xX])(\]\s*.*)$/;
+                let count = -1;
+                for (let i = 0; i < lines.length; i++) {
+                    if (re.test(lines[i]) && ++count === idx) { lines[i] = lines[i].replace(re, (m, a, _, b) => a + (box.checked ? 'x' : ' ') + b); break; }
+                }
+                el.editor.value = lines.join('\n');
+                scheduleSave();
+            });
+        });
+    }
+
+    function attachCopyButtons() {
+        el.preview.querySelectorAll('pre').forEach(pre => {
+            const btn = document.createElement('button');
+            btn.className = 'copy-code-btn'; btn.textContent = 'Copy';
+            btn.onclick = async () => {
+                await navigator.clipboard.writeText((pre.querySelector('code') ?? pre).innerText).catch(() => {});
+                btn.textContent = 'Copied!'; setTimeout(() => btn.textContent = 'Copy', 1500);
+            };
+            pre.appendChild(btn);
+        });
+    }
+
+    async function typesetMath() {
+        try {
+            if (!window.MathJax?.typesetPromise) {
+                window.MathJax = { tex: { inlineMath: [['\\(', '\\)'], ['$$', '$$']], displayMath: [['\\[', '\\]']] }, chtml: { matchFontHeight: true } };
+                await loadScript(CDN.mathjax);
+            }
+            await window.MathJax.startup?.promise;
+            await window.MathJax.typesetPromise([el.preview]);
+        } catch (e) { /* offline: formulas just stay as raw LaTeX */ }
+    }
+
+    // Links inside the preview: [[wiki]] links, in-page "#" anchors (must not hit the app router)
+    el.preview.addEventListener('click', e => {
+        const a = e.target.closest('a');
+        if (!a) return;
+        const href = a.getAttribute('href') || '';
+        if (href.startsWith('note:')) { e.preventDefault(); openByName(decodeURIComponent(href.slice(5))); }
+        else if (href.startsWith('#')) e.preventDefault();
+    });
+
+    async function openByName(name) {
+        const match = resolveNote(name, paths());
+        if (match) return loadNote(match);
+        const clean = name.split('|')[0].trim().replace(/\.md$/i, '');
+        if (!confirm(`Note "${clean}" does not exist. Create it?`)) return;
+        await newNote();
+        el.title.value = clean;   // [[links]] are top-level paths, not relative to the picked folder
+        refreshBanner();
+        el.editor.value = `# ${clean.split('/').pop()}\n\n`;
+        setMode('edit');
+    }
+
+    // ── Banner: title (click to rename), mode toggle, delete ──
+    function refreshBanner() {
+        const has = isNew || !!originalPath;
+        const name = el.title.value.split('/').pop().trim();
+        el.titleView.textContent = name || (has ? 'Untitled note' : 'No note selected');
+        el.titleView.classList.toggle('placeholder', !name);
+        el.titleView.classList.toggle('static', !has);
+        el.controls.style.display = has ? 'flex' : 'none';
+        el.save.style.display = isNew ? '' : 'none';
+        el.del.style.display = originalPath ? '' : 'none';
+        el.segPreview.classList.toggle('on', isPreview);
+        el.segEdit.classList.toggle('on', !isPreview);
+    }
+
+    // The title shows only the note's name. Clicking it reveals the FULL path (folders included) to edit.
+    let titleBefore = '', cancelTitle = false;
+    function startTitleEdit() {
+        if (!(isNew || originalPath) || el.title.style.display !== 'none') return;
+        titleBefore = el.title.value;
+        el.titleView.style.display = 'none';
+        el.title.style.display = 'block';
+        el.title.focus();
+        el.title.setSelectionRange(el.title.value.length, el.title.value.length);
+    }
+    async function endTitleEdit(cancel) {
+        if (el.title.style.display === 'none') return;
+        el.title.style.display = 'none';
+        el.titleView.style.display = '';
+        if (cancel) el.title.value = titleBefore;
+        else if (!isNew && originalPath && targetPath() !== originalPath) {
+            if (targetPath()) await saveNote();   // rename / move now
+            el.title.value = originalPath.replace(/\.md$/, '');   // also reverts if the name was empty or taken
+        }
+        refreshBanner();
+    }
+    el.titleView.onclick = startTitleEdit;
+    el.title.onblur = () => { const c = cancelTitle; cancelTitle = false; endTitleEdit(c); };
+    el.title.onkeydown = e => {
+        if (e.key === 'Enter') { e.preventDefault(); el.title.blur(); }
+        else if (e.key === 'Escape') { cancelTitle = true; el.title.blur(); }
+    };
+
+    // ── Open / create / save / delete ────────────────────────────────────
+    async function flushSave() {
+        if (!saveTimer) return;
+        clearTimeout(saveTimer); saveTimer = null;
+        await saveNote(true);
+    }
+
+    async function loadNote(path) {
+        await flushSave();
+        const n = vault.notes[path];
+        if (!n) return;
+        isNew = false; originalPath = path;
+        expandTo(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');   // reveal it in the tree (no highlight)
+        el.title.value = path.replace(/\.md$/, ''); el.editor.value = n.content; el.status.textContent = '';
+        setMode('preview', true);
+        refreshBanner(); buildTree();
+    }
+
+    async function newNote() {
+        await flushSave();
+        isNew = true; originalPath = '';
+        el.title.value = workingDir ? workingDir + '/' : '';   // starts in the picked folder
+        el.editor.value = ''; el.status.textContent = '';
+        setMode('edit'); refreshBanner(); buildTree();
+        startTitleEdit();
+    }
+
+    function scheduleSave() {   // existing notes autosave; new notes wait for Save
+        if (isNew || !originalPath) return;
+        clearTimeout(saveTimer);
+        el.status.textContent = 'Saving…';
+        saveTimer = setTimeout(() => { saveTimer = null; saveNote(true); }, 800);
+    }
+    el.editor.oninput = scheduleSave;
+
+    function targetPath() {
+        const raw = el.title.value.trim().replace(/\.md$/i, '');
+        if (!raw || raw.endsWith('/')) return '';
+        return raw.split('/').map(x => x.trim()).filter(Boolean).join('/') + '.md';
+    }
+
+    async function saveNote(contentOnly = false) {
+        const path = contentOnly && originalPath ? originalPath : targetPath();   // autosave never renames mid-typing
+        if (!path) { toast('Name the note first — click the title.', true); startTitleEdit(); return; }
+        const renamed = originalPath && path !== originalPath;
+        if ((isNew || renamed) && vault.notes[path]) { alert(`A note named "${path}" already exists.`); return; }
+
+        const now = nowStr(), content = el.editor.value, h = hash(content);
+        const prev = vault.notes[path] || (renamed && vault.notes[originalPath]) || null;
+        if (renamed) removeNote(originalPath);
+
+        const same = !renamed && prev && prev.h === h;
+        if (!same) {
+            // re-creating a note that is pending deletion on GitHub → treat as an update of that file
+            const sha = (!renamed && prev?.sha) || vault.deleted[path];
+            delete vault.deleted[path];
+            vault.notes[path] = { content, created: prev?.created || now, modified: now, h, sh: renamed ? undefined : prev?.sh, sha };
+            await persist();
+        }
+        isNew = false; originalPath = path;
+        el.title.value = path.replace(/\.md$/, '');
+        expandTo(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');   // nested folders open so the note is visible
+        el.status.textContent = 'Saved';
+        setTimeout(() => { if (el.status.textContent === 'Saved') el.status.textContent = ''; }, 2000);
+        refreshBanner(); buildTree();
+    }
+
+    async function deleteNote() {
+        if (!originalPath || !confirm(`Delete "${originalPath}"?`)) return;
+        clearTimeout(saveTimer); saveTimer = null;
+        removeNote(originalPath);
+        await persist();
+        originalPath = ''; isNew = false;
+        if (workingDir && !paths().some(p => p.startsWith(workingDir + '/'))) workingDir = null;
+        el.title.value = ''; el.editor.value = ''; el.status.textContent = '';
+        setMode('preview');
+        el.preview.innerHTML = '<div class="hint">Note deleted. It will be removed from GitHub on the next sync.</div>';
+        refreshBanner(); buildTree();
+    }
+
+    // Daily notes: the newest DAILY_KEEP stay directly in Daily/; older ones are filed into
+    // Daily/Archive/<year>/<MM-Month>/ — this happens when a NEW daily note is created.
+    const DAILY_KEEP = 10;
+    const DAILY_RE = /^Daily\/(?:Archive\/)?(?:\d{4}\/\d{2}-[A-Za-z]+\/)?(\d{4})-(\d{2})-(\d{2})\.md$/;
+    const LEGACY_DAILY_RE = /^Daily\/\d{4}\/\d{2}-[A-Za-z]+\//;   // earlier layout: Daily/<year>/<month>/…
+
+    function tidyDaily() {
+        const found = Object.keys(vault.notes).map(p => ({ p, m: p.match(DAILY_RE) })).filter(x => x.m && +x.m[2] >= 1 && +x.m[2] <= 12);
+        found.sort((a, b) => b.m.slice(1).join('-').localeCompare(a.m.slice(1).join('-')));
+        let moved = 0;
+        found.forEach(({ p, m }, i) => {
+            const [, y, mo, d] = m, file = `${y}-${mo}-${d}.md`;
+            const np = i < DAILY_KEEP ? `${DAILY}/${file}` : `${DAILY}/Archive/${y}/${mo}-${MONTHS[+mo - 1]}/${file}`;
+            if (np === p || vault.notes[np]) return;
+            const n = vault.notes[p], sha = vault.deleted[np];
+            removeNote(p);
+            delete vault.deleted[np];   // moving back onto a path pending deletion → update it instead
+            vault.notes[np] = { ...n, sh: undefined, sha };
+            if (originalPath === p) { originalPath = np; el.title.value = np.replace(/\.md$/, ''); }
+            moved++;
+        });
+        return moved;
+    }
+
+    async function openDaily() {
+        await flushSave();
+        const file = isoDate(new Date()) + '.md';
+        let path = paths().find(p => DAILY_RE.test(p) && p.endsWith('/' + file));
+        if (!path) {
+            const d = new Date(), now = nowStr();
+            const pretty = `${d.toLocaleDateString('en-US', { weekday: 'long' })}, ${pad(d.getDate())} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
+            const content = `# ${pretty}\n\n## Tasks\n- [ ] \n\n## Daily Notes\n\n`;
+            path = `${DAILY}/${file}`;
+            vault.notes[path] = { content, created: now, modified: now, h: hash(content), sh: undefined, sha: vault.deleted[path] };
+            delete vault.deleted[path];
+            const moved = tidyDaily();   // new daily note → archive whatever fell out of the last 10
+            await persist();
+            if (moved) toast(`Archived ${moved} older daily note${moved > 1 ? 's' : ''} into Daily/Archive/`);
+        }
+        expanded.add(DAILY);
+        loadNote(path);
+    }
+
+    el.segPreview.onclick = () => { if (!isPreview) setMode('preview'); };
+    el.segEdit.onclick = () => { if (isPreview) setMode('edit'); };
+    el.save.onclick = () => saveNote();
+    el.del.onclick = deleteNote;
+    $('#nt-new-btn').onclick = newNote;
+    $('#nt-daily-btn').onclick = openDaily;
+
+    if (keyHandler) document.removeEventListener('keydown', keyHandler);
+    keyHandler = e => {
+        if (!root.isConnected) return document.removeEventListener('keydown', keyHandler);
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); clearTimeout(saveTimer); saveTimer = null; saveNote(); }
+    };
+    document.addEventListener('keydown', keyHandler);
+
+    // ── Date-range calendar ──────────────────────────────────────────────
+    const overlayCal = $('#nt-cal-overlay');
+
+    function openCalendar() {
+        const now = new Date();
+        calY = now.getFullYear(); calM = now.getMonth(); calStart = from; calEnd = to;
+        calCounts = {};
+        Object.values(vault.notes).forEach(n => { const d = (n.modified || '').slice(0, 10); if (d) calCounts[d] = (calCounts[d] || 0) + 1; });
+        renderCalendar();
+        overlayCal.classList.add('open');
+    }
+    function renderCalendar() {
+        $('#nt-cal-month').textContent = MONTHS[calM] + ' ' + calY;
+        const lo = calStart && calEnd ? (calStart < calEnd ? calStart : calEnd) : calStart;
+        const hi = calStart && calEnd ? (calStart < calEnd ? calEnd : calStart) : calStart;
+        $('#nt-cal-label').textContent = lo && calEnd ? `${lo}  →  ${hi}` : lo ? `Start: ${lo} — pick an end date` : 'Select a date range';
+
+        const grid = $('#nt-cal-grid');
+        grid.innerHTML = ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map(d => `<div class="cal-dow">${d}</div>`).join('');
+        const first = (new Date(calY, calM, 1).getDay() + 6) % 7, days = new Date(calY, calM + 1, 0).getDate(), today = isoDate(new Date());
+        for (let i = 0; i < first; i++) grid.insertAdjacentHTML('beforeend', '<div class="cal-day empty"></div>');
+        for (let d = 1; d <= days; d++) {
+            const ds = `${calY}-${pad(calM + 1)}-${pad(d)}`, cell = document.createElement('div');
+            cell.className = 'cal-day' + (ds === today ? ' today' : '') + (lo && ds >= lo && ds <= hi ? ' in-range' : '') + (ds === lo || ds === hi ? ' edge' : '');
+            cell.textContent = d;
+            if (calCounts[ds]) cell.insertAdjacentHTML('beforeend', `<span class="cal-count">${calCounts[ds] > 9 ? '9+' : calCounts[ds]}</span>`);
+            cell.onclick = () => { if (!calStart || calEnd) { calStart = ds; calEnd = null; } else calEnd = ds; renderCalendar(); };
+            grid.appendChild(cell);
+        }
+    }
+    function applyRange(clear) {
+        if (clear || !calStart) from = to = null;
+        else { const end = calEnd || calStart; from = calStart < end ? calStart : end; to = calStart < end ? end : calStart; }
+        el.calBtn.classList.toggle('active', !!(from || to));
+        overlayCal.classList.remove('open');
+        runSearch(searchQuery);
+    }
+    el.calBtn.onclick = openCalendar;
+    $('#nt-cal-x').onclick = () => overlayCal.classList.remove('open');
+    $('#nt-cal-prev').onclick = () => { if (--calM < 0) { calM = 11; calY--; } renderCalendar(); };
+    $('#nt-cal-next').onclick = () => { if (++calM > 11) { calM = 0; calY++; } renderCalendar(); };
+    $('#nt-cal-clear').onclick = () => applyRange(true);
+    $('#nt-cal-apply').onclick = () => applyRange(false);
+    overlayCal.onclick = e => { if (e.target === overlayCal) overlayCal.classList.remove('open'); };
+
+    // ── Graph view (d3-force, loaded only when opened) ───────────────────
+    const overlayGraph = $('#nt-graph-overlay');
+    let sim = null;
+
+    async function openGraph() {
+        const wrap = $('#nt-graph-wrap');
+        overlayGraph.classList.add('open');
+        wrap.innerHTML = '<div class="graph-empty">Loading…</div>';
+        try { await loadScript(CDN.d3); } catch { wrap.innerHTML = '<div class="graph-empty">Could not load the graph library (offline?).</div>'; return; }
+
+        const all = paths(), nodes = all.map(id => ({ id, label: id.split('/').pop().replace(/\.md$/, '') })), links = [], seen = new Set();
+        all.forEach(p => {
+            for (const m of vault.notes[p].content.matchAll(/\[\[(.+?)\]\]/g)) {
+                const t = resolveNote(m[1], all);
+                if (!t || t === p) continue;
+                const key = [p, t].sort().join('\u0001');
+                if (!seen.has(key)) { seen.add(key); links.push({ source: p, target: t }); }
+            }
+        });
+        drawGraph(wrap, nodes, links);
+    }
+
+    function drawGraph(wrap, nodes, links) {
+        wrap.innerHTML = '';
+        if (!nodes.length) { wrap.innerHTML = '<div class="graph-empty">No notes yet — link them with [[double brackets]] to see the graph.</div>'; return; }
+        const d3 = window.d3, W = wrap.clientWidth || 900, H = wrap.clientHeight || 600, size = 7;
+
+        const byId = {};
+        nodes.forEach(n => { n.degree = 0; byId[n.id] = n; });
+        links.forEach(l => { byId[l.source].degree++; byId[l.target].degree++; });
+        const maxDeg = Math.max(1, ...nodes.map(n => n.degree));
+        const LIGHT = [149, 223, 219], DARK = [0, 90, 90];
+        const shade = t => 'rgb(' + LIGHT.map((c, i) => Math.round(c + (DARK[i] - c) * t)).join(',') + ')';
+        const tOf = d => Math.sqrt(d / maxDeg);
+
+        const svg = d3.select(wrap).append('svg').attr('viewBox', [0, 0, W, H]);
+        const zoomG = svg.append('g');
+        svg.call(d3.zoom().scaleExtent([0.15, 6]).on('zoom', e => zoomG.attr('transform', e.transform)));
+
+        if (sim) sim.stop();
+        const pull = d => 0.008 + Math.min(0.1, d.degree * 0.02);
+        sim = d3.forceSimulation(nodes)
+            .force('link', d3.forceLink(links).id(d => d.id).distance(24).strength(0.75))
+            .force('charge', d3.forceManyBody().strength(-16))
+            .force('center', d3.forceCenter(W / 2, H / 2))
+            .force('x', d3.forceX(W / 2).strength(pull))
+            .force('y', d3.forceY(H / 2).strength(pull))
+            .force('collide', d3.forceCollide().radius(size / 2 + 2.5).iterations(2));
+
+        const linkSel = zoomG.append('g').selectAll('line').data(links).join('line').attr('class', 'g-link')
+            .style('stroke', d => shade(tOf(Math.max(d.source.degree, d.target.degree))))
+            .style('opacity', d => 0.18 + tOf(Math.max(d.source.degree, d.target.degree)) * 0.35);
+
+        const nodeSel = zoomG.append('g').selectAll('g').data(nodes, d => d.id).join('g').call(
+            d3.drag()
+                .on('start', (e, d) => { if (!e.active) sim.alphaTarget(0.3).restart(); d.fx = d.x; d.fy = d.y; d._dragged = false; })
+                .on('drag', (e, d) => { d.fx = e.x; d.fy = e.y; d._dragged = true; })
+                .on('end', (e, d) => { if (!e.active) sim.alphaTarget(0); d.fx = d.fy = null; }));
+
+        nodeSel.append('rect').attr('class', 'g-node').attr('width', size).attr('height', size)
+            .attr('x', -size / 2).attr('y', -size / 2).attr('rx', 1.5).style('fill', d => shade(tOf(d.degree)));
+
+        const wrapLabel = text => {   // 2 lines × ~11 chars, ellipsis if longer
+            const words = text.split(/\s+/).filter(Boolean), lines = [];
+            let cur = '';
+            words.forEach(w => { const t = cur ? cur + ' ' + w : w; if (t.length > 11 && cur) { lines.push(cur); cur = w; } else cur = t; });
+            if (cur) lines.push(cur);
+            let out = lines.slice(0, 2).map(l => l.length > 11 ? l.slice(0, 10) + '…' : l);
+            if (lines.length > 2) out[1] = out[1].replace(/…?$/, '…');
+            return out.length ? out : [''];
+        };
+        const labelSel = nodeSel.append('text').attr('class', 'g-label').attr('text-anchor', 'middle').each(function (d) {
+            const lines = wrapLabel(d.label), t = d3.select(this).attr('y', -size / 2 - 4 - (lines.length - 1) * 10);
+            lines.forEach((l, i) => t.append('tspan').text(l).attr('x', 0).attr('dy', i ? 10 : 0));
+        });
+
+        const adj = new Set();
+        links.forEach(l => { adj.add(l.source.id + '\u0001' + l.target.id); adj.add(l.target.id + '\u0001' + l.source.id); });
+        const near = (a, b) => a.id === b.id || adj.has(a.id + '\u0001' + b.id);
+
+        nodeSel.on('mouseenter', (e, d) => {
+            nodeSel.select('.g-node').classed('dim', o => !near(d, o)).classed('nb', o => o.id !== d.id && near(d, o));
+            labelSel.classed('dim', o => !near(d, o)).classed('nb', o => o.id !== d.id && near(d, o)).classed('show', o => o.id === d.id);
+            linkSel.classed('dim', l => l.source.id !== d.id && l.target.id !== d.id).classed('hi', l => l.source.id === d.id || l.target.id === d.id);
+        }).on('mouseleave', () => {
+            nodeSel.select('.g-node').classed('dim', false).classed('nb', false);
+            labelSel.classed('dim', false).classed('nb', false).classed('show', false);
+            linkSel.classed('dim', false).classed('hi', false);
+        }).on('click', (e, d) => {
+            if (d._dragged) { d._dragged = false; return; }
+            closeGraph(); loadNote(d.id);
+        });
+
+        sim.on('tick', () => {
+            linkSel.attr('x1', d => d.source.x).attr('y1', d => d.source.y).attr('x2', d => d.target.x).attr('y2', d => d.target.y);
+            nodeSel.attr('transform', d => `translate(${d.x},${d.y})`);
+        });
+    }
+    function closeGraph() { overlayGraph.classList.remove('open'); if (sim) sim.stop(); }
+    $('#nt-graph-btn').onclick = openGraph;
+    $('#nt-graph-x').onclick = closeGraph;
+    overlayGraph.onclick = e => { if (e.target === overlayGraph) closeGraph(); };
+
+    // ── GitHub sync (manual) ─────────────────────────────────────────────
+    async function getCfg() {
+        const token = await S.get('gh_token'), repo = await S.get('gh_repo'), folder = (await S.get('gh_folder')) || '';
+        if (!token || !repo || !repo.includes('/')) return null;
+        const sub = [folder, NOTES_SUBDIR].map(s => (s || '').trim().replace(/^\/+|\/+$/g, '')).filter(Boolean).join('/');
+        return { token, repo, prefix: sub ? sub + '/' : '' };
+    }
+
+    // One request helper: retries GitHub's occasional 5xx and turns errors into readable messages.
+    function makeApi({ token, repo }) {
+        return async (url, opt = {}) => {
+            for (let attempt = 1; ; attempt++) {
+                let res;
+                try {
+                    res = await fetch(`https://api.github.com/repos/${repo}${url ? '/' + url : ''}`, {
+                        ...opt, cache: 'no-store',   // never serve a stale answer right after a push
+                        headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', ...(opt.body ? { 'Content-Type': 'application/json' } : {}) }
+                    });
+                } catch { throw new Error('Network error — check your connection and try again.'); }
+                if (res.ok) return res.json();
+                let msg = '';
+                try { msg = (await res.json()).message || ''; } catch { /* body wasn't JSON */ }
+                if (res.status >= 500 && attempt < 3) { await sleep(1000 * attempt); continue; }
+                const err = new Error(
+                    res.status === 401 ? 'GitHub rejected the token (401). Check Settings.'
+                    : res.status >= 500 ? `GitHub is having problems (${res.status}). Nothing was lost — try again in a minute.`
+                    : `GitHub ${res.status}: ${msg}` + (res.status === 403 || (res.status === 404 && opt.method) ? ' — does the token have write access to this repo (Contents: Read and write)?' : ''));
+                err.status = res.status;
+                err.nonFastForward = res.status === 422 && /fast.?forward/i.test(msg);   // someone pushed first
+                throw err;
+            }
+        };
+    }
+
+    // Cheap "is there anything new on GitHub?" — one request, no downloading. Runs on open and when you come back to the tab.
+    async function checkRemote() {
+        if (syncing) return;
+        try {
+            const cfg = await getCfg();
+            if (!cfg || !vault.branch) return;
+            const head = (await makeApi(cfg)(`git/ref/heads/${encRef(vault.branch)}`)).object.sha;
+            remoteChanged = head !== vault.head;
+            updateBadge();
+        } catch { /* offline / not configured: keep the last known state */ }
+    }
+
+    async function doSync(cfg) {
+        const api = makeApi(cfg), key = cfg.repo + '|' + cfg.prefix;
+        if (vault.cfgKey !== key) { vault.cfgKey = key; vault.head = null; vault.branch = null; }   // repo/folder changed → read everything again
+        const r = { pulled: [], pushed: [], removedLocal: [], removedRemote: [], conflicts: [], errors: [] };
+        for (let attempt = 1; ; attempt++) {
+            try { await syncOnce(api, cfg, r); return r; }
+            catch (e) {
+                if (!e.nonFastForward) throw e;
+                if (attempt >= 3) throw new Error('GitHub keeps changing while syncing (another device pushing?). Press sync again in a moment.');
+                // someone pushed between our read and our write: loop = pull their changes, then push again
+            }
+        }
+    }
+
+    async function syncOnce(api, { repo, prefix }, r) {
+        const now = nowStr();
+
+        // 1. Where is GitHub right now? Everything below is addressed by immutable ids derived from this one commit.
+        if (!vault.branch) {
+            try { vault.branch = (await api('')).default_branch; }
+            catch (e) { throw e.status === 404 ? new Error(`Repo "${repo}" not found (or the token can't see it). Check Settings.`) : e; }
+        }
+        const refGet = `git/ref/heads/${encRef(vault.branch)}`;     // GitHub reads a branch at …/git/ref/… (singular)
+        const refSet = `git/refs/heads/${encRef(vault.branch)}`;    // …but updates it at …/git/refs/… (plural)
+        let head;
+        try { head = (await api(refGet)).object.sha; }
+        catch (e) {
+            if (e.status === 404 || e.status === 409) { vault.branch = null; throw new Error(`Branch not found, or "${repo}" has no commits yet. Check Settings.`); }
+            throw e;
+        }
+        let treeSha = null;   // looked up only when needed (listing / pushing); a no-change sync is one request
+        const treeOf = async () => treeSha ??= (await api(`git/commits/${head}`)).tree.sha;
+
+        // 2. Pull — only if GitHub moved since our last sync
+        let remote = null;   // rel path → blob sha (null = GitHub unchanged, so our own records are still accurate)
+        if (head !== vault.head) {
+            const tree = await api(`git/trees/${await treeOf()}?recursive=1`);
+            if (tree.truncated) throw new Error('Repository is too large for one listing call — this module expects a notes-sized repo.');
+            remote = {};
+            tree.tree.forEach(t => {
+                if (t.type === 'blob' && t.path.endsWith('.md') && (!prefix || t.path.startsWith(prefix))) remote[t.path.slice(prefix.length)] = t.sha;
+            });
+
+            const toFetch = Object.entries(remote).filter(([rel, sha]) => vault.notes[rel]?.sha !== sha && vault.deleted[rel] !== sha);
+            for (let i = 0; i < toFetch.length; i += 4) {
+                await Promise.all(toFetch.slice(i, i + 4).map(async ([rel, sha]) => {
+                    try {
+                        const text = b64ToStr((await api('git/blobs/' + sha)).content), rh = hash(text), n = vault.notes[rel];
+                        if (n && isDirty(n)) {                                   // changed here AND there
+                            n.sha = sha;                                          // from now on our text is based on GitHub's latest…
+                            if (n.h === rh) { n.sh = n.h; return; }               // …same text on both sides: nothing to do
+                            const cp = rel.replace(/\.md$/, '') + `.conflict-${now.replace(/[-:]/g, '').replace('T', '-')}.md`;
+                            vault.notes[cp] = { content: text, created: now, modified: now, h: rh, sh: undefined, sha: undefined };   // GitHub's text, kept
+                            r.conflicts.push(`${rel}: changed on both sides — kept yours, GitHub's version saved as ${cp}`);
+                            return;
+                        }
+                        delete vault.deleted[rel];   // remote changed after we deleted it → bring it back
+                        vault.notes[rel] = { content: text, created: n?.created || now, modified: now, h: rh, sh: rh, sha };
+                        r.pulled.push(rel);
+                    } catch (e) { r.errors.push(`${rel}: ${e.message}`); }
+                }));
+            }
+
+            // notes deleted on GitHub
+            for (const [rel, n] of Object.entries(vault.notes)) {
+                if (!n.sha || remote[rel]) continue;
+                if (!isDirty(n)) { delete vault.notes[rel]; r.removedLocal.push(rel); }
+                else { n.sha = undefined; r.conflicts.push(`${rel}: deleted on GitHub but edited here — it will be re-created on GitHub`); }
+            }
+            for (const rel of Object.keys(vault.deleted)) if (!remote[rel]) delete vault.deleted[rel];
+        }
+
+        if (Object.keys(vault.notes).some(p => LEGACY_DAILY_RE.test(p))) tidyDaily();   // earlier Daily/<year>/<month> layout
+
+        // 3. Push — ONE commit with every change; the branch update is fast-forward-only, so nothing can be overwritten
+        const snap = Object.entries(vault.notes)
+            .filter(([, n]) => isDirty(n))
+            .map(([rel, n]) => ({ rel, h: n.h, body: n.content || '\n' }));   // snapshot: edits typed during the sync stay "unsynced"
+        const dels = Object.keys(vault.deleted).filter(rel => !remote || remote[rel]);
+
+        if (snap.length || dels.length) {
+            const entries = [
+                ...snap.map(x => ({ path: prefix + x.rel, mode: '100644', type: 'blob', content: x.body })),
+                ...dels.map(rel => ({ path: prefix + rel, mode: '100644', type: 'blob', sha: null }))
+            ];
+            const newTree = await api('git/trees', { method: 'POST', body: JSON.stringify({ base_tree: await treeOf(), tree: entries }) });
+            const message = `Notes: ${snap.length} updated` + (dels.length ? `, ${dels.length} deleted` : '');
+            const commit = await api('git/commits', { method: 'POST', body: JSON.stringify({ message, tree: newTree.sha, parents: [head] }) });
+            await api(refSet, { method: 'PATCH', body: JSON.stringify({ sha: commit.sha, force: false }) });   // 422 "not a fast forward" → doSync re-runs
+
+            for (const { rel, h, body } of snap) {
+                const n = vault.notes[rel];
+                if (!n) continue;
+                n.sha = await gitBlobSha(body).catch(() => undefined);   // undefined → re-read next time, harmless
+                n.sh = h;
+                r.pushed.push(rel);
+            }
+            dels.forEach(rel => { delete vault.deleted[rel]; r.removedRemote.push(rel); });
+            vault.head = r.errors.length ? null : commit.sha;   // null = list everything again next time (some blobs failed to download)
+        } else {
+            vault.head = r.errors.length ? null : head;
+        }
+        vault.lastSynced = now;
+    }
+
+    async function runSync() {
+        if (syncing) return;
+        const cfg = await getCfg();
+        if (!cfg) return toast('Not configured — open Settings and add the GitHub repo (owner/name) and token.', true);
+        syncing = true; el.syncBtn.classList.add('spin'); el.syncBtn.disabled = true;
+        try {
+            await flushSave();
+            const r = await doSync(cfg);
+            remoteChanged = false;
+            const parts = [];
+            if (r.pulled.length) parts.push(r.pulled.length + ' pulled');
+            if (r.pushed.length) parts.push(r.pushed.length + ' pushed');
+            if (r.removedLocal.length) parts.push(r.removedLocal.length + ' removed here');
+            if (r.removedRemote.length) parts.push(r.removedRemote.length + ' removed on GitHub');
+            let msg = parts.join(', ') || 'Up to date — nothing to pull, nothing to push';
+            if (r.conflicts.length) msg += ` — ${r.conflicts.length} conflict${r.conflicts.length > 1 ? 's' : ''} (see .conflict notes)`;
+            if (r.errors.length) { msg += ` — ${r.errors.length} error${r.errors.length > 1 ? 's' : ''}: ${r.errors[0]}`; console.warn('Sync errors', r.errors); }
+            if (r.conflicts.length) console.info('Sync conflicts', r.conflicts);
+            toast(msg, !!(r.conflicts.length || r.errors.length));
+
+            // the open note was updated from GitHub and has no unsaved edits → refresh it
+            if (originalPath && r.pulled.includes(originalPath) && !isNew) {
+                el.editor.value = vault.notes[originalPath].content;
+                if (isPreview) showPreview();
+            }
+        } catch (e) {
+            toast(e.message || 'Sync failed.', true);
+        } finally {
+            await persist();
+            syncing = false; el.syncBtn.classList.remove('spin'); el.syncBtn.disabled = false;
+            buildTree(); refreshBanner();
+        }
+    }
+    el.syncBtn.onclick = runSync;
+
+    // ── Go ───────────────────────────────────────────────────────────────
+    expanded.add(DAILY);   // recent daily notes are visible straight away
+    if (Object.keys(vault.notes).some(p => LEGACY_DAILY_RE.test(p))) {   // one-time: earlier Daily/<year>/<month> layout
+        const n = tidyDaily();
+        if (n) { await persist(); toast(`Reorganised ${n} daily note${n > 1 ? 's' : ''}: latest ${DAILY_KEEP} in Daily/, older in Daily/Archive/`); }
+    }
+    refreshBanner();
+    buildTree();
+    // First run on this browser: pull everything once so the vault isn't empty
+    if (!vault.lastSynced && !Object.keys(vault.notes).length && await getCfg()) runSync();
+    else checkRemote();
+    if (focusHandler) window.removeEventListener('focus', focusHandler);
+    focusHandler = () => { if (!root.isConnected) return window.removeEventListener('focus', focusHandler); checkRemote(); };
+    window.addEventListener('focus', focusHandler);
+}

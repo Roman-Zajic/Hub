@@ -175,6 +175,32 @@ async function initSettings() {
     const btnClose = document.getElementById('settings-close');
     const btnSave = document.getElementById('settings-save');
     const btnFolder = document.getElementById('set-local-folder');
+    const modBox = document.getElementById('set-modules');
+    const modBtn = document.getElementById('set-modules-btn');
+    const modMenu = document.getElementById('set-modules-menu');
+    const modLabelEl = document.getElementById('set-modules-label');
+
+    // Modules dropdown: one checkbox per module; the choice is stored in this browser only (= per device)
+    const pickedModules = () => [...modMenu.querySelectorAll('input:checked')].map(i => i.value);
+    function updateModulesLabel() {
+        const n = pickedModules().length, total = APP_CONFIG.modules.length;
+        modLabelEl.textContent = n === total ? 'All modules' : n ? `${n} of ${total} selected` : 'None selected';
+    }
+    function renderModulesMenu() {
+        modMenu.innerHTML = '';
+        APP_CONFIG.modules.forEach(name => {
+            const row = document.createElement('label');
+            row.className = 'multi-select-item';
+            row.innerHTML = `<input type="checkbox" value="${name}"><span>${modLabel(name)}</span>`;
+            const box = row.querySelector('input');
+            box.checked = enabledModules.includes(name);
+            box.addEventListener('change', updateModulesLabel);
+            modMenu.appendChild(row);
+        });
+        updateModulesLabel();
+    }
+    modBtn.addEventListener('click', e => { e.stopPropagation(); modBox.classList.toggle('open'); });
+    document.addEventListener('click', e => { if (!modBox.contains(e.target)) modBox.classList.remove('open'); });
 
     btnOpen.addEventListener('click', async () => {
         document.getElementById('set-gh-repo').value = await App.Store.get('gh_repo') || '';
@@ -183,17 +209,26 @@ async function initSettings() {
         document.getElementById('set-gh-folder').value = savedFolder !== undefined && savedFolder !== null ? savedFolder : '';
         const handle = await App.Store.get('local_folder_handle');
         document.getElementById('set-local-status').textContent = handle ? `Current: ${handle.name}` : 'No folder selected';
+        renderModulesMenu();
+        modBox.classList.remove('open');
         overlay.classList.add('open');
     });
 
     btnClose.addEventListener('click', () => overlay.classList.remove('open'));
 
     btnSave.addEventListener('click', async () => {
+        const picked = pickedModules();
+        if (!picked.length) { alert('Select at least one module for this device.'); return; }
         await App.Store.set('gh_repo', document.getElementById('set-gh-repo').value.trim());
         await App.Store.set('gh_token', document.getElementById('set-gh-token').value.trim());
         await App.Store.set('gh_folder', document.getElementById('set-gh-folder').value.trim());
+        await App.Store.set('enabled_modules', picked);
+        enabledModules = APP_CONFIG.modules.filter(m => picked.includes(m));
+        buildSidebar();
         overlay.classList.remove('open');
-        handleNavigation(); 
+        const current = window.location.hash.replace('#', '');
+        if (enabledModules.includes(current)) handleNavigation();           // re-render with the new credentials
+        else window.location.hash = enabledModules[0];                      // this module is off on this device → hashchange navigates
     });
 
     btnFolder.addEventListener('click', async () => {
@@ -217,31 +252,47 @@ const els = {
 };
 
 const loadedModules = {};
+const modLabel = name => name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+
+// Modules switched on for THIS device (stored in this browser's IndexedDB). Nothing stored yet → all of them.
+let enabledModules = [...APP_CONFIG.modules];
+async function loadEnabledModules() {
+    const saved = await Store.get('enabled_modules');
+    const list = Array.isArray(saved) ? APP_CONFIG.modules.filter(m => saved.includes(m)) : [];
+    return list.length ? list : [...APP_CONFIG.modules];
+}
+function buildSidebar() {
+    els.sidebar.innerHTML = '';
+    enabledModules.forEach(modName => {
+        const link = document.createElement('a');
+        link.href = `#${modName}`;
+        link.className = 'nav-item';
+        link.textContent = modLabel(modName);
+        link.dataset.module = modName;
+        els.sidebar.appendChild(link);
+    });
+}
 
 async function initApp() {
     els.brandNameDesktop.textContent = APP_CONFIG.brandName;
 
-    APP_CONFIG.modules.forEach(modName => {
-        const link = document.createElement('a');
-        link.href = `#${modName}`;
-        link.className = 'nav-item';
-        link.textContent = modName.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
-        link.dataset.module = modName;
-        els.sidebar.appendChild(link);
-    });
+    enabledModules = await loadEnabledModules();
+    buildSidebar();
 
     window.addEventListener('hashchange', handleNavigation);
     els.mobileBtn.addEventListener('click', () => els.sidebar.classList.toggle('open'));
 
     initSettings();
 
-    if (!window.location.hash) window.location.hash = APP_CONFIG.defaultModule;
+    // empty / unknown / switched-off module in the URL (e.g. the old #private-notes) → default module
+    const current = window.location.hash.replace('#', '');
+    if (!enabledModules.includes(current)) window.location.hash = enabledModules.includes(APP_CONFIG.defaultModule) ? APP_CONFIG.defaultModule : enabledModules[0];
     else handleNavigation();
 }
 
 async function handleNavigation() {
     const hash = window.location.hash.replace('#', '');
-    if (!APP_CONFIG.modules.includes(hash)) return;
+    if (!enabledModules.includes(hash)) return;
 
     document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.module === hash));
     els.sidebar.classList.remove('open');
@@ -253,7 +304,7 @@ async function handleNavigation() {
         }
         const module = loadedModules[hash];
         
-        const moduleTitle = module.meta?.title || hash.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+        const moduleTitle = module.meta?.title || modLabel(hash);
         els.moduleTitle.textContent = moduleTitle;
         els.footerModule.textContent = moduleTitle;
         

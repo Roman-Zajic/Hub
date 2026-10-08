@@ -32,6 +32,17 @@
                     <button id="set-local-folder" class="btn btn-outline">Select Folder</button>
                     <div id="set-local-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">No folder selected</div>
                 </div>
+                <div class="field">
+                    <label class="field-label">Modules on this device</label>
+                    <div class="multi-select" id="set-modules">
+                        <button type="button" class="input multi-select-btn" id="set-modules-btn">
+                            <span id="set-modules-label">All modules</span>
+                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 8 11 13 6"/></svg>
+                        </button>
+                        <div class="multi-select-menu" id="set-modules-menu"></div>
+                    </div>
+                    <div class="field-hint">Saved on this device only.</div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button id="settings-save" class="btn btn-primary">Save Settings</button>

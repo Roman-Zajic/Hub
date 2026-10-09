@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>financial&nbsp;models — Secure Local Transcript</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* ── Tokens ─────────────────────────────────────────────── */
+:root {
+  --font:      "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-mono: "Segoe UI Mono", "Cascadia Mono", ui-monospace, monospace;
+
+  --teal-900: #005A5A;
+  --teal-700: #008282;
+  --teal-400: #50C1C1;
+  --teal-100: #95DFDB;
+  --amber:    #E1A01E;
+  --red:      #C41E3A;
+  --ink:      #012D2C;
+
+  --text:         #005A5A;
+  --text-muted:   #008282;
+  --surface-page: #F0FAFA;
+  --surface-card: #FFFFFF;
+  --surface-in:   #F0FAFA;
+  --border:       #D0ECEB;
+  --shadow:       0 1px 4px rgba(1,45,44,.10);
+  --shadow-md:    0 4px 14px rgba(1,45,44,.12);
+  --r:            10px;
+  --nav-h:        52px;
+}
+
+[data-theme="dark"] {
+  --text:         #95DFDB;
+  --text-muted:   #50C1C1;
+  --surface-page: #012D2C;
+  --surface-card: #032F2E;
+  --surface-in:   #021E1E;
+  --border:       #0A5050;
+  --shadow:       0 1px 4px rgba(0,0,0,.40);
+  --shadow-md:    0 4px 14px rgba(0,0,0,.50);
+}
+
+/* ── Base ───────────────────────────────────────────────── */
+html {
+  font-size:          16px;
+  scroll-behavior:    smooth;
+  scroll-padding-top: var(--nav-h);
+}
+
+body {
+  font-family: var(--font);
+  font-size:   0.9375rem;
+  color:       var(--text);
+  background:  var(--surface-page);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  transition: background 200ms, color 200ms;
+  min-height:  100vh;
+  display:     flex;
+  flex-direction: column;
+}
+
+/* ── Navbar ─────────────────────────────────────────────── */
+.navbar {
+  display:       flex;
+  align-items:   center;
+  height:        var(--nav-h);
+  padding:       0 32px;
+  background:    var(--teal-900);
+  border-bottom: 1px solid rgba(149,223,219,.15);
+  position:      sticky;
+  top:           0;
+  z-index:       100;
+  gap:           16px;
+}
+
+.brand {
+  font-size:       1rem;
+  font-weight:     600;
+  color:           var(--teal-100);
+  text-decoration: none;
+  white-space:     nowrap;
+}
+
+.theme-btn {
+  margin-left:   auto;
+  font-family:   var(--font);
+  font-size:     0.8125rem;
+  font-weight:   500;
+  color:         rgba(149,223,219,.75);
+  background:    rgba(149,223,219,.12);
+  border:        1px solid rgba(149,223,219,.20);
+  border-radius: 5px;
+  padding:       5px 12px;
+  cursor:        pointer;
+  transition:    background 130ms;
+  white-space:   nowrap;
+}
+.theme-btn:hover { background: rgba(149,223,219,.20); }
+
+/* ── Layout ─────────────────────────────────────────────── */
+.wrap {
+  max-width:     960px;
+  margin-inline: auto;
+  padding:       40px 32px 64px;
+  width:         100%;
+  flex:          1;
+  display:       flex;
+  flex-direction: column;
+  justify-content: center;
+}
+@media (max-width: 640px) { .wrap { padding: 24px 16px 40px; } }
+
+/* ── Components ──────────────────────────────────────────── */
+.card {
+  background:    var(--surface-card);
+  border:        1px solid var(--border);
+  border-radius: var(--r);
+  padding:       24px;
+  box-shadow:    var(--shadow);
+  display:       flex;
+  flex-direction: column;
+  gap:           16px;
+}
+
+.header-row {
+  display:       flex;
+  justify-content: space-between;
+  align-items:   center;
+  flex-wrap:     wrap;
+  gap:           10px;
+}
+
+.status-indicator {
+  display:       flex;
+  align-items:   center;
+  gap:           8px;
+  font-size:     0.8125rem;
+  font-weight:   600;
+}
+
+.dot {
+  width:         10px;
+  height:        10px;
+  border-radius: 50%;
+  background-color: #9ca3af;
+}
+
+.dot.active {
+  background-color: #10b981;
+  box-shadow:     0 0 0 4px rgba(16, 185, 129, 0.2);
+  animation:      pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  70% { transform: scale(1); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.controls {
+  display:       flex;
+  flex-wrap:     wrap;
+  gap:           8px;
+  align-items:   center;
+}
+
+.btn {
+  display:         inline-flex;
+  align-items:     center;
+  gap:             6px;
+  font-family:     var(--font);
+  font-size:       0.8125rem;
+  font-weight:     600;
+  padding:         8px 16px;
+  border-radius:   6px;
+  border:          1px solid transparent;
+  cursor:          pointer;
+  text-decoration: none;
+  transition:      background 130ms, color 130ms, border-color 130ms;
+  user-select:     none;
+  line-height:     1;
+}
+.btn:active   { opacity: .85; }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.btn-primary       { background: var(--teal-900); color: #fff; border-color: var(--teal-900); }
+.btn-primary:hover { background: var(--teal-700); border-color: var(--teal-700); }
+[data-theme="dark"] .btn-primary       { background: var(--teal-400); color: var(--ink); border-color: var(--teal-400); }
+[data-theme="dark"] .btn-primary:hover { background: var(--teal-100); border-color: var(--teal-100); }
+
+.btn-recording       { background: var(--red) !important; color: #fff !important; border-color: var(--red) !important; }
+.btn-recording:hover { background: #A01830 !important; }
+
+.btn-outline       { background: transparent; color: var(--text); border-color: var(--border); }
+.btn-outline:hover { border-color: var(--teal-700); color: var(--teal-700); }
+[data-theme="dark"] .btn-outline:hover { border-color: var(--teal-400); color: var(--teal-400); }
+
+.input-transcript {
+  font-family:   var(--font-mono);
+  font-size:     0.875rem;
+  font-variant-numeric: tabular-nums;
+  color:         var(--text);
+  background:    var(--surface-in);
+  border:        1px solid var(--border);
+  border-radius: 6px;
+  padding:       16px;
+  width:         100%;
+  height:        400px;
+  resize:        vertical;
+  line-height:   1.6;
+  outline:       none;
+  transition:    border-color 130ms, box-shadow 130ms;
+  white-space:   pre-wrap;
+}
+.input-transcript::placeholder { color: var(--text-muted); opacity: 0.6; }
+.input-transcript:focus { border-color: var(--teal-700); box-shadow: 0 0 0 3px rgba(0,130,130,.15); }
+[data-theme="dark"] .input-transcript:focus { border-color: var(--teal-400); box-shadow: 0 0 0 3px rgba(80,193,193,.20); }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav class="navbar">
+  <svg width="31" height="22" viewBox="0 0 31 22" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="flex-shrink:0">
+    <rect x="0"  y="0"  width="9" height="6" rx="1.5" fill="#95DFDB"/>
+    <rect x="11" y="0"  width="9" height="6" rx="1.5" fill="#50C1C1"/>
+    <rect x="22" y="0"  width="9" height="6" rx="1.5" fill="#008282"/>
+    <rect x="0"  y="8"  width="9" height="6" rx="1.5" fill="#95DFDB"/>
+    <rect x="11" y="8"  width="9" height="6" rx="1.5" fill="#50C1C1"/>
+    <rect x="22" y="8"  width="9" height="6" rx="1.5" fill="#008282"/>
+    <rect x="0"  y="16" width="9" height="6" rx="1.5" fill="#95DFDB"/>
+    <rect x="11" y="16" width="9" height="6" rx="1.5" fill="#50C1C1"/>
+    <rect x="22" y="16" width="9" height="6" rx="1.5" fill="#E1A01E"/>
+  </svg>
+  <a class="brand" href="#">financial&nbsp;models</a>
+  <button class="theme-btn" onclick="toggleTheme()" id="theme-btn">Light</button>
+</nav>
+
+<div class="wrap">
+  <!-- TOOL INTERFACE -->
+  <div class="card">
+    <div class="header-row">
+      <div style="font-weight:600; font-size:1rem;" id="logTitle">100% Local Offline Speech Log (Loading AI Model...)</div>
+      <div class="status-indicator">
+        <div id="statusDot" class="dot"></div>
+        <span id="statusText">Initializing</span>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button id="toggleBtn" class="btn btn-primary" disabled onclick="toggleListening()">Loading Model...</button>
+      <button class="btn btn-outline" onclick="copyTranscript()">Copy Text</button>
+      <button class="btn btn-outline" onclick="downloadTranscript()">Download .txt</button>
+      <button class="btn btn-outline" onclick="clearTranscript()">Clear Log</button>
+    </div>
+
+    <textarea id="transcript" class="input-transcript" placeholder="Model is downloading and caching locally. Once ready, speech processing happens completely offline with zero data sent to external servers..."></textarea>
+  </div>
+</div><!-- /wrap -->
+
+<script type="module">
+    import { pipeline } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0';
+
+    // Theme Management
+    window.toggleTheme = function() {
+        const html   = document.documentElement;
+        const isDark = html.getAttribute('data-theme') === 'dark';
+        html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+        document.getElementById('theme-btn').textContent = isDark ? 'Light' : 'Dark';
+    };
+
+    const toggleBtn = document.getElementById('toggleBtn');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const textarea = document.getElementById('transcript');
+    const logTitle = document.getElementById('logTitle');
+
+    let transcriber = null;
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+    let transcriptLog = "";
+
+    // Initialize local Whisper model via Transformers.js (runs entirely client-side via WebAssembly/WebGPU)
+    async function loadModel() {
+        try {
+            statusText.textContent = "Loading AI...";
+            // Using whisper-tiny.en which downloads and caches in browser storage (IndexedDB) for offline use
+            transcriber = await pipeline('automatic-speech-recognition', 'Xenova/whisper-tiny.en', {
+                device: 'webgpu' // Automatically falls back to WASM if WebGPU is unsupported
+            });
+            logTitle.textContent = "100% Local Offline Speech Log (Ready)";
+            statusText.textContent = "Idle";
+            toggleBtn.textContent = "Start Listening";
+            toggleBtn.disabled = false;
+        } catch (e) {
+            console.error("Model loading error:", e);
+            statusText.textContent = "Error";
+            toggleBtn.textContent = "Load Failed";
+            alert("Failed to load local AI model. Ensure you are running via localhost/server (due to browser security restrictions on ES modules).");
+        }
+    }
+
+    loadModel();
+
+    function getTimestamp() {
+        const now = new Date();
+        return [now.getHours(), now.getMinutes(), now.getSeconds()]
+            .map(v => String(v).padStart(2, '0'))
+            .join(':');
+    }
+
+    function appendLine(text) {
+        if (!text || !text.trim()) return;
+        const line = `[${getTimestamp()}] ${text.trim()}\n`;
+        transcriptLog += line;
+        textarea.value = transcriptLog;
+        textarea.scrollTop = textarea.scrollHeight;
+    }
+
+    async function startRecording() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+            audioChunks = [];
+
+            mediaRecorder.ondataavailable = (event) => {
+                if (event.data.size > 0) {
+                    audioChunks.push(event.data);
+                }
+            };
+
+            mediaRecorder.onstop = async () => {
+                if (!isRecording && audioChunks.length === 0) return;
+                
+                statusText.textContent = "Processing...";
+                const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                
+                // Convert blob to audio buffer suitable for Whisper (16kHz PCM Float32)
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+                const audioData = audioBuffer.getChannelData(0);
+
+                // Run local inference (zero data leave computer, works completely offline after initial cache)
+                const output = await transcriber(audioData, {
+                    chunk_length_s: 30,
+                    stride_length_s: 5,
+                    return_timestamps: false
+                });
+
+                if (output && output.text) {
+                    appendLine(output.text);
+                }
+
+                if (isRecording) {
+                    // Automatically restart chunk recording loop for continuous local transcription
+                    startNewChunk();
+                } else {
+                    stopSession();
+                }
+            };
+
+            mediaRecorder.start();
+            isRecording = true;
+            toggleBtn.textContent = "Stop Listening";
+            toggleBtn.classList.add('btn-recording');
+            statusDot.classList.add('active');
+            statusText.textContent = "Listening...";
+
+            // Automatically cut chunks every 6 seconds for responsive near-realtime local transcription stream
+            window.chunkTimer = setTimeout(() => {
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+            }, 6000);
+
+        } catch (err) {
+            console.error("Microphone error:", err);
+            alert("Microphone permission was denied or unavailable.");
+            stopSession();
+        }
+    }
+
+    function startNewChunk() {
+        if (!isRecording) return;
+        try {
+            const tracks = mediaRecorder?.stream?.getTracks();
+            tracks?.forEach(track => track.stop());
+        } catch(e) {}
+        startRecording();
+    }
+
+    window.toggleListening = function() {
+        if (!isRecording) {
+            transcriptLog = textarea.value;
+            startRecording();
+        } else {
+            isRecording = false;
+            clearTimeout(window.chunkTimer);
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            } else {
+                stopSession();
+            }
+        }
+    };
+
+    function stopSession() {
+        isRecording = false;
+        clearTimeout(window.chunkTimer);
+        try {
+            const tracks = mediaRecorder?.stream?.getTracks();
+            tracks?.forEach(track => track.stop());
+        } catch(e) {}
+        toggleBtn.textContent = "Start Listening";
+        toggleBtn.classList.remove('btn-recording');
+        statusDot.classList.remove('active');
+        statusText.textContent = "Idle";
+    }
+
+    textarea.addEventListener('input', () => {
+        transcriptLog = textarea.value;
+    });
+
+    window.copyTranscript = function() {
+        navigator.clipboard.writeText(textarea.value).then(() => {
+            alert('Transcript copied to clipboard!');
+        });
+    };
+
+    window.downloadTranscript = function() {
+        const blob = new Blob([textarea.value], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const timestamp = new Date().toISOString().slice(0, 10);
+        a.href = url;
+        a.download = `transcript-${timestamp}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    window.clearTranscript = function() {
+        if (confirm("Clear all logs?")) {
+            transcriptLog = "";
+            textarea.value = "";
+        }
+    };
+</script>
+</body>
+</html>

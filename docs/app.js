@@ -35,46 +35,50 @@ window.App = {
     
     Storage: {
         Local: {
+            // The working directory is chosen ONCE in Settings and remembered (IndexedDB). Modules never open a folder picker themselves.
             handle: null,
-            async init() {
+            async init(interactive = true) {
                 if (!('showDirectoryPicker' in window)) throw new Error("Local folder not supported here.");
                 if (!this.handle) this.handle = await App.Store.get('local_folder_handle');
-                if (this.handle) {
-                    const perm = await this.handle.queryPermission({ mode: 'readwrite' });
-                    if (perm !== 'granted') {
-                        const request = await this.handle.requestPermission({ mode: 'readwrite' });
-                        if (request !== 'granted') throw new Error("Permission denied.");
-                    }
-                    return this.handle;
+                if (!this.handle) throw new Error('NO_FOLDER');
+                let perm = await this.handle.queryPermission({ mode: 'readwrite' });
+                if (perm !== 'granted') {
+                    if (!interactive) throw new Error('NEEDS_PERMISSION');   // browsers only ask after a click
+                    perm = await this.handle.requestPermission({ mode: 'readwrite' });
+                    if (perm !== 'granted') throw new Error("Permission denied.");
                 }
-                this.handle = await window.showDirectoryPicker();
-                await App.Store.set('local_folder_handle', this.handle);
                 return this.handle;
             },
-            async listFiles() {
-                await this.init();
-                const files = [];
-                for await (const entry of this.handle.values()) {
-                    if (entry.kind === 'file' && entry.name.endsWith('.md')) files.push(entry.name);
-                }
-                return files;
+            // A subfolder of the working directory (created on first use). dir('') = the working directory itself.
+            async dir(sub = '', interactive = true) {
+                const root = await this.init(interactive);
+                return sub ? root.getDirectoryHandle(sub, { create: true }) : root;
             },
-            async readFile(filename) {
-                await this.init();
-                const fileHandle = await this.handle.getFileHandle(filename);
-                const file = await fileHandle.getFile();
-                return await file.text();
-            },
-            async saveFile(filename, content) {
-                await this.init();
-                const fileHandle = await this.handle.getFileHandle(filename, { create: true });
-                const writable = await fileHandle.createWritable();
-                await writable.write(content);
-                await writable.close();
-            },
-            async deleteFile(filename) {
-                await this.init();
-                await this.handle.removeEntry(filename);
+            // Markdown-file store scoped to one subfolder: App.Storage.Local.sub('Notes').listFiles() ...
+            sub(name) {
+                const dir = () => App.Storage.Local.dir(name);
+                return {
+                    async listFiles() {
+                        const files = [];
+                        for await (const entry of (await dir()).values()) {
+                            if (entry.kind === 'file' && entry.name.endsWith('.md')) files.push(entry.name);
+                        }
+                        return files;
+                    },
+                    async readFile(filename) {
+                        const fileHandle = await (await dir()).getFileHandle(filename);
+                        return await (await fileHandle.getFile()).text();
+                    },
+                    async saveFile(filename, content) {
+                        const fileHandle = await (await dir()).getFileHandle(filename, { create: true });
+                        const writable = await fileHandle.createWritable();
+                        await writable.write(content);
+                        await writable.close();
+                    },
+                    async deleteFile(filename) {
+                        await (await dir()).removeEntry(filename);
+                    }
+                };
             }
         },
         GitHub: {
@@ -233,10 +237,11 @@ async function initSettings() {
 
     btnFolder.addEventListener('click', async () => {
         try {
-            const handle = await window.showDirectoryPicker();
+            const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
             await App.Store.set('local_folder_handle', handle);
             document.getElementById('set-local-status').textContent = `Current: ${handle.name}`;
             App.Storage.Local.handle = handle;
+            window.dispatchEvent(new Event('app:folder-changed'));   // background modules (transcript) pick the folder up at once
         } catch (e) { console.log("Folder selection cancelled."); }
     });
 }
@@ -283,6 +288,10 @@ async function initApp() {
     els.mobileBtn.addEventListener('click', () => els.sidebar.classList.toggle('open'));
 
     initSettings();
+
+    // Modules that keep working in the background (e.g. the all-day transcript): load them now and call their boot()
+    (APP_CONFIG.background || []).filter(n => enabledModules.includes(n)).forEach(n =>
+        import(`./modules/${n}.js`).then(m => m.boot?.(App)).catch(err => console.error(`Background module '${n}' failed`, err)));
 
     // empty / unknown / switched-off module in the URL (e.g. the old #private-notes) → default module
     const current = window.location.hash.replace('#', '');

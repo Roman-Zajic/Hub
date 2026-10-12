@@ -3,8 +3,12 @@ export const APP_CONFIG = {
     modules: [
         'work-notes',
         'notes',
-        'email-composer'
+        'email-composer',
+        'timers',
+        'transcript'
     ],
+    // Loaded when the app opens (not only when you visit them): they keep working in the background.
+    background: ['transcript'],
     brandName: 'Roman Zajic',
     defaultModule: 'work-notes'
 };

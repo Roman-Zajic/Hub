@@ -251,7 +251,9 @@ body {
    Left panel : .panel-search (+ .tool-btn, .badge) · .file-list · .action-row (+ .btn-dashed) · .panel-footer
    Editor side: .editor-panel (.fill = full height) · .banner (.banner-main, .banner-title, .banner-title-input, .banner-actions, .banner-status)
                 .seg (toggle, any number of buttons) · .btn-icon · .btn-sm · .editor-textarea · .preview-area.markdown
-   Composer    : .toolbar (.toolbar-group, .toolbar-sep) · .split[data-view=edit|split|preview] · .preview-frame
+   Composer    : .toolbar (.toolbar-group, .toolbar-sep, .toolbar-label) · .split[data-view=edit|split|preview] · .preview-frame
+   Dashboards  : .card-grid · .timer-card / .timer-face (timers) · .ctl-btn (play/pause/stop) · .chip · body.popout
+   Forms       : .field · .field-row / .field-col · .field-hint · .form-error · .check
    Feedback   : .toast · .hint · .list-empty · .modal-overlay/.modal-card (.modal-sm, .modal-fill)
    ═══════════════════════════════════════════════════════════════════════ */
 
@@ -407,4 +409,71 @@ mark{background:var(--amber);color:var(--ink);border-radius:2px;padding:0 1px}
 
 /* Framed preview of generated HTML (e.g. the email on its grey canvas) */
 .preview-frame { width: 100%; height: 100%; border: 1px solid var(--border); border-radius: var(--r); background: #ECECEE; box-shadow: var(--shadow); }
+
+/* `hidden` must win over component display rules (.btn is inline-flex) */
+[hidden] { display: none !important; }
+.btn:disabled { opacity: .45; cursor: default; }
+.btn-icon.active { border-color: var(--teal-700); color: var(--teal-700); background: var(--teal-100); }
+.toolbar-label { font-size: .6875rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-right: 4px; }
+.chip { display: inline-block; font-size: .625rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--teal-700); background: var(--surface-in); border: 1px solid var(--border); border-radius: 10px; padding: 1px 8px; white-space: nowrap; }
+
+/* Form rows inside dialogs */
+.field-row { display: flex; gap: 8px; }
+.field-col { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.field-row .input { text-align: center; }
+.check { display: flex; align-items: center; gap: 10px; font-size: .875rem; color: var(--text); cursor: pointer; }
+.check input { accent-color: var(--teal-700); width: 15px; height: 15px; cursor: pointer; }
+.form-error { color: var(--red); font-size: .75rem; min-height: 1em; }
+
+/* Dashboard of cards (timers) */
+.card-grid { flex: 1; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; align-content: start; padding: 2px; }
+.card-grid > .hint { grid-column: 1 / -1; }
+.timer-card { background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow); padding: 14px 16px 16px; display: flex; flex-direction: column; gap: 14px; transition: border-color 130ms, box-shadow 130ms; }
+.timer-card:has(.timer-face.ringing) { border-color: var(--amber); box-shadow: 0 0 0 3px rgba(225,160,30,.35); }
+.timer-card-head { display: flex; align-items: center; gap: 8px; }
+.timer-card-title { flex: 1; min-width: 0; font-size: 1rem; font-weight: 700; color: var(--teal-900); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; border-radius: 4px; padding: 0 4px; margin: 0 -4px; transition: background 130ms; }
+.timer-card-title:hover { background: var(--surface-in); }
+.timer-title-input { flex: 1; min-width: 0; height: 30px; font-weight: 700; }
+.timer-card-actions { display: flex; gap: 6px; }
+
+.timer-face { --accent: var(--teal-700); display: flex; flex-direction: column; align-items: center; gap: 8px; text-align: center; }
+.timer-face.phase-short { --accent: var(--teal-400); }
+.timer-face.phase-long { --accent: var(--amber); }
+.timer-time { font-size: 2.75rem; font-weight: 700; line-height: 1.1; letter-spacing: .02em; font-variant-numeric: tabular-nums; color: var(--teal-900); }
+.timer-sub { font-size: .75rem; color: var(--text-muted); min-height: 1.2em; }
+.timer-progress { width: 100%; height: 6px; background: var(--surface-in); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+.timer-progress span { display: block; height: 100%; width: calc(var(--p, 0) * 100%); background: var(--accent); transition: width 200ms linear; }
+.timer-controls { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+.timer-time.editable { cursor: pointer; border-radius: 10px; padding: 0 10px; transition: background 130ms; }
+.timer-time.editable:hover { background: var(--surface-in); }
+
+/* Transport buttons: square with rounded corners (play / pause / stop, + skip for pomodoro) */
+.ctl-btn { width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; padding: 0; border-radius: 10px; border: 1px solid var(--teal-900); background: transparent; color: var(--teal-900); cursor: pointer; transition: background 130ms, border-color 130ms, color 130ms; }
+.ctl-btn svg { width: 20px; height: 20px; }
+.ctl-btn:hover:not(:disabled) { background: rgba(0,90,90,.08); }
+.ctl-btn.on { background: var(--teal-900); color: #fff; }   /* lit = the state the timer is in (running / paused) */
+.ctl-btn.on:hover:not(:disabled) { background: var(--teal-700); border-color: var(--teal-700); }
+.ctl-btn:disabled { opacity: .35; cursor: default; }
+.timer-face.done .timer-time { color: var(--text-muted); }
+.timer-face.ringing .timer-time { color: var(--amber); animation: kf-blink 1s steps(2, start) infinite; }
+@keyframes kf-blink { 50% { opacity: .3; } }
+
+/* Separate (pop-out) window: dark, huge digits, full-screen friendly */
+body.popout { background: var(--ink); color: var(--teal-100); align-items: center; justify-content: center; gap: 2vh; }
+.popout-bar { position: absolute; top: 14px; left: 18px; right: 18px; display: flex; align-items: center; gap: 12px; }
+.popout-title { flex: 1; min-width: 0; font-size: 1.1rem; font-weight: 700; color: var(--teal-100); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.popout .btn-icon { background: transparent; color: var(--teal-100); border-color: rgba(149,223,219,.4); }
+.popout .btn-icon:hover { background: rgba(149,223,219,.15); }
+.popout .timer-face { --accent: var(--teal-400); width: min(94vw, 1200px); gap: 2vh; }
+.popout .timer-face.phase-long { --accent: var(--amber); }
+.popout .timer-time { color: #fff; font-size: min(15vw, 38vh); }   /* 8 characters (hh:mm:ss) must fit the width */
+.popout .timer-sub { color: var(--teal-100); font-size: clamp(.9rem, 2.6vw, 2.2rem); }
+.popout .timer-progress { height: 10px; background: rgba(255,255,255,.12); border: 0; }
+.popout .ctl-btn { width: 64px; height: 64px; border-radius: 14px; color: var(--teal-100); border-color: var(--teal-400); }
+.popout .ctl-btn svg { width: 28px; height: 28px; }
+.popout .ctl-btn:hover:not(:disabled) { background: rgba(149,223,219,.15); }
+.popout .ctl-btn.on { background: var(--teal-400); border-color: var(--teal-400); color: var(--ink); }
+.popout .ctl-btn.on:hover:not(:disabled) { background: var(--teal-100); }
+.popout .timer-controls { gap: 20px; }
+.popout-title { cursor: text; }
 

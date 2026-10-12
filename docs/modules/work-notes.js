@@ -3,6 +3,7 @@ export const meta = {
 };
 
 export async function render(root, App) {
+    const Notes = App.Storage.Local.sub('Notes');   // <working directory>/Notes
     root.innerHTML = `
         <div class="notes-layout">
             <div class="file-panel">
@@ -53,7 +54,7 @@ export async function render(root, App) {
 
     async function loadFileList() {
         try {
-            const files = await App.Storage.Local.listFiles();
+            const files = await Notes.listFiles();
             els.fileList.innerHTML = '';
             
             files.sort().forEach(filename => {
@@ -70,7 +71,7 @@ export async function render(root, App) {
 
     async function openFile(filename) {
         try {
-            const content = await App.Storage.Local.readFile(filename);
+            const content = await Notes.readFile(filename);
             currentFile = filename;
             els.title.value = filename.replace('.md', '');
             els.editor.value = content;
@@ -96,10 +97,10 @@ export async function render(root, App) {
 
         try {
             if (currentFile && currentFile !== filename) {
-                await App.Storage.Local.deleteFile(currentFile);
+                await Notes.deleteFile(currentFile);
             }
 
-            await App.Storage.Local.saveFile(filename, els.editor.value);
+            await Notes.saveFile(filename, els.editor.value);
             currentFile = filename;
             els.btnDelete.style.display = 'block';
             els.status.textContent = 'Saved';
@@ -117,7 +118,7 @@ export async function render(root, App) {
         if (!confirm(`Delete "${currentFile}"?`)) return;
         
         try {
-            await App.Storage.Local.deleteFile(currentFile);
+            await Notes.deleteFile(currentFile);
             currentFile = null;
             els.title.value = '';
             els.editor.value = '';

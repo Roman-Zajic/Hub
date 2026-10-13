@@ -6,7 +6,15 @@ export const meta = {
    (.banner, .seg, .toolbar, .split, .editor-textarea, .preview-frame, .btn-*). No CSS in this file.
    The markup parser / email HTML generator further down is unchanged. */
 
+// Called by the router when you leave this module: write a pending draft now instead of in a moment
+let flushDraft = null;
+export async function unmount() {
+    const f = flushDraft; flushDraft = null;
+    await f?.();
+}
+
 export async function render(root, App) {
+    await unmount();
     root.innerHTML = `
         <div class="editor-panel fill">
             <div class="banner">
@@ -57,7 +65,7 @@ export async function render(root, App) {
 
             <div class="split" id="ec-split" data-view="split">
                 <textarea id="ec-markup" class="editor-textarea" spellcheck="false" placeholder="Write your email in markup — or press Sample to see every component."></textarea>
-                <iframe id="ec-preview" class="preview-frame" title="Email preview"></iframe>
+                <iframe id="ec-preview" class="preview-frame" title="Email preview" sandbox="allow-popups allow-popups-to-escape-sandbox"></iframe>
             </div>
         </div>
     `;
@@ -77,9 +85,7 @@ export async function render(root, App) {
 
     const EY_LOGO_SVG = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 393 402" width="34" height="35" fill="#fff"><polygon points="267.91,202.77 234.19,267.54 200.56,202.77 134.74,202.77 204.09,322.86 204.09,401.26 263.44,401.26 263.44,322.86 332.89,202.77"></polygon><polygon fill="#ffeb0a" points="392.42,0 0,143.22 392.42,73.9"></polygon><polygon points="3.43,401.26 162.23,401.26 162.23,355.61 62.96,355.61 62.96,322.86 134.74,322.86 134.74,281.18 62.96,281.18 62.96,248.42 142.37,248.42 116.02,202.77 3.43,202.77"></polygon></svg>';
 
-    function escapeHtml(str) {
-        return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-    }
+    const escapeHtml = App.esc;   // shared helper (app.js)
     function safeUrl(url) {
         const trimmed = (url || '').trim();
         if (/^javascript:/i.test(trimmed)) return '#';
@@ -388,13 +394,16 @@ export async function render(root, App) {
     function scheduleSave() {
         clearTimeout(saveTimer);
         els.status.textContent = 'Saving…';
-        saveTimer = setTimeout(async () => {
-            await App.Store.set(DRAFT_KEY, els.markup.value);
-            els.status.textContent = 'Draft saved';
-            clearTimeout(statusTimer);
-            statusTimer = setTimeout(() => { els.status.textContent = ''; }, 2000);
-        }, 800);
+        saveTimer = setTimeout(saveDraft, 800);
     }
+    async function saveDraft() {
+        saveTimer = null;
+        await App.Store.set(DRAFT_KEY, els.markup.value);
+        els.status.textContent = 'Draft saved';
+        clearTimeout(statusTimer);
+        statusTimer = setTimeout(() => { els.status.textContent = ''; }, 2000);
+    }
+    flushDraft = async () => { if (saveTimer) { clearTimeout(saveTimer); await saveDraft(); } };
 
     function extractSubject(src) {
         const m = (src || '').match(/^#\s+(.+)$/m);
@@ -403,11 +412,12 @@ export async function render(root, App) {
 
     function updatePreview() {
         const subject = extractSubject(els.markup.value);
-        els.preview.srcdoc = buildStandaloneDoc(subject, parseMarkup(els.markup.value));
+        els.preview.srcdoc = buildStandaloneDoc(subject, parseMarkup(els.markup.value)).replace('<head>', '<head><base target="_blank">');   // preview only: links open outside the frame
         els.title.textContent = subject || 'Untitled email';
         els.title.classList.toggle('placeholder', !subject);
     }
-    const onChange = () => { updatePreview(); scheduleSave(); };
+    let previewTimer = null;
+    const onChange = () => { clearTimeout(previewTimer); previewTimer = setTimeout(updatePreview, 200); scheduleSave(); };   // not on every keystroke
 
     els.markup.addEventListener('input', onChange);
 
@@ -472,23 +482,35 @@ export async function render(root, App) {
         onChange();
     };
 
+    // Header text with non-ASCII characters must be sent as RFC 2047 "encoded words" (else Outlook shows garbage)
+    function encodeHeader(text) {
+        text = text.replace(/[\r\n]+/g, ' ').trim();
+        if (/^[\x20-\x7E]*$/.test(text)) return text;
+        const enc = new TextEncoder(), words = [];
+        let chunk = '';
+        for (const ch of text) {
+            if (enc.encode(chunk + ch).length > 42) { words.push(chunk); chunk = ''; }
+            chunk += ch;
+        }
+        if (chunk) words.push(chunk);
+        return words.map(w => '=?UTF-8?B?' + btoa(String.fromCharCode(...enc.encode(w))) + '?=').join('\r\n ');
+    }
+
     els.btnDownload.onclick = async () => {
         await ensureLogoPng();
         const subject = extractSubject(els.markup.value) || 'Email';
         const html = buildStandaloneDoc(subject, parseMarkup(els.markup.value));
-        const eml = `From: user@example.com\r\nSubject: ${subject}\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: 8bit\r\n\r\n${html}`;
-        const blob = new Blob([eml], { type: 'message/rfc822' });
+        // No From: line (Outlook uses your own account); X-Unsent: 1 makes Outlook open it as an editable new message
+        const eml = `X-Unsent: 1\r\nSubject: ${encodeHeader(subject)}\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset="UTF-8"\r\nContent-Transfer-Encoding: 8bit\r\n\r\n${html}`;
         const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
+        a.href = URL.createObjectURL(new Blob([eml], { type: 'message/rfc822' }));
         a.download = (subject.replace(/[^\w\- ]+/g, '').trim() || 'email') + '.eml';
-        a.click();
-        URL.revokeObjectURL(a.href);
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 10000);   // not right away: some browsers start the download later
     };
 
-    // Load the draft (older versions kept it in localStorage — pick that up once)
-    let saved = await App.Store.get(DRAFT_KEY);
-    if (saved === undefined || saved === null) saved = localStorage.getItem(DRAFT_KEY);
-    els.markup.value = saved || EXAMPLE_MARKUP;
+    // Load the draft
+    els.markup.value = (await App.Store.get(DRAFT_KEY)) || EXAMPLE_MARKUP;
     updatePreview();                           // show something immediately…
     ensureLogoPng().then(updatePreview);       // …and again once the logo PNG is ready
 }

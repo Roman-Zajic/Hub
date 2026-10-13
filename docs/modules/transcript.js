@@ -3,9 +3,9 @@ export const meta = { title: 'Live Transcript' };
 /* ─────────────────────────────────────────────────────────────────────────
    Live Transcript — your whole day as text, tagged <mic> (you) and <sys> (everything the PC plays).
 
-   - Starts by itself when the app opens (config.js → `background`), runs in the background
+   - Starts by itself when the app opens (config.js → `background`) once a working directory is set on this device, runs in the background
      while you use other modules, and streams every line to  <working directory>/Audio Notes/Transcript YYYY-MM-DD.txt
-     (one file per day). Lines are written to disk every few seconds, so a crash loses almost nothing.
+     (one file per day). Lines are written to disk every 10 seconds (and when the tab is hidden), so a crash loses almost nothing.
    - Engine = the browser's built-in speech recognition: no model files, no libraries, no workers, very low CPU.
      "Private" = on-device recognition (Chrome/Edge download a small language pack once).
    - <sys> = a browser share with audio (pick the call's tab, or Entire screen + "Also share system audio"): one pick per session.
@@ -16,7 +16,7 @@ export const meta = { title: 'Live Transcript' };
    - No CSS in this file: every class used here is defined in styles.css.
    ───────────────────────────────────────────────────────────────────────── */
 
-const KEY_PREFS = 'transcript_prefs', FOLDER = 'Audio Notes', MAX_VIEW = 60000;
+const KEY_PREFS = 'transcript_prefs', FOLDER = 'Audio Notes', MAX_VIEW = 60000, FLUSH_MS = 10000;   // disk: one write every 10 s
 const LANGS = [['en-US', 'English (US)'], ['pl-PL', 'Polski'], ['de-DE', 'Deutsch']];   // one language for both sources
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -24,7 +24,7 @@ const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const HAS_TRACK = !!SR && 'processLocally' in SR.prototype;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-const p2 = n => String(n).padStart(2, '0');
+const p2 = window.App.pad;   // shared helper (app.js)
 const clock = ts => { const d = new Date(ts); return `${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`; };
 const dayOf = ts => { const d = new Date(ts); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
 const words = s => s.toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
@@ -36,7 +36,7 @@ const S = { mic: mk('mic'), sys: mk('sys') };
 const prefs = { lang: 'en-US', local: true, save: true };
 const ui = {};
 let Store = null, Local = null, loaded = null, booted = false;
-let running = false, busy = false, stoppedByUser = false, armed = false, watchIv = null, toastTo = null;
+let running = false, busy = false, stoppedByUser = false, armed = false, watchIv = null;
 let view = '';                                   // what the text box shows (the tail of today); the full record is on disk
 let pending = [], flushTo = null, flushing = false, disk = 'ok';   // lines waiting for the disk: {day, text}
 let recentSys = [];                              // last <sys> lines, used to drop the mic's echo of the speakers
@@ -62,12 +62,7 @@ async function init(App) {
 }
 
 // ── UI (every call is guarded: the module may be off screen while it records) ──
-function toast(msg, err) {
-    const el = ui.toast;
-    if (!el?.isConnected) return;
-    el.textContent = msg; el.classList.toggle('error', !!err); el.classList.add('show');
-    clearTimeout(toastTo); toastTo = setTimeout(() => el.classList.remove('show'), err ? 6500 : 3500);
-}
+const toast = (msg, err) => window.App.toast(msg, err);   // shared toast (app.js): also visible while another module is open
 const DISK = { ok: 'saving to file', wait: 'click anywhere to allow folder access', nofolder: 'no working directory — set it in Settings', error: 'disk error, retrying' };
 function statusText() {
     if (!SR) return 'Speech recognition is not supported in this browser';
@@ -142,7 +137,7 @@ function emit(t, tag, text) {
     addView(line);
     if (prefs.save) {
         pending.push({ day: dayOf(t), text: line });
-        if (!flushTo) flushTo = setTimeout(() => flush(), 3000);   // batch: at most one write every 3 s
+        if (!flushTo) flushTo = setTimeout(() => flush(), FLUSH_MS);   // batch: at most one write every 10 s
     }
 }
 // The mic also hears the speakers when no headphones are used: drop mic lines that repeat a recent <sys> line.
@@ -405,14 +400,14 @@ const TEMPLATE = `
   <textarea class="editor-textarea" id="lt-log" spellcheck="false" placeholder="The transcript appears here. It starts by itself and is saved to the “Audio Notes” folder inside your working directory. You can select, edit and copy the text."></textarea>
   <div class="hint" style="min-height:2.9em"><div id="lt-live-mic"></div><div id="lt-live-sys"></div></div>
 </div>
-<div class="toast" id="lt-toast"></div>`;
+`;
 
 export async function render(root, App) {
     await init(App);
     root.innerHTML = TEMPLATE;
     const $ = s => root.querySelector(s), all = s => [...root.querySelectorAll(s)];
     Object.assign(ui, {
-        root, ta: $('#lt-log'), toggle: $('#lt-toggle'), dot: $('#lt-dot'), dotc: $('#lt-dotc'), toast: $('#lt-toast'), lang: $('#lt-lang'),
+        root, ta: $('#lt-log'), toggle: $('#lt-toggle'), dot: $('#lt-dot'), dotc: $('#lt-dotc'), lang: $('#lt-lang'),
         liveMic: $('#lt-live-mic'), liveSys: $('#lt-live-sys'),
         srcBtns: all('[data-src]'), engBtns: all('[data-eng]'), saveBtns: all('[data-save]')
     });
@@ -435,6 +430,12 @@ export async function boot(App) {
     if (booted || !SR) return;
     booted = true;
     navigator.mediaDevices?.addEventListener?.('devicechange', () => setTimeout(watch, 1500));
-    window.addEventListener('app:folder-changed', () => checkDisk(true));   // fired by Settings after you pick the working directory
-    start(false);
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });   // best effort before the tab goes away
+    window.addEventListener('app:folder-changed', async () => {   // fired by Settings after you pick the working directory
+        await checkDisk(true);
+        if (!running && !busy && !stoppedByUser) start(false);   // the folder was the missing piece: begin now
+    });
+    // Recording starts by itself only where its output has a home: a working directory on this device (or when saving is off)
+    if (!prefs.save || await Store.get('local_folder_handle')) start(false);
+    else toast('Live Transcript is waiting: choose the working directory in Settings and it starts by itself.');
 }

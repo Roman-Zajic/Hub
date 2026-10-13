@@ -1,5 +1,3 @@
-export const meta = { title: 'Notes' };
-
 /* ─────────────────────────────────────────────────────────────────────────
    Notes — browser-only port of the Python "Notes (Sync)" module.
 
@@ -18,36 +16,62 @@ export const meta = { title: 'Notes' };
    - Notes live in IndexedDB (App.Store key 'notes_vault'): instant open/search/graph, works offline.
    - Credentials come from the existing Settings modal (repo, token, folder).
    - No CSS in this file: every class used below is defined in styles.css.
+
+    DATES: every note file starts with its own timestamp line (same in both modes):
+        <!--meta:created=2026-10-13T11:39:57|modified=2026-10-13T11:40:01-->
+    The calendar filter uses these two dates, not the file's time on disk. Older notes carry the same line at the
+    BOTTOM: it is still read, and it moves to the top the next time the note is saved (untouched notes are never rewritten).
+    The editor and the search never show/see the line; the app writes it.
+
+    TWO MODES, ONE ENGINE (createNotes(mode) at the bottom): same screen, same features.
+    - 'github' = Notes (above).
+    - 'local'  = Work Notes: no GitHub, no sync, no refresh button. The folder  <working directory>/Notes  IS the
+      vault: every .md file in it and its sub-folders is a note. Changes are written to disk right away; changes made
+      outside the app (new/edited/deleted files) are picked up automatically when you come back to the tab and every
+      20 seconds. Works offline, never leaves this computer.
    ───────────────────────────────────────────────────────────────────────── */
 
 const NOTES_SUBDIR = '';   // optional extra sub-folder inside the Settings folder, e.g. 'notes'
 const DAILY = 'Daily';
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-const CDN = {
-    marked: 'https://cdn.jsdelivr.net/npm/marked@15/marked.min.js',
-    d3: 'https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js',
-    mathjax: 'https://cdn.jsdelivr.net/npm/mathjax@4/tex-chtml.js'
-};
+const CDN = window.App.config.libs;   // library URLs live in config.js
 
 // ── Small utilities ──────────────────────────────────────────────────────
-const scripts = {};
-const loadScript = src => scripts[src] ??= new Promise((ok, fail) => {
-    const s = document.createElement('script');
-    s.src = src; s.onload = ok;
-    s.onerror = () => { delete scripts[src]; fail(new Error('Could not load ' + src)); };
-    document.head.appendChild(s);
-});
+const { esc, pad, loadScript } = window.App;   // shared helpers (app.js)
 
-const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const escRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const pad = n => String(n).padStart(2, '0');
 const isoDate = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const nowStr = () => { const d = new Date(); return `${isoDate(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const nowStr = (d = new Date()) => { return `${isoDate(d)}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
 const b64ToStr = b => new TextDecoder().decode(Uint8Array.from(atob(b.replace(/\s/g, '')), c => c.charCodeAt(0)));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const encRef = p => p.split('/').map(encodeURIComponent).join('/');
 
 // Git's own blob id for a text: sha1("blob <bytes>\0" + bytes). Lets us know the new GitHub sha without asking.
+// ── Timestamp line: read (top or legacy bottom), strip, write ──
+const META = '<!--\\s*meta:\\s*created=([^|>]*?)\\s*\\|\\s*modified=([^>]*?)\\s*-->';
+const META_TOP = new RegExp('^\\s*' + META + '[ \\t]*\\r?\\n?');
+const META_BOTTOM = new RegExp('^' + META + '\\s*$');
+const TS_OK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
+export function splitMeta(text) {   // → { body: the note without the line, created, modified ('' when missing/invalid) }
+    let body = text, created = '', modified = '';
+    const top = META_TOP.exec(body);
+    if (top) { created = top[1]; modified = top[2]; body = body.slice(top[0].length); }
+    const i = body.lastIndexOf('<!--');
+    const bottom = i >= 0 && META_BOTTOM.exec(body.slice(i));   // legacy position: the very end of the file
+    if (bottom) {
+        if (!top) { created = bottom[1]; modified = bottom[2]; }
+        body = body.slice(0, i).replace(/\s+$/, '');
+    }
+    return { body, created: TS_OK.test(created) ? created : '', modified: TS_OK.test(modified) ? modified : '' };
+}
+export const withMeta = (body, created, modified) => `<!--meta:created=${created}|modified=${modified}-->\n${body}`;
+const bodies = new WeakMap();   // note → its text without the line (computed once per version of the text)
+const bodyOf = n => {
+    let b = bodies.get(n);
+    if (!b || b.src !== n.content) bodies.set(n, b = { src: n.content, body: splitMeta(n.content).body });
+    return b.body;
+};
+
 async function gitBlobSha(text) {
     const body = new TextEncoder().encode(text), head = new TextEncoder().encode(`blob ${body.length}\0`);
     const all = new Uint8Array(head.length + body.length);
@@ -197,8 +221,6 @@ const TEMPLATE = `
   </div>
 </div>
 
-<div class="toast" id="nt-toast"></div>
-
 <div class="modal-overlay" id="nt-cal-overlay">
   <div class="modal-card modal-sm">
     <div class="modal-header">
@@ -228,9 +250,19 @@ const TEMPLATE = `
 </div>`;
 
 // ── Module entry ─────────────────────────────────────────────────────────
-let keyHandler = null, focusHandler = null;   // one global Ctrl+S / focus handler at a time, even if the module re-renders
+const teardowns = {};   // per mode: what to do when that module is left
+const SCAN_MS = 20000;  // local mode: how often the folder is checked for changes made outside the app
 
-export async function render(root, App) {
+// Called by the router when you leave the module (and before it renders again): save what is pending, remove global listeners
+async function unmountNotes(mode) {
+    const t = teardowns[mode]; delete teardowns[mode];
+    await t?.();
+}
+
+async function renderNotes(root, App, mode) {
+    const LOCAL = mode === 'local';
+    let keyHandler = null, focusHandler = null, scanIv = null;   // global Ctrl+S / focus handlers, folder watcher
+    await unmountNotes(mode);   // in case the previous instance was never left properly
     root.innerHTML = TEMPLATE;
     const $ = s => root.querySelector(s);
     const S = App.Store;
@@ -239,7 +271,7 @@ export async function render(root, App) {
         search: $('#nt-search'), tree: $('#nt-tree'), badge: $('#nt-badge'), syncBtn: $('#nt-sync-btn'), calBtn: $('#nt-cal-btn'),
         editor: $('#nt-editor'), preview: $('#nt-preview'), title: $('#nt-title'), titleView: $('#nt-title-view'),
         status: $('#nt-status'), controls: $('#nt-controls'), save: $('#nt-save-btn'), del: $('#nt-del-btn'),
-        segPreview: $('#nt-seg-preview'), segEdit: $('#nt-seg-edit'), toast: $('#nt-toast')
+        segPreview: $('#nt-seg-preview'), segEdit: $('#nt-seg-edit')
     };
 
     // Non-fatal: if offline, notes still open (as plain text) and edit normally.
@@ -248,18 +280,18 @@ export async function render(root, App) {
     // ── Vault (all notes, in memory, mirrored to IndexedDB) ──────────────
     // notes[path] = { content, created, modified, h: hash(content), sh: hash at last sync, sha: GitHub blob sha }
     // deleted[path] = blob sha of a note deleted locally, waiting for the next sync to delete it on GitHub
-    let stored = await S.get('notes_vault');
-    if (!stored) { stored = await S.get('pn_vault'); if (stored) await S.set('notes_vault', stored); }   // renamed module: keep existing local notes
-    const vault = stored || { notes: {}, deleted: {}, lastSynced: null };
-    const persist = () => S.set('notes_vault', vault);
+    // local mode: the vault is rebuilt from the folder on every open; persist() = write pending changes to disk
+    const vault = LOCAL ? { notes: {}, deleted: {}, lastSynced: null } : ((await S.get('notes_vault')) || { notes: {}, deleted: {}, lastSynced: null });
+    const persist = LOCAL ? flushDisk : () => S.set('notes_vault', vault);
     const paths = () => Object.keys(vault.notes).sort();
-    const isDirty = n => n.h !== n.sh;
+    const isDirty = n => !LOCAL && n.h !== n.sh;
     const pendingCount = () => Object.values(vault.notes).filter(isDirty).length + Object.keys(vault.deleted).length;
 
     function removeNote(path) {
         const n = vault.notes[path];
         if (n?.sha) vault.deleted[path] = n.sha;
         delete vault.notes[path];
+        if (LOCAL) { pendingW.delete(path); pendingR.add(path); }
     }
 
     // ── State ────────────────────────────────────────────────────────────
@@ -270,15 +302,7 @@ export async function render(root, App) {
     let calY, calM, calStart = null, calEnd = null, calCounts = {};
     const expanded = new Set();
 
-    // ── Toast ────────────────────────────────────────────────────────────
-    let toastTimer = null;
-    function toast(msg, error) {
-        el.toast.textContent = msg;
-        el.toast.classList.toggle('error', !!error);
-        el.toast.classList.add('show');
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => el.toast.classList.remove('show'), error ? 5000 : 2600);
-    }
+    const toast = App.toast;   // shared toast (app.js)
 
     // ── Sync badge ───────────────────────────────────────────────────────
     function relTime(iso) {
@@ -289,6 +313,7 @@ export async function render(root, App) {
         return Math.floor(s / 86400) + 'd ago';
     }
     function updateBadge() {
+        if (LOCAL) return;
         const n = pendingCount();
         el.badge.textContent = n > 99 ? '99+' : n;
         el.badge.style.display = n ? 'flex' : 'none';
@@ -318,7 +343,7 @@ export async function render(root, App) {
         // "Notes" root row: click = make the top level the working directory
         const rootHeader = document.createElement('div');
         rootHeader.className = 'folder-header' + (workingDir === '' ? ' selected-folder' : '');
-        rootHeader.textContent = 'Notes';
+        rootHeader.textContent = LOCAL ? 'Work Notes' : 'Notes';
         rootHeader.onclick = () => selectFolder('');
         const rootContent = document.createElement('div');
         rootContent.className = 'folder-content expanded';
@@ -326,7 +351,7 @@ export async function render(root, App) {
 
         renderLevel(rootNode, rootContent, '', !!matching);
         if (!visible.length) {
-            rootContent.insertAdjacentHTML('beforeend', `<div class="list-empty">${matching ? 'No matching notes' : 'No notes yet. Create one, or press sync to pull from GitHub.'}</div>`);
+            rootContent.insertAdjacentHTML('beforeend', `<div class="list-empty">${matching ? 'No matching notes' : (LOCAL ? 'No notes yet. Create one, or add .md files to the Notes folder.' : 'No notes yet. Create one, or press sync to pull from GitHub.')}</div>`);
         }
         $('#nt-new-btn').title = 'New note in ' + (workingDir ? workingDir + '/' : 'the top level (click a folder to change)');
         el.tree.scrollTop = scroll;
@@ -392,6 +417,8 @@ export async function render(root, App) {
     const highlightText = (text, q) => esc(text).replace(new RegExp('(' + escRe(esc(q)) + ')', 'ig'), '<mark>$1</mark>');
 
     // ── Search (instant, in memory) + date filter ────────────────────────
+    const noteDays = n => [...new Set([n.created, n.modified].map(x => (x || '').slice(0, 10)).filter(Boolean))];   // dates this note was created / last modified
+
     function runSearch(q) {
         searchQuery = q;
         if (!q && !from && !to) matching = null;
@@ -399,9 +426,8 @@ export async function render(root, App) {
             const ql = q.toLowerCase();
             matching = new Set();
             for (const [p, n] of Object.entries(vault.notes)) {
-                const d = (n.modified || '').slice(0, 10);
-                if ((from || to) && (!d || (from && d < from) || (to && d > to))) continue;
-                if (ql && !(p.toLowerCase().includes(ql) || n.content.toLowerCase().includes(ql))) continue;
+                if ((from || to) && !noteDays(n).some(d => (!from || d >= from) && (!to || d <= to))) continue;   // created or modified inside the range
+                if (ql && !(p.toLowerCase().includes(ql) || bodyOf(n).toLowerCase().includes(ql))) continue;
                 matching.add(p);
             }
         }
@@ -623,7 +649,7 @@ export async function render(root, App) {
         if (!n) return;
         isNew = false; originalPath = path;
         expandTo(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');   // reveal it in the tree (no highlight)
-        el.title.value = path.replace(/\.md$/, ''); el.editor.value = n.content; el.status.textContent = '';
+        el.title.value = path.replace(/\.md$/, ''); el.editor.value = bodyOf(n); el.status.textContent = '';
         setMode('preview', true);
         refreshBanner(); buildTree();
     }
@@ -637,8 +663,8 @@ export async function render(root, App) {
         startTitleEdit();
     }
 
-    function scheduleSave() {   // existing notes autosave; new notes wait for Save
-        if (isNew || !originalPath) return;
+    function scheduleSave() {   // existing notes autosave; new notes wait for Save (local mode: autosave as soon as the note has a name)
+        if (isNew ? !(LOCAL && targetPath()) : !originalPath) return;
         clearTimeout(saveTimer);
         el.status.textContent = 'Saving…';
         saveTimer = setTimeout(() => { saveTimer = null; saveNote(true); }, 800);
@@ -648,31 +674,42 @@ export async function render(root, App) {
     function targetPath() {
         const raw = el.title.value.trim().replace(/\.md$/i, '');
         if (!raw || raw.endsWith('/')) return '';
-        return raw.split('/').map(x => x.trim()).filter(Boolean).join('/') + '.md';
+        let parts = raw.split('/').map(x => x.trim()).filter(x => x && x !== '.' && x !== '..');
+        if (LOCAL) parts = parts.map(x => x.replace(/[\\:*?"<>|]/g, '-').replace(/[. ]+$/, '')).filter(Boolean);   // characters Windows does not allow
+        return parts.length ? parts.join('/') + '.md' : '';
     }
 
-    async function saveNote(contentOnly = false) {
+    // Saves run one after another, so an autosave and a click on Save can never overlap
+    let saveChain = Promise.resolve();
+    const saveNote = (contentOnly = false) => (saveChain = saveChain.then(() => saveNoteNow(contentOnly), () => saveNoteNow(contentOnly)));
+
+    async function saveNoteNow(contentOnly = false) {
         const path = contentOnly && originalPath ? originalPath : targetPath();   // autosave never renames mid-typing
         if (!path) { toast('Name the note first — click the title.', true); startTitleEdit(); return; }
         const renamed = originalPath && path !== originalPath;
-        if ((isNew || renamed) && vault.notes[path]) { alert(`A note named "${path}" already exists.`); return; }
+        if (LOCAL && (isNew || renamed)) applyScan(await scanDisk());   // a file with that name may have appeared outside the app
+        if ((isNew || renamed) && vault.notes[path]) { el.status.textContent = ''; toast(`A note named "${path}" already exists.`, true); return; }
 
-        const now = nowStr(), content = el.editor.value, h = hash(content);
+        const now = nowStr(), body = el.editor.value;
         const prev = vault.notes[path] || (renamed && vault.notes[originalPath]) || null;
         if (renamed) removeNote(originalPath);
 
-        const same = !renamed && prev && prev.h === h;
+        const edited = !prev || bodyOf(prev).trimEnd() !== body.trimEnd();   // a rename alone does not change "modified"
+        const same = !renamed && !edited;
+        let saved = true;
         if (!same) {
             // re-creating a note that is pending deletion on GitHub → treat as an update of that file
             const sha = (!renamed && prev?.sha) || vault.deleted[path];
             delete vault.deleted[path];
-            vault.notes[path] = { content, created: prev?.created || now, modified: now, h, sh: renamed ? undefined : prev?.sh, sha };
-            await persist();
+            const created = prev?.created || now, content = withMeta(body, created, edited ? now : (prev.modified || now));
+            vault.notes[path] = { content, created, modified: edited ? now : (prev.modified || now), h: hash(content), sh: renamed ? undefined : prev?.sh, sha };
+            if (LOCAL) markWrite(path);
+            saved = (await persist()) !== false;   // local mode: false = the disk write failed (it is retried automatically)
         }
         isNew = false; originalPath = path;
         el.title.value = path.replace(/\.md$/, '');
         expandTo(path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '');   // nested folders open so the note is visible
-        el.status.textContent = 'Saved';
+        el.status.textContent = saved ? 'Saved' : 'Not saved — retrying…';
         setTimeout(() => { if (el.status.textContent === 'Saved') el.status.textContent = ''; }, 2000);
         refreshBanner(); buildTree();
     }
@@ -686,7 +723,7 @@ export async function render(root, App) {
         if (workingDir && !paths().some(p => p.startsWith(workingDir + '/'))) workingDir = null;
         el.title.value = ''; el.editor.value = ''; el.status.textContent = '';
         setMode('preview');
-        el.preview.innerHTML = '<div class="hint">Note deleted. It will be removed from GitHub on the next sync.</div>';
+        el.preview.innerHTML = `<div class="hint">Note deleted${LOCAL ? '.' : '. It will be removed from GitHub on the next sync.'}</div>`;
         refreshBanner(); buildTree();
     }
 
@@ -708,6 +745,7 @@ export async function render(root, App) {
             removeNote(p);
             delete vault.deleted[np];   // moving back onto a path pending deletion → update it instead
             vault.notes[np] = { ...n, sh: undefined, sha };
+            if (LOCAL) markWrite(np);
             if (originalPath === p) { originalPath = np; el.title.value = np.replace(/\.md$/, ''); }
             moved++;
         });
@@ -716,6 +754,7 @@ export async function render(root, App) {
 
     async function openDaily() {
         await flushSave();
+        if (LOCAL) applyScan(await scanDisk());   // today's note may already exist as a file
         const file = isoDate(new Date()) + '.md';
         let path = paths().find(p => DAILY_RE.test(p) && p.endsWith('/' + file));
         if (!path) {
@@ -723,8 +762,10 @@ export async function render(root, App) {
             const pretty = `${d.toLocaleDateString('en-US', { weekday: 'long' })}, ${pad(d.getDate())} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`;
             const content = `# ${pretty}\n\n## Tasks\n- [ ] \n\n## Daily Notes\n\n`;
             path = `${DAILY}/${file}`;
-            vault.notes[path] = { content, created: now, modified: now, h: hash(content), sh: undefined, sha: vault.deleted[path] };
+            const raw = withMeta(content, now, now);
+            vault.notes[path] = { content: raw, created: now, modified: now, h: hash(raw), sh: undefined, sha: vault.deleted[path] };
             delete vault.deleted[path];
+            if (LOCAL) markWrite(path);
             const moved = tidyDaily();   // new daily note → archive whatever fell out of the last 10
             await persist();
             if (moved) toast(`Archived ${moved} older daily note${moved > 1 ? 's' : ''} into Daily/Archive/`);
@@ -740,7 +781,6 @@ export async function render(root, App) {
     $('#nt-new-btn').onclick = newNote;
     $('#nt-daily-btn').onclick = openDaily;
 
-    if (keyHandler) document.removeEventListener('keydown', keyHandler);
     keyHandler = e => {
         if (!root.isConnected) return document.removeEventListener('keydown', keyHandler);
         if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') { e.preventDefault(); clearTimeout(saveTimer); saveTimer = null; saveNote(); }
@@ -754,7 +794,7 @@ export async function render(root, App) {
         const now = new Date();
         calY = now.getFullYear(); calM = now.getMonth(); calStart = from; calEnd = to;
         calCounts = {};
-        Object.values(vault.notes).forEach(n => { const d = (n.modified || '').slice(0, 10); if (d) calCounts[d] = (calCounts[d] || 0) + 1; });
+        Object.values(vault.notes).forEach(n => noteDays(n).forEach(d => { calCounts[d] = (calCounts[d] || 0) + 1; }));
         renderCalendar();
         overlayCal.classList.add('open');
     }
@@ -895,6 +935,117 @@ export async function render(root, App) {
     $('#nt-graph-x').onclick = closeGraph;
     overlayGraph.onclick = e => { if (e.target === overlayGraph) closeGraph(); };
 
+    // ── Local folder (Work Notes): the folder is the vault ───────────────
+    // pendingW / pendingR = notes to write / remove on disk. Everything that touches the folder runs one at a time (io).
+    const pendingW = new Set(), pendingR = new Set();
+    let ioChain = Promise.resolve(), treeOk = false;
+    const io = fn => (ioChain = ioChain.then(() => fn(), () => fn()));
+    const markWrite = path => { pendingR.delete(path); pendingW.add(path); };
+    const rootDir = () => App.Storage.Local.dir('Notes');   // <working directory>/Notes, created if missing
+
+    async function dirFor(path, create) {   // 'A/B/note.md' → [handle of A/B, 'note.md']
+        const parts = path.split('/'), name = parts.pop();
+        let d = await rootDir();
+        for (const p of parts) d = await d.getDirectoryHandle(p, { create });
+        return [d, name];
+    }
+    async function diskWrite(path, note) {
+        const [d, name] = await dirFor(path, true);
+        const fh = await d.getFileHandle(name, { create: true });
+        const w = await fh.createWritable();
+        await w.write(note.content);
+        await w.close();
+        const f = await fh.getFile();
+        note.mtime = f.lastModified; note.size = f.size;   // remembered, so our own write is not mistaken for an outside change
+    }
+    async function diskRemove(path) {
+        try { const [d, name] = await dirFor(path, false); await d.removeEntry(name); }
+        catch (e) { if (e.name !== 'NotFoundError') throw e; }   // already gone: fine
+    }
+    // Writes first, then removals (a rename never loses the note). Failed items stay pending and are retried by the next scan.
+    function flushDisk() {
+        return io(async () => {
+            const w = [...pendingW], r = [...pendingR];
+            pendingW.clear(); pendingR.clear();
+            let err = null;
+            for (const p of w) { const n = vault.notes[p]; if (n) try { await diskWrite(p, n); } catch (e) { pendingW.add(p); err = e; } }
+            for (const p of r) try { await diskRemove(p); } catch (e) { pendingR.add(p); err = e; }
+            if (err) toast('Could not write to the Notes folder: ' + (err.message || err.name), true);
+            return !err;
+        });
+    }
+
+    function showFolderProblem(e) {
+        if (Object.keys(vault.notes).length) return;   // notes already on screen: keep working, the next write reports the problem
+        const msg = e?.message;
+        const none = msg === 'NO_FOLDER';
+        const ask = msg === 'NEEDS_PERMISSION' || msg === 'Permission denied.' || e?.name === 'SecurityError' || e?.name === 'NotAllowedError';
+        el.tree.innerHTML = `<div class="list-empty">${none ? 'Choose the working directory in Settings first.'
+            : ask ? 'The browser needs your permission to use the working directory again.'
+            : esc(msg || 'The Notes folder is not available.')}</div>`
+            + (ask ? '<div style="padding: 8px 12px"><button class="btn btn-outline btn-sm" id="nt-allow">Allow access</button></div>' : '');
+        el.tree.querySelector('#nt-allow')?.addEventListener('click', pullNow);   // a click lets the browser show its permission prompt
+    }
+
+    // Reads the folder into the vault. Only files whose time/size changed are read again. Returns the changed paths (null = folder unavailable).
+    function scanDisk() {
+        return io(async () => {
+            let top;
+            try { top = await rootDir(); } catch (e) { showFolderProblem(e); return null; }
+            const jobs = [], seen = new Set(), changed = [];
+            const walk = async (dir, prefix) => {
+                for await (const entry of dir.values()) {
+                    if (entry.name.startsWith('.')) continue;   // .git, .obsidian, …
+                    if (entry.kind === 'directory') await walk(entry, prefix + entry.name + '/');
+                    else if (/\.md$/i.test(entry.name)) jobs.push([prefix + entry.name, entry]);
+                }
+            };
+            try { await walk(top, ''); } catch (e) { showFolderProblem(e); return null; }
+            for (let i = 0; i < jobs.length; i += 16) {
+                await Promise.all(jobs.slice(i, i + 16).map(async ([path, fh]) => {
+                    seen.add(path);
+                    if (pendingW.has(path)) return;   // our newer version is waiting to be written
+                    const f = await fh.getFile(), old = vault.notes[path];
+                    if (old && old.mtime === f.lastModified && old.size === f.size) return;
+                    const content = await f.text(), h = hash(content);
+                    if (old && old.h === h) { old.mtime = f.lastModified; old.size = f.size; return; }
+                    const m = splitMeta(content), when = nowStr(new Date(f.lastModified));   // file time only for notes without the line
+                    vault.notes[path] = { content, created: m.created || old?.created || when, modified: m.modified || when, h, mtime: f.lastModified, size: f.size };
+                    changed.push(path);
+                }));
+            }
+            for (const p of Object.keys(vault.notes)) {
+                if (!seen.has(p) && !pendingW.has(p)) { delete vault.notes[p]; changed.push(p); }   // deleted outside the app
+            }
+            return changed;
+        });
+    }
+
+    // Show what a scan found: refresh the tree/search, and the open note if it changed outside and you have no unsaved edits
+    function applyScan(changed) {
+        if (!changed || (treeOk && !changed.length)) return;
+        treeOk = true;
+        if (originalPath && !isNew && changed.includes(originalPath)) {
+            const n = vault.notes[originalPath];
+            if (saveTimer) toast(`"${originalPath}" was changed outside the app — your edits will replace it.`, true);
+            else if (!n) {
+                originalPath = ''; el.title.value = ''; el.editor.value = ''; el.status.textContent = '';
+                setMode('preview');
+                el.preview.innerHTML = '<div class="hint">This note was removed from the folder.</div>';
+            } else if (bodyOf(n).trimEnd() !== el.editor.value.trimEnd()) {
+                el.editor.value = bodyOf(n);
+                if (isPreview) showPreview();
+            }
+        }
+        if (searchQuery || from || to) runSearch(searchQuery); else buildTree();
+        refreshBanner();
+    }
+    async function pullNow() {   // on tab focus and every SCAN_MS
+        if (!root.isConnected || document.hidden) return;
+        if (pendingW.size || pendingR.size) await flushDisk();   // retry writes that failed earlier
+        applyScan(await scanDisk());
+    }
+
     // ── GitHub sync (manual) ─────────────────────────────────────────────
     async function getCfg() {
         const token = await S.get('gh_token'), repo = await S.get('gh_repo'), folder = (await S.get('gh_folder')) || '';
@@ -993,12 +1144,14 @@ export async function render(root, App) {
                             n.sha = sha;                                          // from now on our text is based on GitHub's latest…
                             if (n.h === rh) { n.sh = n.h; return; }               // …same text on both sides: nothing to do
                             const cp = rel.replace(/\.md$/, '') + `.conflict-${now.replace(/[-:]/g, '').replace('T', '-')}.md`;
-                            vault.notes[cp] = { content: text, created: now, modified: now, h: rh, sh: undefined, sha: undefined };   // GitHub's text, kept
+                            const rm = splitMeta(text);
+                            vault.notes[cp] = { content: text, created: rm.created || now, modified: rm.modified || now, h: rh, sh: undefined, sha: undefined };   // GitHub's text, kept
                             r.conflicts.push(`${rel}: changed on both sides — kept yours, GitHub's version saved as ${cp}`);
                             return;
                         }
                         delete vault.deleted[rel];   // remote changed after we deleted it → bring it back
-                        vault.notes[rel] = { content: text, created: n?.created || now, modified: now, h: rh, sh: rh, sha };
+                        const pm = splitMeta(text);   // dates come from the note's own line; "now" only if it has none
+                        vault.notes[rel] = { content: text, created: pm.created || n?.created || now, modified: pm.modified || now, h: rh, sh: rh, sha };
                         r.pulled.push(rel);
                     } catch (e) { r.errors.push(`${rel}: ${e.message}`); }
                 }));
@@ -1068,7 +1221,7 @@ export async function render(root, App) {
 
             // the open note was updated from GitHub and has no unsaved edits → refresh it
             if (originalPath && r.pulled.includes(originalPath) && !isNew) {
-                el.editor.value = vault.notes[originalPath].content;
+                el.editor.value = bodyOf(vault.notes[originalPath]);
                 if (isPreview) showPreview();
             }
         } catch (e) {
@@ -1083,16 +1236,48 @@ export async function render(root, App) {
 
     // ── Go ───────────────────────────────────────────────────────────────
     expanded.add(DAILY);   // recent daily notes are visible straight away
-    if (Object.keys(vault.notes).some(p => LEGACY_DAILY_RE.test(p))) {   // one-time: earlier Daily/<year>/<month> layout
-        const n = tidyDaily();
-        if (n) { await persist(); toast(`Reorganised ${n} daily note${n > 1 ? 's' : ''}: latest ${DAILY_KEEP} in Daily/, older in Daily/Archive/`); }
+    if (LOCAL) {
+        el.syncBtn.style.display = 'none'; el.badge.style.display = 'none';   // no sync: the folder is the notes
+        el.tree.innerHTML = '<div class="list-empty">Loading…</div>';
+        refreshBanner();
+        applyScan(await scanDisk());   // reads the Notes folder once
+        focusHandler = () => { if (!root.isConnected) return window.removeEventListener('focus', focusHandler); pullNow(); };
+        scanIv = setInterval(pullNow, SCAN_MS);
+    } else {
+        if (Object.keys(vault.notes).some(p => LEGACY_DAILY_RE.test(p))) {   // one-time: earlier Daily/<year>/<month> layout
+            const n = tidyDaily();
+            if (n) { await persist(); toast(`Reorganised ${n} daily note${n > 1 ? 's' : ''}: latest ${DAILY_KEEP} in Daily/, older in Daily/Archive/`); }
+        }
+        for (const note of Object.values(vault.notes)) {   // dates of notes pulled before this feature existed
+            const m = splitMeta(note.content);
+            if (m.created) note.created = m.created;
+            if (m.modified) note.modified = m.modified;
+        }
+        refreshBanner();
+        buildTree();
+        // First run on this browser: pull everything once so the vault isn't empty
+        if (!vault.lastSynced && !Object.keys(vault.notes).length && await getCfg()) runSync();
+        else checkRemote();
+        focusHandler = () => { if (!root.isConnected) return window.removeEventListener('focus', focusHandler); checkRemote(); };
     }
-    refreshBanner();
-    buildTree();
-    // First run on this browser: pull everything once so the vault isn't empty
-    if (!vault.lastSynced && !Object.keys(vault.notes).length && await getCfg()) runSync();
-    else checkRemote();
-    if (focusHandler) window.removeEventListener('focus', focusHandler);
-    focusHandler = () => { if (!root.isConnected) return window.removeEventListener('focus', focusHandler); checkRemote(); };
     window.addEventListener('focus', focusHandler);
+
+    teardowns[mode] = async () => {
+        await flushSave();
+        clearInterval(scanIv);
+        document.removeEventListener('keydown', keyHandler);
+        window.removeEventListener('focus', focusHandler);
+        keyHandler = focusHandler = null;
+        closeGraph();
+    };
 }
+
+// One engine, two modules: Notes (GitHub) and Work Notes (local folder, see modules/work-notes.js)
+export function createNotes(mode) {
+    return {
+        meta: { title: mode === 'local' ? 'Work Notes (Local)' : 'Notes' },
+        render: (root, App) => renderNotes(root, App, mode),
+        unmount: () => unmountNotes(mode)
+    };
+}
+export const { meta, render, unmount } = createNotes('github');

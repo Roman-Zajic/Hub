@@ -422,7 +422,6 @@ const TEMPLATE = `
   </div>
   <div class="card-grid" id="tm-grid"></div>
 </div>
-<div class="toast" id="tm-toast"></div>
 <div class="modal-overlay" id="tm-modal">
   <div class="modal-card">
     <div class="modal-header"><span id="tm-modal-title"></span><button class="modal-close" id="tm-modal-x">&times;</button></div>
@@ -440,10 +439,9 @@ export async function render(root, App) {
     await ensureLoaded();
     root.innerHTML = TEMPLATE;
     const $ = s => root.querySelector(s);
-    const grid = $('#tm-grid'), modal = $('#tm-modal'), toastEl = $('#tm-toast');
+    const grid = $('#tm-grid'), modal = $('#tm-modal');
 
-    let toastTo = null;
-    const toast = (msg, err) => { toastEl.textContent = msg; toastEl.classList.toggle('error', !!err); toastEl.classList.add('show'); clearTimeout(toastTo); toastTo = setTimeout(() => toastEl.classList.remove('show'), 3500); };
+    const toast = App.toast;   // shared toast (app.js)
 
     const summaryText = () => {
         const ringing = timers.filter(t => t.status === 'ringing').length, running = timers.filter(t => t.status === 'running').length;

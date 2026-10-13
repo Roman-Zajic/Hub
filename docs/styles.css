@@ -29,6 +29,7 @@ body {
     line-height: 1.6;
     -webkit-font-smoothing: antialiased;
     height: 100vh;
+    height: 100dvh;   /* mobile: the visible height, not the one hidden under the browser bars */
     display: flex;
     flex-direction: column;
     overflow: hidden;

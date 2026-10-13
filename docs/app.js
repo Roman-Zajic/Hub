@@ -1,13 +1,22 @@
-import { APP_CONFIG } from './config.js';
+// Cache busting: GitHub Pages caches files for ~10 minutes. Bump "?v=" in index.html (styles.css and app.js) after a deploy;
+// every other file (config, modules) inherits the same version from this file's own URL.
+const V = new URL(import.meta.url).search;
+const { APP_CONFIG } = await import('./config.js' + V);
 
-// 1. INDEXED-DB KEY-VALUE STORE
+// 1. INDEXED-DB KEY-VALUE STORE (one connection, opened once)
+let dbPromise = null;
 const Store = {
-    async getDb() {
-        return new Promise((resolve, reject) => {
+    getDb() {
+        return dbPromise ??= new Promise((resolve, reject) => {
             const req = indexedDB.open('AppDB', 1);
             req.onupgradeneeded = e => e.target.result.createObjectStore('kv_store');
-            req.onsuccess = e => resolve(e.target.result);
-            req.onerror = e => reject(e.target.error);
+            req.onsuccess = e => {
+                const db = e.target.result;
+                db.onversionchange = () => { db.close(); dbPromise = null; };   // another tab upgrades/deletes: reconnect on next use
+                db.onclose = () => { dbPromise = null; };
+                resolve(db);
+            };
+            req.onerror = e => { dbPromise = null; reject(e.target.error); };
         });
     },
     async get(key) {
@@ -28,10 +37,32 @@ const Store = {
     }
 };
 
+// ── Shared helpers for all modules: App.esc · App.pad · App.toast · App.loadScript ──
+const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const pad = n => String(n).padStart(2, '0');
+let toastTimer = null;
+function toast(msg, error) {   // one toast for the whole app (#app-toast in index.html)
+    const el = document.getElementById('app-toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.classList.toggle('error', !!error);
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), error ? 5500 : 3000);
+}
+const scripts = {};
+const loadScript = src => scripts[src] ??= new Promise((ok, fail) => {   // each library is loaded once; a failed load can be retried
+    const s = document.createElement('script');
+    s.src = src; s.onload = ok;
+    s.onerror = () => { delete scripts[src]; s.remove(); fail(new Error('Could not load ' + src)); };
+    document.head.appendChild(s);
+});
+
 // 2. GLOBAL APP OBJECT
 window.App = {
     config: APP_CONFIG,
     Store: Store,
+    esc, pad, toast, loadScript,
     
     Storage: {
         Local: {
@@ -53,122 +84,8 @@ window.App = {
             async dir(sub = '', interactive = true) {
                 const root = await this.init(interactive);
                 return sub ? root.getDirectoryHandle(sub, { create: true }) : root;
-            },
-            // Markdown-file store scoped to one subfolder: App.Storage.Local.sub('Notes').listFiles() ...
-            sub(name) {
-                const dir = () => App.Storage.Local.dir(name);
-                return {
-                    async listFiles() {
-                        const files = [];
-                        for await (const entry of (await dir()).values()) {
-                            if (entry.kind === 'file' && entry.name.endsWith('.md')) files.push(entry.name);
-                        }
-                        return files;
-                    },
-                    async readFile(filename) {
-                        const fileHandle = await (await dir()).getFileHandle(filename);
-                        return await (await fileHandle.getFile()).text();
-                    },
-                    async saveFile(filename, content) {
-                        const fileHandle = await (await dir()).getFileHandle(filename, { create: true });
-                        const writable = await fileHandle.createWritable();
-                        await writable.write(content);
-                        await writable.close();
-                    },
-                    async deleteFile(filename) {
-                        await (await dir()).removeEntry(filename);
-                    }
-                };
             }
         },
-        GitHub: {
-            async getFolder() {
-                const folder = await App.Store.get('gh_folder');
-                let f = (folder !== undefined && folder !== null) ? folder.trim() : '';
-                return f.replace(/^\/+|\/+$/g, '');
-            },
-            async getPath(filepath) {
-                const folder = await this.getFolder();
-                const cleanFile = filepath.replace(/^\/+/, '');
-                if (folder && (cleanFile === folder || cleanFile.startsWith(folder + '/'))) {
-                    return cleanFile;
-                }
-                return folder ? `${folder}/${cleanFile}` : cleanFile;
-            },
-            async getCreds() {
-                const token = await App.Store.get('gh_token');
-                const repo = await App.Store.get('gh_repo');
-                if (!token || !repo) throw new Error("GitHub credentials not configured.");
-                return { token, repo };
-            },
-            encodeBase64(str) { return btoa(unescape(encodeURIComponent(str))); },
-            decodeBase64(str) { return decodeURIComponent(escape(atob(str))); },
-            async apiCall(endpoint, method = 'GET', body = null) {
-                const { token, repo } = await this.getCreds();
-                const cleanEndpoint = endpoint.replace(/^\/+/, '');
-                const url = cleanEndpoint 
-                    ? `https://api.github.com/repos/${repo}/contents/${cleanEndpoint}`
-                    : `https://api.github.com/repos/${repo}/contents`;
-
-                const options = {
-                    method,
-                    headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json' }
-                };
-                if (body) options.body = JSON.stringify(body);
-                const res = await fetch(url, options);
-                if (!res.ok) throw new Error(`GitHub API Error: ${res.statusText}`);
-                return await res.json();
-            },
-            async listFiles() {
-                try {
-                    const folder = await this.getFolder();
-                    let data;
-                    try {
-                        data = await this.apiCall(folder);
-                    } catch (e) {
-                        return [];
-                    }
-                    const files = [];
-                    
-                    const walk = async (items, currentPath = '') => {
-                        for (const item of items) {
-                            if (item.type === 'file' && item.name.endsWith('.md')) {
-                                const relPath = currentPath ? `${currentPath}/${item.name}` : item.name;
-                                files.push(relPath);
-                            } else if (item.type === 'dir') {
-                                try {
-                                    const subData = await this.apiCall(item.path);
-                                    if (Array.isArray(subData)) {
-                                        const nextPath = currentPath ? `${currentPath}/${item.name}` : item.name;
-                                        await walk(subData, nextPath);
-                                    }
-                                } catch (e) {}
-                            }
-                        }
-                    };
-                    
-                    if (Array.isArray(data)) {
-                        await walk(data, ''); // Pass empty string so relative paths are correct
-                    }
-                    return files;
-                } catch (e) { return []; }
-            },
-            async readFile(filepath) {
-                const data = await this.apiCall(await this.getPath(filepath));
-                return this.decodeBase64(data.content);
-            },
-            async saveFile(filepath, content, commitMessage = "Update via App") {
-                const path = await this.getPath(filepath);
-                let sha = null;
-                try { sha = (await this.apiCall(path)).sha; } catch (e) {}
-                await this.apiCall(path, 'PUT', { message: commitMessage, content: this.encodeBase64(content), sha });
-            },
-            async deleteFile(filepath, commitMessage = "Delete via App") {
-                const path = await this.getPath(filepath);
-                const existing = await this.apiCall(path);
-                await this.apiCall(path, 'DELETE', { message: commitMessage, sha: existing.sha });
-            }
-        }
     }
 };
 
@@ -257,6 +174,8 @@ const els = {
 };
 
 const loadedModules = {};
+const loadModule = name => loadedModules[name] ??= import(`./modules/${name}.js${V}`).catch(err => { delete loadedModules[name]; throw err; });
+let currentModule = null;   // name of the module that is on screen
 const modLabel = name => name.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
 
 // Modules switched on for THIS device (stored in this browser's IndexedDB). Nothing stored yet → all of them.
@@ -291,7 +210,7 @@ async function initApp() {
 
     // Modules that keep working in the background (e.g. the all-day transcript): load them now and call their boot()
     (APP_CONFIG.background || []).filter(n => enabledModules.includes(n)).forEach(n =>
-        import(`./modules/${n}.js`).then(m => m.boot?.(App)).catch(err => console.error(`Background module '${n}' failed`, err)));
+        loadModule(n).then(m => m.boot?.(App)).catch(err => console.error(`Background module '${n}' failed`, err)));
 
     // empty / unknown / switched-off module in the URL (e.g. the old #private-notes) → default module
     const current = window.location.hash.replace('#', '');
@@ -305,24 +224,27 @@ async function handleNavigation() {
 
     document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.module === hash));
     els.sidebar.classList.remove('open');
+
+    // The module that is leaving gets a chance to save what is pending and remove its listeners
+    if (currentModule) {
+        try { await loadedModules[currentModule]?.then?.(m => m.unmount?.()); }
+        catch (error) { console.error(`unmount failed: ${currentModule}`, error); }
+        currentModule = null;
+    }
     els.root.innerHTML = '<div style="padding: 24px;">Loading...</div>';
 
     try {
-        if (!loadedModules[hash]) {
-            loadedModules[hash] = await import(`./modules/${hash}.js`);
-        }
-        const module = loadedModules[hash];
-        
+        const module = await loadModule(hash);
         const moduleTitle = module.meta?.title || modLabel(hash);
         els.moduleTitle.textContent = moduleTitle;
         els.footerModule.textContent = moduleTitle;
-        
+
         els.root.innerHTML = '';
+        currentModule = hash;
         if (module.render) await module.render(els.root, App);
-        
     } catch (error) {
         console.error(`Failed to load module: ${hash}`, error);
-        els.root.innerHTML = `<div style="padding: 24px; color: var(--red);">Module '${hash}' not found yet. Create it in the modules/ folder.</div>`;
+        els.root.innerHTML = `<div style="padding: 24px; color: var(--red);">Could not load module '${esc(hash)}': ${esc(error.message || error)}<br><small>Details are in the browser console (F12).</small></div>`;
     }
 }
 

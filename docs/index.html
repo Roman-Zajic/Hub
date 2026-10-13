@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Roman Zajic</title>
-    <link rel="stylesheet" href="styles.css">
+    <meta name="theme-color" content="#005A5A">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 31 22'%3E%3Crect width='9' height='6' rx='1.5' fill='%2395DFDB'/%3E%3Crect x='11' width='9' height='6' rx='1.5' fill='%2350C1C1'/%3E%3Crect x='22' width='9' height='6' rx='1.5' fill='%23008282'/%3E%3Crect y='8' width='9' height='6' rx='1.5' fill='%2395DFDB'/%3E%3Crect x='11' y='8' width='9' height='6' rx='1.5' fill='%2350C1C1'/%3E%3Crect x='22' y='8' width='9' height='6' rx='1.5' fill='%23008282'/%3E%3Crect y='16' width='9' height='6' rx='1.5' fill='%2395DFDB'/%3E%3Crect x='11' y='16' width='9' height='6' rx='1.5' fill='%2350C1C1'/%3E%3Crect x='22' y='16' width='9' height='6' rx='1.5' fill='%23E1A01E'/%3E%3C/svg%3E">
+    <!-- After a deploy bump v= here (GitHub Pages caches files for ~10 min): styles.css and app.js; everything else follows app.js -->
+    <link rel="stylesheet" href="styles.css?v=1">
 </head>
 <body>
     <!-- SETTINGS MODAL POPUP -->
@@ -17,11 +20,11 @@
             <div class="modal-body">
                 <div class="field">
                     <label class="field-label">GitHub Repository</label>
-                    <input type="text" id="set-gh-repo" class="input" placeholder="username/repo">
+                    <input type="text" id="set-gh-repo" class="input" placeholder="username/repo" autocomplete="off" spellcheck="false">
                 </div>
                 <div class="field">
                     <label class="field-label">GitHub PAT</label>
-                    <input type="password" id="set-gh-token" class="input" placeholder="ghp_...">
+                    <input type="password" id="set-gh-token" class="input" placeholder="ghp_..." autocomplete="new-password" spellcheck="false">
                 </div>
                 <div class="field">
                     <label class="field-label">Notes Folder in Repo (optional)</label>
@@ -98,6 +101,8 @@
         <span id="footer-module-name">Loading...</span>
     </footer>
 
-    <script type="module" src="app.js"></script>
+    <div class="toast" id="app-toast"></div>
+
+    <script type="module" src="app.js?v=1"></script>
 </body>
 </html>

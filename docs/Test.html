@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice to Text Transcriber</title>
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --primary-hover: #0056b3;
+            --danger-color: #dc3545;
+            --danger-hover: #bd2130;
+            --bg-color: #f4f4f9;
+            --card-bg: #ffffff;
+            --text-color: #333333;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .container {
+            background: var(--card-bg);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 500px;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+        }
+
+        h2 {
+            margin-top: 0;
+            font-size: 1.5rem;
+            text-align: center;
+            color: #222;
+        }
+
+        textarea {
+            width: 100%;
+            height: 200px;
+            padding: 12px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-family: inherit;
+            resize: vertical;
+            box-sizing: border-box;
+            margin-bottom: 15px;
+        }
+
+        textarea:focus {
+            outline: none;
+            border-color: var(--primary-color);
+            box-shadow: 0 0 5px rgba(0, 123, 255, 0.3);
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            font-size: 1rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            color: white;
+            transition: background-color 0.2s;
+        }
+
+        #startBtn {
+            background-color: var(--primary-color);
+        }
+
+        #startBtn:hover {
+            background-color: var(--primary-hover);
+        }
+
+        #startBtn.recording {
+            background-color: var(--danger-color);
+            animation: pulse 1.5s infinite;
+        }
+
+        #clearBtn {
+            background-color: #6c757d;
+        }
+
+        #clearBtn:hover {
+            background-color: #5a6268;
+        }
+
+        #status {
+            font-size: 0.9rem;
+            text-align: center;
+            color: #666;
+            min-height: 1.2rem;
+        }
+
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.6; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>Voice Transcriber</h2>
+        
+        <textarea id="transcript" placeholder="Your speech will appear here..."></textarea>
+        
+        <div class="controls">
+            <button id="startBtn">Start Listening</button>
+            <button id="clearBtn">Clear Text</button>
+        </div>
+        
+        <div id="status">Tap 'Start Listening' to begin</div>
+    </div>
+
+    <script>
+        const startBtn = document.getElementById('startBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const transcriptArea = document.getElementById('transcript');
+        const statusDiv = document.getElementById('status');
+
+        // Check browser support
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+        if (!SpeechRecognition) {
+            statusDiv.textContent = "Sorry, your browser doesn't support Speech Recognition. Try Chrome or Safari.";
+            startBtn.disabled = true;
+            startBtn.style.backgroundColor = '#ccc';
+        } else {
+            const recognition = new SpeechRecognition();
+            
+            // Configuration
+            recognition.continuous = true;     // Keep listening even if user pauses
+            recognition.interimResults = true; // Show words as you speak them
+            recognition.lang = 'en-US';        // Change language if needed (e.g., 'es-ES', 'fr-FR')
+
+            let isRecording = false;
+            let finalTranscript = '';
+
+            startBtn.addEventListener('click', () => {
+                if (!isRecording) {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        console.error(e);
+                    }
+                } else {
+                    recognition.stop();
+                }
+            });
+
+            clearBtn.addEventListener('click', () => {
+                finalTranscript = '';
+                transcriptArea.value = '';
+                statusDiv.textContent = 'Cleared';
+            });
+
+            recognition.onstart = () => {
+                isRecording = true;
+                startBtn.textContent = 'Stop Listening';
+                startBtn.classList.add('recording');
+                statusDiv.textContent = 'Listening... Speak now.';
+            };
+
+            recognition.onresult = (event) => {
+                let interimTranscript = '';
+                
+                // Loop through results starting from the latest
+                for (let i = event.resultIndex; i < event.results.length; ++i) {
+                    if (event.results[i].isFinal) {
+                        finalTranscript += event.results[i][0].transcript + ' ';
+                    } else {
+                        interimTranscript += event.results[i][0].transcript;
+                    }
+                }
+                
+                // Display final + whatever is currently being spoken interim
+                transcriptArea.value = finalTranscript + interimTranscript;
+                // Auto-scroll textarea to bottom
+                transcriptArea.scrollTop = transcriptArea.scrollHeight;
+            };
+
+            recognition.onerror = (event) => {
+                statusDiv.textContent = 'Error occurred: ' + event.error;
+                console.error('Speech recognition error', event.error);
+            };
+
+            recognition.onend = () => {
+                isRecording = false;
+                startBtn.textContent = 'Start Listening';
+                startBtn.classList.remove('recording');
+                statusDiv.textContent = 'Stopped. Tap to start again.';
+                
+                // If it stopped unexpectedly while user intended to record, you could handle it here.
+            };
+        }
+    </script>
+</body>
+</html>

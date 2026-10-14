@@ -123,13 +123,24 @@ async function initSettings() {
     modBtn.addEventListener('click', e => { e.stopPropagation(); modBox.classList.toggle('open'); });
     document.addEventListener('click', e => { if (!modBox.contains(e.target)) modBox.classList.remove('open'); });
 
-    btnOpen.addEventListener('click', async () => {
-        document.getElementById('set-gh-repo').value = await App.Store.get('gh_repo') || '';
-        document.getElementById('set-gh-token').value = await App.Store.get('gh_token') || '';
-        const savedFolder = await App.Store.get('gh_folder');
-        document.getElementById('set-gh-folder').value = savedFolder !== undefined && savedFolder !== null ? savedFolder : '';
+    const pathEl = document.getElementById('set-local-path');
+    // One field "owner/repo/folder" (a pasted GitHub URL works too) ⇄ the two values the Notes module uses
+    function parseRepo(v) {
+        const parts = v.trim().replace(/^https?:\/\/github\.com\//i, '').replace(/\.git(?=\/|$)/i, '').split('/').filter(Boolean);
+        const rest = parts[2] === 'tree' ? parts.slice(4) : parts.slice(2);   // …/tree/<branch>/folder → folder
+        return { repo: parts.slice(0, 2).join('/'), folder: rest.join('/') };
+    }
+    async function showFolder() {   // the browser only reveals the folder's name; the field also keeps a full path you type
         const handle = await App.Store.get('local_folder_handle');
-        document.getElementById('set-local-status').textContent = handle ? `Current: ${handle.name}` : 'No folder selected';
+        pathEl.value = (await App.Store.get('local_folder_label')) || handle?.name || '';
+        btnFolder.textContent = handle ? 'Change' : 'Select';
+    }
+
+    btnOpen.addEventListener('click', async () => {
+        const repo = (await App.Store.get('gh_repo')) || '', folder = (await App.Store.get('gh_folder')) || '';
+        document.getElementById('set-gh-repo').value = repo && folder ? `${repo}/${folder}` : repo;
+        document.getElementById('set-gh-token').value = await App.Store.get('gh_token') || '';
+        await showFolder();
         renderModulesMenu();
         modBox.classList.remove('open');
         overlay.classList.add('open');
@@ -140,9 +151,11 @@ async function initSettings() {
     btnSave.addEventListener('click', async () => {
         const picked = pickedModules();
         if (!picked.length) { alert('Select at least one module for this device.'); return; }
-        await App.Store.set('gh_repo', document.getElementById('set-gh-repo').value.trim());
+        const { repo, folder } = parseRepo(document.getElementById('set-gh-repo').value);
+        await App.Store.set('gh_repo', repo);
+        await App.Store.set('gh_folder', folder);
         await App.Store.set('gh_token', document.getElementById('set-gh-token').value.trim());
-        await App.Store.set('gh_folder', document.getElementById('set-gh-folder').value.trim());
+        await App.Store.set('local_folder_label', pathEl.value.trim());
         await App.Store.set('enabled_modules', picked);
         enabledModules = APP_CONFIG.modules.filter(m => picked.includes(m));
         buildSidebar();
@@ -156,8 +169,9 @@ async function initSettings() {
         try {
             const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
             await App.Store.set('local_folder_handle', handle);
-            document.getElementById('set-local-status').textContent = `Current: ${handle.name}`;
+            await App.Store.set('local_folder_label', handle.name);   // a new folder replaces the old label; edit it to the full path if you like
             App.Storage.Local.handle = handle;
+            await showFolder();
             window.dispatchEvent(new Event('app:folder-changed'));   // background modules (transcript) pick the folder up at once
         } catch (e) { console.log("Folder selection cancelled."); }
     });
@@ -247,5 +261,8 @@ async function handleNavigation() {
         els.root.innerHTML = `<div style="padding: 24px; color: var(--red);">Could not load module '${esc(hash)}': ${esc(error.message || error)}<br><small>Details are in the browser console (F12).</small></div>`;
     }
 }
+
+// Installable as an app window without an address bar (see manifest.webmanifest and sw.js)
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
 initApp();

@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Roman Zajic</title>
     <meta name="theme-color" content="#005A5A">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <meta name="mobile-web-app-capable" content="yes">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 31 22'%3E%3Crect width='9' height='6' rx='1.5' fill='%2395DFDB'/%3E%3Crect x='11' width='9' height='6' rx='1.5' fill='%2350C1C1'/%3E%3Crect x='22' width='9' height='6' rx='1.5' fill='%23008282'/%3E%3Crect y='8' width='9' height='6' rx='1.5' fill='%2395DFDB'/%3E%3Crect x='11' y='8' width='9' height='6' rx='1.5' fill='%2350C1C1'/%3E%3Crect x='22' y='8' width='9' height='6' rx='1.5' fill='%23008282'/%3E%3Crect y='16' width='9' height='6' rx='1.5' fill='%2395DFDB'/%3E%3Crect x='11' y='16' width='9' height='6' rx='1.5' fill='%2350C1C1'/%3E%3Crect x='22' y='16' width='9' height='6' rx='1.5' fill='%23E1A01E'/%3E%3C/svg%3E">
     <!-- After a deploy bump v= here (GitHub Pages caches files for ~10 min): styles.css and app.js; everything else follows app.js -->
     <link rel="stylesheet" href="styles.css?v=1">
@@ -18,34 +21,32 @@
                 <button class="modal-close" id="settings-close">&times;</button>
             </div>
             <div class="modal-body">
-                <div class="field">
-                    <label class="field-label">GitHub Repository</label>
-                    <input type="text" id="set-gh-repo" class="input" placeholder="username/repo" autocomplete="off" spellcheck="false">
+                <div class="field field-inline">
+                    <label class="field-label" for="set-gh-repo">GitHub repo</label>
+                    <div class="field-control"><input type="text" id="set-gh-repo" class="input" placeholder="username/repo/folder" autocomplete="off" spellcheck="false"></div>
                 </div>
-                <div class="field">
-                    <label class="field-label">GitHub PAT</label>
-                    <input type="password" id="set-gh-token" class="input" placeholder="ghp_..." autocomplete="new-password" spellcheck="false">
+                <div class="field field-inline">
+                    <label class="field-label" for="set-gh-token">GitHub token</label>
+                    <div class="field-control"><input type="password" id="set-gh-token" class="input" placeholder="ghp_..." autocomplete="new-password" spellcheck="false"></div>
                 </div>
-                <div class="field">
-                    <label class="field-label">Notes Folder in Repo (optional)</label>
-                    <input type="text" id="set-gh-folder" class="input" placeholder="e.g. notes (leave empty for repo root)">
-                </div>
-                <div class="field">
-                    <label class="field-label">Working Directory (all modules)</label>
-                    <button id="set-local-folder" class="btn btn-outline">Select Folder</button>
-                    <div id="set-local-status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 4px;">No folder selected</div>
-                    <div class="field-hint">Chosen once, remembered on this device. Subfolders are created automatically: <b>Notes</b> (Work Notes) and <b>Audio Notes</b> (Live Transcript).</div>
-                </div>
-                <div class="field">
-                    <label class="field-label">Modules on this device</label>
-                    <div class="multi-select" id="set-modules">
-                        <button type="button" class="input multi-select-btn" id="set-modules-btn">
-                            <span id="set-modules-label">All modules</span>
-                            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 8 11 13 6"/></svg>
-                        </button>
-                        <div class="multi-select-menu" id="set-modules-menu"></div>
+                <div class="field field-inline">
+                    <label class="field-label" for="set-local-path">Working directory</label>
+                    <div class="field-control">
+                        <input type="text" id="set-local-path" class="input" placeholder="None selected" autocomplete="off" spellcheck="false" title="The browser only tells the app the folder name. You can type the full path here as a reminder.">
+                        <button type="button" id="set-local-folder" class="btn btn-outline btn-sm">Select</button>
                     </div>
-                    <div class="field-hint">Saved on this device only.</div>
+                </div>
+                <div class="field field-inline">
+                    <label class="field-label">Modules</label>
+                    <div class="field-control">
+                        <div class="multi-select" id="set-modules">
+                            <button type="button" class="input multi-select-btn" id="set-modules-btn">
+                                <span id="set-modules-label">All modules</span>
+                                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 8 11 13 6"/></svg>
+                            </button>
+                            <div class="multi-select-menu" id="set-modules-menu"></div>
+                        </div>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer">

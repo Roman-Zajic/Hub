@@ -112,6 +112,12 @@ body {
 /* Unified Fields & Buttons (Exactly 36px height) */
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-size: 0.75rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase; }
+/* label on the left, value on the right (Settings) */
+.field-inline { flex-direction: row; align-items: center; gap: 12px; }
+.field-inline .field-label { flex: 0 0 150px; }
+@media (max-width: 480px) { .field-inline .field-label { flex-basis: 96px; } }
+.field-inline .field-control { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
+.field-inline .field-control > .multi-select { flex: 1; min-width: 0; }
 
 .input {
     font-family: var(--font); font-size: 0.875rem; color: var(--text);

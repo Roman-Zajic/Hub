@@ -484,3 +484,32 @@ body.popout { background: var(--ink); color: var(--teal-100); align-items: cente
 .popout .timer-controls { gap: 20px; }
 .popout-title { cursor: text; }
 
+
+/* ═══════════════════════════════════════════════════════════════════════
+   COMPARE TEXTS (modules/compare.js) — appended; everything above is unchanged.
+   Reuses .editor-panel .banner .toolbar .seg .check .btn .split .editor-textarea;
+   only the result table is new.
+   ═══════════════════════════════════════════════════════════════════════ */
+.df-result { flex: 1; min-height: 0; overflow: auto; background: var(--surface-card); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow); font: .8125rem/1.5 monospace; color: var(--text); }
+.df-result .hint { padding: 16px; }
+.df-table { width: max-content; min-width: 100%; border-collapse: collapse; }
+.df-result.wrap .df-table { width: 100%; table-layout: fixed; }
+.df-table td { padding: 0 10px; vertical-align: top; }
+.df-cn { width: 3.5rem; }
+.df-cs { width: 1.5rem; }
+.df-n { text-align: right; color: var(--text-muted); user-select: none; border-right: 1px solid var(--border); }
+.df-s { text-align: center; user-select: none; }
+.df-t { white-space: pre; tab-size: 4; }
+.df-result.wrap .df-t { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* removed = red, added = teal; <mark> = the changed fragment inside a line */
+.df-del { background: rgba(196,30,58,.10); }
+.df-add { background: rgba(0,130,130,.12); }
+.df-none { background: var(--surface-in); }
+.df-table mark { padding: 0; color: inherit; }
+.df-del mark { background: rgba(196,30,58,.32); }
+.df-add mark { background: rgba(0,130,130,.32); }
+.df-fold td { padding: 4px; text-align: center; cursor: pointer; background: var(--surface-in); color: var(--text-muted); }
+.df-fold:hover td { background: var(--teal-100); }
+.df-current > td:first-child { box-shadow: inset 4px 0 0 var(--amber); }
+@media (max-width: 768px) { .df .split:not([data-view]) { grid-template-rows: 1fr 1fr; } }

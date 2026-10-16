@@ -6,7 +6,7 @@ export const APP_CONFIG = {
         'email-composer',
         'timers',
         'transcript',
-		'comparer'
+		'compare'
     ],
     // Loaded when the app opens (not only when you visit them): they keep working in the background.
     background: ['transcript'],

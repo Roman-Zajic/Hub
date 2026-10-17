@@ -5,7 +5,7 @@ export const meta = { title: 'Live Transcript' };
 
    - Starts by itself when the app opens (config.js → `background`) once a working directory is set on this device, runs in the background
      while you use other modules, and streams every line to  <working directory>/Audio Notes/Transcript YYYY-MM-DD.txt
-     (one file per day). Lines are written to disk every 10 seconds (and when the tab is hidden), so a crash loses almost nothing.
+     (one file per day). Lines are written to disk every 10 seconds (and at once when the tab is hidden), so a crash loses almost nothing.
    - Engine = the browser's built-in speech recognition: no model files, no libraries, no workers, very low CPU.
      "Private" = on-device recognition (Chrome/Edge download a small language pack once).
    - <sys> = a browser share with audio (pick the call's tab, or Entire screen + "Also share system audio"): one pick per session.
@@ -13,15 +13,30 @@ export const meta = { title: 'Live Transcript' };
    - Stop releases the microphone and system audio. Press Start (or reload) to begin again.
    - The text box is yours: select, edit, delete and copy freely. Edits change the on-screen copy only; the file on disk is append-only.
    - Working directory: chosen once in Settings. The folder name for transcripts is FOLDER below.
+     Browsers that cannot write to a folder (Chrome on Android, Firefox, Safari) keep the transcript in this browser instead;
+     the Download button then saves today's text as a .txt file.
+   - Phones (Chrome on Android): <mic> only. Recognition is Google's online service (there is no on-device mode there), it does not start
+     by itself (tap Start), and the screen is kept on while it listens, because Chrome Android stops recognizing when the screen turns off.
+   - Nothing may get lost while the tab is in the background (a slow laptop made this visible):
+       · a recognizer that ends is restarted at once, inside its own "end" event. A timer waits 1 s or more in a background tab,
+         and the speech of that second was lost;
+       · words that were still "interim" when a session ended (error, time limit, Stop) are kept as a line, not dropped;
+       · disk writes are triggered by the recognizer's events as well as by a timer, and a Web Lock keeps Chrome from freezing the tab;
+       · when a recognizer was offline for 3+ seconds a <gap> line says so: a hole in the text is never silent.
    - No CSS in this file: every class used here is defined in styles.css.
    ───────────────────────────────────────────────────────────────────────── */
 
-const KEY_PREFS = 'transcript_prefs', FOLDER = 'Audio Notes', MAX_VIEW = 60000, FLUSH_MS = 10000;   // disk: one write every 10 s
+const KEY_PREFS = 'transcript_prefs', KEY_DAY = 'transcript_day_', FOLDER = 'Audio Notes', MAX_VIEW = 60000, FLUSH_MS = 10000, GAP_MS = 3000;   // disk: one write every 10 s
 const LANGS = [['en-US', 'English (US)'], ['pl-PL', 'Polski'], ['de-DE', 'Deutsch']];   // one language for both sources
 
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-// Builds that can recognize from an audio track (needed for <sys>) also have processLocally (on-device).
-const HAS_TRACK = !!SR && 'processLocally' in SR.prototype;
+// Builds that can recognize from an audio track (needed for <sys>) also have processLocally (on-device). Chrome Android has neither.
+const MOBILE = /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+const ANDROID = /Android/i.test(navigator.userAgent);      // Chrome on Android: no audio-track input, and its "continuous" mode repeats the text
+const HAS_TRACK = !!SR && 'processLocally' in SR.prototype && !ANDROID;
+const CAN_FOLDER = 'showDirectoryPicker' in window;         // no folder access (phones, Firefox, Safari): the transcript stays in this browser
+const CAN_SYS = HAS_TRACK && !!navigator.mediaDevices?.getDisplayMedia;
+const CAN_PRIVATE = HAS_TRACK || !MOBILE;                   // phones cannot recognize on-device: the online service is used there
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 const p2 = window.App.pad;   // shared helper (app.js)
@@ -31,19 +46,21 @@ const words = s => s.toLowerCase().match(/[\p{L}\p{N}']+/gu) || [];
 const say = (o, msg, err) => { if (!o.quiet) toast(msg, err); };
 
 // ── State (module level, independent of what is on screen) ─────────────────
-const mk = name => ({ name, on: true, stream: null, track: null, rec: null, to: null, fails: 0, got: false, fatal: false, err: '', interim: '', busy: false });
+const mk = name => ({ name, on: true, stream: null, track: null, rec: null, to: null, fails: 0, got: false, fatal: false, err: '', interim: '', busy: false, endedAt: 0, marked: 0, lastText: '', lastAt: 0 });
 const S = { mic: mk('mic'), sys: mk('sys') };
 const prefs = { lang: 'en-US', local: true, save: true };
 const ui = {};
 let Store = null, Local = null, loaded = null, booted = false;
 let running = false, busy = false, stoppedByUser = false, armed = false, watchIv = null;
 let view = '';                                   // what the text box shows (the tail of today); the full record is on disk
-let pending = [], flushTo = null, flushing = false, disk = 'ok';   // lines waiting for the disk: {day, text}
+let pending = [], flushTo = null, flushing = false, disk = CAN_FOLDER ? 'ok' : 'browser', lastFlush = 0;   // lines waiting for the disk: {day, text}
+let unlock = null, wake = null, lockWanted = false, phoneNote = false;
 let recentSys = [];                              // last <sys> lines, used to drop the mic's echo of the speakers
 
-const usable = s => s.on && (HAS_TRACK || s.name === 'mic');
+const usable = s => s.on && (s.name === 'mic' || CAN_SYS);
+const onDevice = () => prefs.local && CAN_PRIVATE;   // the engine really in use
 const live = s => HAS_TRACK ? s.track?.readyState === 'live' : s.name === 'mic';   // without track support the recognizer reads the mic itself
-const state = s => !HAS_TRACK && s.name === 'sys' ? 'unsupported' : !s.on ? 'off' : s.fatal ? 'error' : live(s) ? (running ? 'live' : 'ready') : s.name === 'sys' ? 'not shared — click <sys>' : 'no mic';
+const state = s => s.name === 'sys' && !CAN_SYS ? 'unsupported' : !s.on ? 'off' : s.fatal ? 'error' : live(s) ? (running ? 'live' : 'ready') : s.name === 'sys' ? 'not shared — click <sys>' : 'no mic';
 
 function savePrefs() {
     Store?.set(KEY_PREFS, { lang: prefs.lang, local: prefs.local, save: prefs.save, mic: S.mic.on, sys: S.sys.on }).catch(() => {});
@@ -55,6 +72,11 @@ async function loadState() {
     prefs.save = p.save ?? true;
     S.mic.on = p.mic ?? true;
     S.sys.on = p.sys ?? true;
+    if (!CAN_FOLDER) {   // the text lives in this browser: show the end of today's text again after a reload
+        let t = (await Store.get(KEY_DAY + dayOf(Date.now()))) || '';
+        if (t.length > MAX_VIEW) t = t.slice(t.indexOf('\n', t.length - MAX_VIEW) + 1);
+        view = t;
+    }
 }
 async function init(App) {
     Store = App.Store; Local = App.Storage.Local;
@@ -63,12 +85,13 @@ async function init(App) {
 
 // ── UI (every call is guarded: the module may be off screen while it records) ──
 const toast = (msg, err) => window.App.toast(msg, err);   // shared toast (app.js): also visible while another module is open
-const DISK = { ok: 'saving to file', wait: 'click anywhere to allow folder access', nofolder: 'no working directory — set it in Settings', error: 'disk error, retrying' };
+const DISK = { ok: 'saving to file', browser: 'kept in this browser (Download saves a .txt)', wait: 'click anywhere to allow folder access', nofolder: 'no working directory — set it in Settings', error: 'disk error, retrying' };
 function statusText() {
     if (!SR) return 'Speech recognition is not supported in this browser';
     if (busy) return 'Starting…';
     if (!running) return 'Stopped';
     const parts = [S.mic, S.sys].filter(s => s.on).map(s => `<${s.name}> ${state(s)}`);
+    parts.push(onDevice() ? 'on-device' : 'online service');
     parts.push(prefs.save ? DISK[disk] : 'not saving to file');
     return parts.join(' · ');
 }
@@ -95,11 +118,16 @@ function paint() {
         b.classList.toggle('on', s.on);
         b.style.background = trouble ? (st === 'error' ? 'var(--red)' : 'var(--amber)') : '';   // the failing source lights up itself
         b.style.color = trouble ? (st === 'error' ? '#fff' : 'var(--ink)') : '';
-        const off = !HAS_TRACK && b.dataset.src === 'sys';
+        const off = !CAN_SYS && b.dataset.src === 'sys';
         b.disabled = off; b.style.opacity = off ? '.4' : '';
-        if (off) b.title = 'This browser cannot recognize system audio — use a recent Chrome or Edge.';
+        if (off) b.title = MOBILE ? 'Phones cannot share system audio.' : 'This browser cannot recognize system audio — use a recent Chrome or Edge.';
     });
-    ui.engBtns.forEach(b => b.classList.toggle('on', (b.dataset.eng === '1') === prefs.local));
+    ui.engBtns.forEach(b => {
+        const priv = b.dataset.eng === '1', off = priv && !CAN_PRIVATE;
+        b.classList.toggle('on', priv === onDevice());
+        b.disabled = off; b.style.opacity = off ? '.4' : '';
+        if (off) b.title = 'Not available on phones: the online speech service is used.';
+    });
     ui.saveBtns.forEach(b => b.classList.toggle('on', prefs.save));
     ui.lang.value = prefs.lang;
 }
@@ -137,7 +165,9 @@ function emit(t, tag, text) {
     addView(line);
     if (prefs.save) {
         pending.push({ day: dayOf(t), text: line });
-        if (!flushTo) flushTo = setTimeout(() => flush(), FLUSH_MS);   // batch: at most one write every 10 s
+        // Written from this very event when the tab is hidden or the last write is old: a timer waits 1 s or more in a background tab.
+        if ((disk === 'ok' || disk === 'browser') && (document.hidden || t - lastFlush >= FLUSH_MS)) flush();
+        else if (!flushTo) flushTo = setTimeout(() => flush(), FLUSH_MS);   // batch: at most one write every 10 s
     }
 }
 // The mic also hears the speakers when no headphones are used: drop mic lines that repeat a recent <sys> line.
@@ -148,6 +178,8 @@ function isEcho(text, t) {
 }
 function onFinal(s, text) {
     const t = Date.now();
+    if (ANDROID && text === s.lastText && t - s.lastAt < 2000) return;   // Android sometimes reports the same final phrase twice
+    s.lastText = text; s.lastAt = t;
     if (s.name === 'sys') {
         recentSys.push({ t, set: new Set(words(text)) });
         if (recentSys.length > 10) recentSys.shift();
@@ -157,23 +189,26 @@ function onFinal(s, text) {
 }
 
 async function flush(interactive = false) {   // append everything pending to today's file; lines leave the queue only once written
-    flushTo = null;
+    clearTimeout(flushTo); flushTo = null;
     if (flushing || !pending.length || !prefs.save) return;
     flushing = true;
     try {
-        const dir = await Local.dir(FOLDER, interactive);
+        const dir = CAN_FOLDER ? await Local.dir(FOLDER, interactive) : null;   // null = no folder access here: this browser's storage takes the lines
         while (pending.length) {
             const day = pending[0].day;
             let text = '', n = 0;
             while (n < pending.length && pending[n].day === day) text += pending[n++].text;
-            const fh = await dir.getFileHandle(`Transcript ${day}.txt`, { create: true });
-            const size = (await fh.getFile()).size;
-            const w = await fh.createWritable({ keepExistingData: true });
-            await w.write({ type: 'write', position: size, data: text });
-            await w.close();                      // close() is what commits the data to disk
+            if (dir) {
+                const fh = await dir.getFileHandle(`Transcript ${day}.txt`, { create: true });
+                const size = (await fh.getFile()).size;
+                const w = await fh.createWritable({ keepExistingData: true });
+                await w.write({ type: 'write', position: size, data: text });
+                await w.close();                      // close() is what commits the data to disk
+            } else await Store.set(KEY_DAY + day, ((await Store.get(KEY_DAY + day)) || '') + text);
             pending.splice(0, n);
         }
-        disk = 'ok';
+        disk = CAN_FOLDER ? 'ok' : 'browser';
+        lastFlush = Date.now();
     } catch (e) { diskFail(e); }
     flushing = false;
     paint();
@@ -186,6 +221,7 @@ function diskFail(e) {
 }
 async function checkDisk(gesture) {
     if (!prefs.save) return;
+    if (!CAN_FOLDER) { disk = 'browser'; flush(); return paint(); }
     try { await Local.dir(FOLDER, gesture); disk = 'ok'; flush(); } catch (e) { diskFail(e); }
     paint();
 }
@@ -241,7 +277,7 @@ async function grabSys(o) {
 }
 // "Private" = on-device recognition. Fail closed: if it cannot be guaranteed, never fall back to the cloud silently.
 async function ensureModel(o) {
-    if (!prefs.local) return true;
+    if (!onDevice()) return true;
     if (!HAS_TRACK) { say(o, 'This browser cannot guarantee on-device recognition. Update Chrome/Edge or switch Engine to Cloud.', true); return false; }
     const opt = { langs: [prefs.lang], processLocally: true };
     try {
@@ -261,23 +297,29 @@ async function prepare(s, o) {
 }
 
 // ── Recognition ───────────────────────────────────────────────────────────
-function retry(s, lived = 0) {   // recognizers end by themselves (silence, time limit): restart quietly, back off if they keep failing
+function retry(s, lived = 0) {   // recognizers end by themselves (silence, time limit): restart AT ONCE, back off only if they keep failing
     if (!running || !usable(s) || s.fatal || !live(s)) return paint();
     s.fails = lived > 5000 || s.got ? 0 : s.fails + 1;
     if (s.fails === 6) toast(`<${s.name}> keeps stopping${s.err ? ' (' + s.err + ')' : ''}.`, true);
     clearTimeout(s.to);
-    s.to = setTimeout(() => beginRec(s), Math.min(5000, 100 * 2 ** s.fails));
+    if (s.fails <= 2) beginRec(s);   // no timer: a timer waits 1 s or more in a background tab, and that second of speech would be lost
+    else s.to = setTimeout(() => beginRec(s), Math.min(5000, 250 * 2 ** (s.fails - 2)));
 }
 function beginRec(s) {
     if (!running || !usable(s) || s.rec || !live(s)) return;
     clearTimeout(s.to);
     const rec = new SR();
-    rec.continuous = true; rec.interimResults = true; rec.maxAlternatives = 1; rec.lang = prefs.lang;
-    if (HAS_TRACK) rec.processLocally = prefs.local;
+    rec.continuous = !ANDROID; rec.interimResults = true; rec.maxAlternatives = 1; rec.lang = prefs.lang;   // Android: one phrase per session (see ANDROID)
+    if (HAS_TRACK) rec.processLocally = onDevice();
     const clone = HAS_TRACK ? s.track.clone() : null;   // the recognizer gets a clone, so the source itself is never stopped by it
     const t0 = Date.now();
     s.got = false;
 
+    rec.onstart = () => {   // a long pause between two sessions means speech may be missing: say so in the text (at most once a minute)
+        const gap = s.endedAt ? Date.now() - s.endedAt : 0;
+        s.endedAt = 0;
+        if (gap > GAP_MS && Date.now() - s.marked > 60000) { s.marked = Date.now(); emit(Date.now(), 'gap', `${s.name} recognition was off for ${Math.round(gap / 1000)} s`); }
+    };
     rec.onresult = e => {
         s.got = true;
         let interim = '';
@@ -291,12 +333,14 @@ function beginRec(s) {
     rec.onerror = e => {
         s.err = e.error;
         if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { s.fatal = true; toast(`<${s.name}>: recognition was blocked (${e.error}). Check this site's microphone permission.`, true); }
-        else if (e.error === 'language-not-supported') { s.fatal = true; toast(`<${s.name}>: ${prefs.lang} is not supported${prefs.local ? ' on-device' : ''}.`, true); }
+        else if (e.error === 'language-not-supported') { s.fatal = true; toast(`<${s.name}>: ${prefs.lang} is not supported${onDevice() ? ' on-device' : ''}.`, true); }
     };
     rec.onend = () => {
         clone?.stop();
         if (s.rec === rec) s.rec = null;
+        if (s.interim) onFinal(s, s.interim);   // words that never became final (error, time limit, Stop) are kept, not dropped
         s.interim = '';
+        s.endedAt = Date.now();
         paintLive();
         retry(s, Date.now() - t0);
     };
@@ -328,6 +372,29 @@ function watch() {
 }
 
 // ── Actions ───────────────────────────────────────────────────────────────
+// While recording: a Web Lock tells Chrome not to freeze this tab in the background (Energy Saver / Memory Saver),
+// and on phones the screen is kept on, because Chrome Android stops recognizing when the screen turns off.
+function keepAlive(on) {
+    lockWanted = on;
+    if (!on) { unlock?.(); unlock = null; wake?.release().catch(() => {}); wake = null; return; }
+    if (!unlock && navigator.locks) navigator.locks.request('live-transcript', () => new Promise(res => { unlock = res; if (!lockWanted) res(); })).catch(() => {});
+    if (MOBILE && !wake && navigator.wakeLock) navigator.wakeLock.request('screen').then(w => {
+        wake = w;
+        w.addEventListener('release', () => { if (wake === w) wake = null; });   // the browser drops it when the screen goes off: it is asked for again on return
+    }).catch(() => {});
+}
+// Browsers without folder access: save today's text (kept in this browser) as a .txt file
+async function download() {
+    await flush();
+    const day = dayOf(Date.now()), text = (await Store.get(KEY_DAY + day)) || view;
+    if (!text) return toast('Nothing recorded today yet.', true);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    a.download = `Transcript ${day}.txt`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+}
+
 async function start(gesture = true, rearm = true) {
     if (running || busy || !SR) return;
     if (gesture) stoppedByUser = false;
@@ -339,6 +406,8 @@ async function start(gesture = true, rearm = true) {
     busy = false;
     if (!ok.length) { paint(); if (rearm && !gesture) armGesture(); return; }
     running = true;
+    keepAlive(true);
+    if (MOBILE && !phoneNote) { phoneNote = true; toast('Phone: <mic> only, recognition runs in the online speech service. Keep this screen on while you record.'); }
     ok.forEach(beginRec);
     clearInterval(watchIv); watchIv = setInterval(watch, 30000);
     checkDisk(gesture);
@@ -346,8 +415,8 @@ async function start(gesture = true, rearm = true) {
 }
 function stop() {   // stops recognition AND releases the microphone / system audio
     stoppedByUser = true; running = false;
-    clearInterval(watchIv);
-    for (const s of [S.mic, S.sys]) { clearTimeout(s.to); s.rec?.stop(); s.interim = ''; releaseSrc(s); }
+    clearInterval(watchIv); keepAlive(false);
+    for (const s of [S.mic, S.sys]) { clearTimeout(s.to); s.rec?.stop(); if (!s.rec) s.interim = ''; releaseSrc(s); }   // a stopping recognizer still delivers its last words
     flush();
     paint(); paintLive();
 }
@@ -394,6 +463,7 @@ const TEMPLATE = `
       <div class="seg"><button data-eng="1" title="On-device: your audio never leaves this computer">Private</button><button data-eng="0" title="The browser's online speech service: usually more accurate, but audio is sent to Google / Microsoft">Cloud</button></div>
       <div class="seg"><button data-save title="Write the transcript to a .txt file in the Audio Notes folder">Save to file</button></div>
       <button class="btn btn-outline btn-sm" id="lt-clear" style="height:30px" title="Clear the text box (the saved file is not touched)">Clear</button>
+      <button class="btn btn-outline btn-sm" id="lt-dl" style="height:30px" title="Save today's transcript as a .txt file" hidden>Download</button>
     </div>
     <div class="banner-actions"><button class="btn-icon" id="lt-dot" aria-label="Status"><span id="lt-dotc" style="display:block;width:10px;height:10px;border-radius:50%;background:#9ca3af"></span></button></div>
   </div>
@@ -407,12 +477,16 @@ export async function render(root, App) {
     root.innerHTML = TEMPLATE;
     const $ = s => root.querySelector(s), all = s => [...root.querySelectorAll(s)];
     Object.assign(ui, {
-        root, ta: $('#lt-log'), toggle: $('#lt-toggle'), dot: $('#lt-dot'), dotc: $('#lt-dotc'), lang: $('#lt-lang'),
+        root, ta: $('#lt-log'), toggle: $('#lt-toggle'), dl: $('#lt-dl'), dot: $('#lt-dot'), dotc: $('#lt-dotc'), lang: $('#lt-lang'),
         liveMic: $('#lt-live-mic'), liveSys: $('#lt-live-sys'),
         srcBtns: all('[data-src]'), engBtns: all('[data-eng]'), saveBtns: all('[data-save]')
     });
     ui.ta.value = view;
     ui.ta.scrollTop = ui.ta.scrollHeight;
+    ui.dl.hidden = CAN_FOLDER;   // with a working directory the file is already on disk
+    ui.dl.onclick = download;
+    if (!CAN_FOLDER) ui.saveBtns.forEach(b => { b.textContent = 'Keep text'; b.title = 'Keep the transcript in this browser (Download saves it as a .txt file)'; });
+    if (MOBILE) ui.ta.placeholder = 'Tap Start. The transcript appears here and is kept in this browser; Download saves it as a .txt file. Keep this screen on while you record.';
     ui.srcBtns.forEach(b => b.onclick = () => toggleSrc(S[b.dataset.src]));
     ui.engBtns.forEach(b => b.onclick = () => setEngine(b.dataset.eng === '1'));
     ui.saveBtns.forEach(b => b.onclick = () => setSave(!prefs.save));
@@ -430,12 +504,18 @@ export async function boot(App) {
     if (booted || !SR) return;
     booted = true;
     navigator.mediaDevices?.addEventListener?.('devicechange', () => setTimeout(watch, 1500));
-    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush(); });   // best effort before the tab goes away
+    document.addEventListener('visibilitychange', () => {   // hidden: write what we have; back: re-take the screen lock and restart any recognizer Chrome stopped
+        if (document.hidden) flush(); else if (running) { keepAlive(true); watch(); }
+    });
+    document.addEventListener('freeze', () => flush());
+    window.addEventListener('pagehide', () => flush());
     window.addEventListener('app:folder-changed', async () => {   // fired by Settings after you pick the working directory
         await checkDisk(true);
         if (!running && !busy && !stoppedByUser) start(false);   // the folder was the missing piece: begin now
     });
     // Recording starts by itself only where its output has a home: a working directory on this device (or when saving is off)
-    if (!prefs.save || await Store.get('local_folder_handle')) start(false);
+    // Phones never start by themselves: Chrome Android wants a tap, and the screen has to stay on anyway
+    if (MOBILE) return;
+    if (!prefs.save || !CAN_FOLDER || await Store.get('local_folder_handle')) start(false);
     else toast('Live Transcript is waiting: choose the working directory in Settings and it starts by itself.');
 }

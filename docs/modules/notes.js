@@ -173,6 +173,9 @@ function admonitions(text, emit) {
     return out.join('\n');
 }
 
+const ICON_FULL = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>';
+const ICON_EXIT = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3v3a2 2 0 0 1-2 2H3m18 0h-3a2 2 0 0 1-2-2V3m0 18v-3a2 2 0 0 1 2-2h3M3 16h3a2 2 0 0 1 2 2v3"/></svg>';
+
 const TEMPLATE = `
 <div class="notes-layout">
   <div class="file-panel">
@@ -211,6 +214,7 @@ const TEMPLATE = `
         <div class="seg" role="group" aria-label="Mode">
           <button type="button" id="nt-seg-preview" class="on">Preview</button><button type="button" id="nt-seg-edit">Edit</button>
         </div>
+        <button type="button" class="btn-icon" id="nt-full-btn" title="Full screen">${ICON_FULL}</button>
         <button type="button" class="btn-icon danger" id="nt-del-btn" title="Delete note" style="display:none">
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>
         </button>
@@ -778,6 +782,17 @@ async function renderNotes(root, App, mode) {
     el.segEdit.onclick = () => { if (isPreview) setMode('edit'); };
     el.save.onclick = () => saveNote();
     el.del.onclick = deleteNote;
+
+    // Full screen: the editor panel covers the whole window (file list, navbar and footer are hidden), in edit and preview mode. Esc or the button leaves it.
+    const panel = $('.editor-panel'), fullBtn = $('#nt-full-btn');
+    const setFull = on => {
+        panel.classList.toggle('nt-full', on);
+        fullBtn.classList.toggle('active', on);
+        fullBtn.title = on ? 'Exit full screen' : 'Full screen';
+        fullBtn.innerHTML = on ? ICON_EXIT : ICON_FULL;
+    };
+    fullBtn.onclick = () => setFull(!panel.classList.contains('nt-full'));
+    panel.addEventListener('keydown', e => { if (e.key === 'Escape' && e.target !== el.title && panel.classList.contains('nt-full')) setFull(false); });
     $('#nt-new-btn').onclick = newNote;
     $('#nt-daily-btn').onclick = openDaily;
 

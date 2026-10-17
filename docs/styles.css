@@ -517,3 +517,6 @@ body.popout { background: var(--ink); color: var(--teal-100); align-items: cente
 .df .banner-main { flex: 1 0 auto; }
 .df .banner-actions { flex-wrap: wrap; flex-shrink: 1; justify-content: flex-end; }
 .df .toolbar-group { align-items: center; }
+
+/* Notes (Work Notes and GitHub notes): full-screen note, toggled by the button in the note banner */
+.editor-panel.nt-full { position: fixed; inset: 0; z-index: 500; padding: 12px; background: var(--surface-page); }
